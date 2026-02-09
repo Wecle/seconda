@@ -504,7 +504,7 @@ export default function ReportPage() {
       {/* Floating Footer */}
       <div className="sticky bottom-6 z-50 flex justify-center pointer-events-none">
         <div className="pointer-events-auto bg-card border rounded-full px-2 py-2 shadow-lg">
-          <Button className="rounded-full" size="lg" onClick={() => router.push("/interviews/new")}>
+          <Button className="rounded-full" size="lg" onClick={() => router.push("/dashboard")}>
             <RefreshCw className="size-4" />
             Start New Practice Session
           </Button>

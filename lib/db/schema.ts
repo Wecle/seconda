@@ -1,9 +1,11 @@
 import { pgTable, text, integer, timestamp, uuid, jsonb, unique } from "drizzle-orm/pg-core";
+import type { InterviewConfig } from "@/lib/interview/settings";
 
 export const resumes = pgTable("resumes", {
   id: uuid("id").primaryKey().defaultRandom(),
   title: text("title").notNull(),
   currentVersionId: uuid("current_version_id"),
+  interviewSettings: jsonb("interview_settings").$type<InterviewConfig>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

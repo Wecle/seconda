@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
+import { normalizeInterviewConfig } from "@/lib/interview/settings";
 
 export async function GET() {
   try {
@@ -21,6 +22,7 @@ export async function GET() {
 
         return {
           ...resume,
+          interviewSettings: normalizeInterviewConfig(resume.interviewSettings),
           versions: versions.map((v) => ({
             id: v.id,
             versionNumber: v.versionNumber,
