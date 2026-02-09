@@ -1,11 +1,27 @@
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-const { PDFParse } = require("pdf-parse") as typeof import("pdf-parse");
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
-  const result = await parser.getText();
-  await parser.destroy();
-  return result.text.replace(/\s+/g, " ").trim();
+  const data = new Uint8Array(buffer);
+  const doc = await getDocument({
+    data,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    useSystemFonts: true,
+    disableAutoFetch: true,
+    worker: null as never,
+  }).promise;
+
+  const pages: string[] = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items
+      .filter((item) => "str" in item)
+      .map((item) => (item as { str: string }).str)
+      .join(" ");
+    pages.push(text);
+  }
+
+  doc.destroy();
+  return pages.join(" ").replace(/\s+/g, " ").trim();
 }
