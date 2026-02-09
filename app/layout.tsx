@@ -8,8 +8,16 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Seconda - AI Mock Interview",
+  title: {
+    default: "Seconda | AI Mock Interview",
+    template: "%s | Seconda",
+  },
   description: "AI-powered mock interview system with structured scoring and deep review",
+  icons: {
+    icon: "/logo.png",
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
 };
 
 export default function RootLayout({

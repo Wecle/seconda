@@ -12,6 +12,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { BrandIcon } from "@/components/brand/brand-icon";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
 import { cn } from "@/lib/utils";
@@ -50,11 +51,9 @@ export function ResumeSidebar({
     <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r bg-card">
       <div className="flex items-center justify-between px-5 py-4">
         <Link href="/" className="flex min-w-0 items-center gap-2.5">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary">
-            <FileText className="size-4 text-primary-foreground" />
-          </div>
+          <BrandIcon size={32} />
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">Resume AI</p>
+            <p className="truncate text-sm font-semibold">Seconda</p>
             <p className="truncate text-xs text-muted-foreground">Dashboard</p>
           </div>
         </Link>
