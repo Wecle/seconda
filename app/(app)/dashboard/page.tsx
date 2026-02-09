@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -48,6 +49,21 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+const ResumePdfPreview = dynamic(
+  () =>
+    import("@/components/resume/pdf-preview").then(
+      (module) => module.ResumePdfPreview,
+    ),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[calc(100vh-380px)] items-center justify-center rounded-md border bg-muted/20">
+        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      </div>
+    ),
+  },
+);
+
 interface ParsedResume {
   name: string;
   title: string;
@@ -82,6 +98,7 @@ interface ResumeVersion {
   id: string;
   versionNumber: number;
   originalFilename: string;
+  originalFileUrl?: string | null;
   parseStatus: string;
   parseError?: string | null;
   parsedData: ParsedResume | null;
@@ -119,6 +136,9 @@ export default function DashboardPage() {
   const [uploadTitle, setUploadTitle] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [previewMode, setPreviewMode] = useState<"parsed" | "original">(
+    "parsed",
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchResumes = useCallback(async () => {
@@ -262,6 +282,25 @@ export default function DashboardPage() {
     (v) => v.id === selectedVersionId,
   );
   const parsed = selectedVersion?.parsedData;
+  const hasParsedPreview =
+    selectedVersion?.parseStatus === "parsed" && Boolean(parsed);
+  const hasOriginalPreview = Boolean(selectedVersion?.originalFileUrl);
+  const activePreviewMode =
+    previewMode === "parsed" && hasParsedPreview ? "parsed" : "original";
+
+  useEffect(() => {
+    if (!selectedVersion) {
+      setPreviewMode("parsed");
+      return;
+    }
+
+    if (selectedVersion.parseStatus === "failed" || !hasParsedPreview) {
+      setPreviewMode("original");
+      return;
+    }
+
+    setPreviewMode("parsed");
+  }, [hasParsedPreview, selectedVersion]);
 
   const parseFailureHint = (() => {
     const error = selectedVersion?.parseError?.toLowerCase() ?? "";
@@ -419,7 +458,7 @@ export default function DashboardPage() {
 
       {/* Main Content */}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {parsed ? (
+        {selectedVersion ? (
           <>
             {/* Top Nav */}
             <header className="flex items-center justify-between border-b bg-card px-6 py-3">
@@ -434,8 +473,8 @@ export default function DashboardPage() {
                   v{selectedVersion?.versionNumber}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
-                {selectedVersion?.parseStatus === "parsed" && (
+              <div className="flex items-center gap-3">
+                {selectedVersion.parseStatus === "parsed" && (
                   <Badge
                     variant="secondary"
                     className="gap-1 bg-emerald-50 text-emerald-700"
@@ -444,178 +483,263 @@ export default function DashboardPage() {
                     Parsed Successfully
                   </Badge>
                 )}
+                {selectedVersion.parseStatus === "failed" && (
+                  <Badge variant="destructive" className="gap-1">
+                    <AlertCircle className="size-3" />
+                    Parsing Failed
+                  </Badge>
+                )}
+                {selectedVersion.parseStatus !== "parsed" &&
+                  selectedVersion.parseStatus !== "failed" && (
+                    <Badge variant="secondary" className="gap-1">
+                      <Loader2 className="size-3 animate-spin" />
+                      Parsing...
+                    </Badge>
+                  )}
+
+                <div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={
+                      activePreviewMode === "parsed" ? "secondary" : "ghost"
+                    }
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setPreviewMode("parsed")}
+                    disabled={!hasParsedPreview}
+                  >
+                    Parsed
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={
+                      activePreviewMode === "original" ? "secondary" : "ghost"
+                    }
+                    className="h-7 px-2 text-xs"
+                    onClick={() => setPreviewMode("original")}
+                    disabled={!hasOriginalPreview}
+                  >
+                    Original
+                  </Button>
+                </div>
               </div>
             </header>
 
             {/* Scrollable Content */}
             <ScrollArea className="min-h-0 flex-1">
               <div className="flex justify-center px-8 py-8 pb-24">
-                <div className="w-full max-w-[850px] space-y-6">
-                  {/* Resume Header */}
-                  <div className="rounded-xl border bg-card p-8">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <h1 className="text-2xl font-bold">{parsed.name}</h1>
-                        <p className="mt-1 text-lg font-medium text-primary">
-                          {parsed.title}
+                {activePreviewMode === "parsed" && parsed ? (
+                  <div className="w-full max-w-[850px] space-y-6">
+                    {/* Resume Header */}
+                    <div className="rounded-xl border bg-card p-8">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <h1 className="text-2xl font-bold">{parsed.name}</h1>
+                          <p className="mt-1 text-lg font-medium text-primary">
+                            {parsed.title}
+                          </p>
+                          {parsed.summary && (
+                            <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                              {parsed.summary}
+                            </p>
+                          )}
+                        </div>
+                        {parsed.contact && (
+                          <div className="flex flex-col items-end gap-1.5 text-sm text-muted-foreground">
+                            {parsed.contact.email && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Mail className="size-3.5" />
+                                {parsed.contact.email}
+                              </span>
+                            )}
+                            {parsed.contact.phone && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <Phone className="size-3.5" />
+                                {parsed.contact.phone}
+                              </span>
+                            )}
+                            {parsed.contact.location && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <MapPin className="size-3.5" />
+                                {parsed.contact.location}
+                              </span>
+                            )}
+                            {parsed.contact.linkedin && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <LinkIcon className="size-3.5" />
+                                {parsed.contact.linkedin}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Skills */}
+                    {parsed.skills.length > 0 && (
+                      <div className="rounded-xl border bg-card p-8">
+                        <h2 className="mb-4 text-base font-semibold">Skills</h2>
+                        <div className="flex flex-wrap gap-2">
+                          {parsed.skills.map((skill) => (
+                            <span
+                              key={skill}
+                              className="rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                            >
+                              {skill}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Experience */}
+                    {parsed.experience.length > 0 && (
+                      <div className="rounded-xl border bg-card p-8">
+                        <h2 className="mb-6 text-base font-semibold">
+                          Experience
+                        </h2>
+                        <div className="space-y-8">
+                          {parsed.experience.map((job, i) => (
+                            <div key={i} className="relative pl-6">
+                              <div className="absolute left-0 top-1.5 size-2.5 rounded-full bg-primary" />
+                              {i < parsed.experience.length - 1 && (
+                                <div className="absolute left-[4.5px] top-4 h-[calc(100%+16px)] w-px bg-border" />
+                              )}
+                              <div className="flex items-baseline justify-between">
+                                <div>
+                                  <h3 className="text-sm font-semibold">
+                                    {job.title}
+                                  </h3>
+                                  <p className="text-sm text-primary">
+                                    {job.company}
+                                  </p>
+                                </div>
+                                <span className="text-xs text-muted-foreground">
+                                  {job.period}
+                                </span>
+                              </div>
+                              <ul className="mt-2 space-y-1.5">
+                                {job.bullets.map((b, j) => (
+                                  <li
+                                    key={j}
+                                    className="text-sm leading-relaxed text-muted-foreground"
+                                  >
+                                    • {b}
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Education */}
+                    {parsed.education && parsed.education.length > 0 && (
+                      <div className="rounded-xl border bg-card p-8">
+                        <h2 className="mb-4 text-base font-semibold">
+                          Education
+                        </h2>
+                        <div className="space-y-4">
+                          {parsed.education.map((edu, i) => (
+                            <div key={i}>
+                              <h3 className="text-sm font-semibold">
+                                {edu.degree}
+                              </h3>
+                              <p className="text-sm text-primary">{edu.school}</p>
+                              {edu.period && (
+                                <p className="text-xs text-muted-foreground">
+                                  {edu.period}
+                                </p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Projects */}
+                    {parsed.projects && parsed.projects.length > 0 && (
+                      <div className="rounded-xl border bg-card p-8">
+                        <h2 className="mb-4 text-base font-semibold">Projects</h2>
+                        <div className="grid grid-cols-2 gap-4">
+                          {parsed.projects.map((project) => (
+                            <div
+                              key={project.name}
+                              className="rounded-lg border bg-background p-5"
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="text-sm font-semibold">
+                                  {project.name}
+                                </h3>
+                                <ExternalLink className="size-3.5 text-muted-foreground" />
+                              </div>
+                              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                                {project.description}
+                              </p>
+                              {project.tags && project.tags.length > 0 && (
+                                <div className="mt-3 flex flex-wrap gap-1.5">
+                                  {project.tags.map((tag) => (
+                                    <span
+                                      key={tag}
+                                      className="rounded bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground"
+                                    >
+                                      {tag}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : hasOriginalPreview ? (
+                  <div className="w-full max-w-[1000px] space-y-4">
+                    {selectedVersion.parseStatus === "failed" && (
+                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
+                        <p className="text-sm font-medium text-destructive">
+                          Parsing failed. Showing original PDF.
                         </p>
-                        {parsed.summary && (
-                          <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                            {parsed.summary}
+                        {selectedVersion.parseError && (
+                          <p className="mt-1 text-xs leading-relaxed text-foreground">
+                            {selectedVersion.parseError}
+                          </p>
+                        )}
+                        {parseFailureHint && (
+                          <p className="mt-2 text-xs text-muted-foreground">
+                            {parseFailureHint}
                           </p>
                         )}
                       </div>
-                      {parsed.contact && (
-                        <div className="flex flex-col items-end gap-1.5 text-sm text-muted-foreground">
-                          {parsed.contact.email && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <Mail className="size-3.5" />
-                              {parsed.contact.email}
-                            </span>
-                          )}
-                          {parsed.contact.phone && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <Phone className="size-3.5" />
-                              {parsed.contact.phone}
-                            </span>
-                          )}
-                          {parsed.contact.location && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <MapPin className="size-3.5" />
-                              {parsed.contact.location}
-                            </span>
-                          )}
-                          {parsed.contact.linkedin && (
-                            <span className="inline-flex items-center gap-1.5">
-                              <LinkIcon className="size-3.5" />
-                              {parsed.contact.linkedin}
-                            </span>
-                          )}
+                    )}
+
+                    {selectedVersion.parseStatus !== "parsed" &&
+                      selectedVersion.parseStatus !== "failed" && (
+                        <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                          Resume is being parsed. You can review the original
+                          PDF while waiting.
                         </div>
                       )}
+
+                    <ResumePdfPreview
+                      key={selectedVersion.originalFileUrl}
+                      fileUrl={selectedVersion.originalFileUrl!}
+                      filename={selectedVersion.originalFilename}
+                    />
+                  </div>
+                ) : (
+                  <div className="flex min-h-[300px] w-full max-w-[850px] items-center justify-center rounded-xl border border-dashed bg-card">
+                    <div className="space-y-2 text-center">
+                      <AlertCircle className="mx-auto size-10 text-muted-foreground/40" />
+                      <p className="text-sm text-muted-foreground">
+                        Original file preview is unavailable for this version.
+                      </p>
                     </div>
                   </div>
-
-                  {/* Skills */}
-                  {parsed.skills.length > 0 && (
-                    <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-4 text-base font-semibold">Skills</h2>
-                      <div className="flex flex-wrap gap-2">
-                        {parsed.skills.map((skill) => (
-                          <span
-                            key={skill}
-                            className="rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                          >
-                            {skill}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Experience */}
-                  {parsed.experience.length > 0 && (
-                    <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-6 text-base font-semibold">
-                        Experience
-                      </h2>
-                      <div className="space-y-8">
-                        {parsed.experience.map((job, i) => (
-                          <div key={i} className="relative pl-6">
-                            <div className="absolute left-0 top-1.5 size-2.5 rounded-full bg-primary" />
-                            {i < parsed.experience.length - 1 && (
-                              <div className="absolute left-[4.5px] top-4 h-[calc(100%+16px)] w-px bg-border" />
-                            )}
-                            <div className="flex items-baseline justify-between">
-                              <div>
-                                <h3 className="text-sm font-semibold">
-                                  {job.title}
-                                </h3>
-                                <p className="text-sm text-primary">
-                                  {job.company}
-                                </p>
-                              </div>
-                              <span className="text-xs text-muted-foreground">
-                                {job.period}
-                              </span>
-                            </div>
-                            <ul className="mt-2 space-y-1.5">
-                              {job.bullets.map((b, j) => (
-                                <li
-                                  key={j}
-                                  className="text-sm leading-relaxed text-muted-foreground"
-                                >
-                                  • {b}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Education */}
-                  {parsed.education && parsed.education.length > 0 && (
-                    <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-4 text-base font-semibold">
-                        Education
-                      </h2>
-                      <div className="space-y-4">
-                        {parsed.education.map((edu, i) => (
-                          <div key={i}>
-                            <h3 className="text-sm font-semibold">
-                              {edu.degree}
-                            </h3>
-                            <p className="text-sm text-primary">{edu.school}</p>
-                            {edu.period && (
-                              <p className="text-xs text-muted-foreground">
-                                {edu.period}
-                              </p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Projects */}
-                  {parsed.projects && parsed.projects.length > 0 && (
-                    <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-4 text-base font-semibold">Projects</h2>
-                      <div className="grid grid-cols-2 gap-4">
-                        {parsed.projects.map((project) => (
-                          <div
-                            key={project.name}
-                            className="rounded-lg border bg-background p-5"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <h3 className="text-sm font-semibold">
-                                {project.name}
-                              </h3>
-                              <ExternalLink className="size-3.5 text-muted-foreground" />
-                            </div>
-                            <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                              {project.description}
-                            </p>
-                            {project.tags && project.tags.length > 0 && (
-                              <div className="mt-3 flex flex-wrap gap-1.5">
-                                {project.tags.map((tag) => (
-                                  <span
-                                    key={tag}
-                                    className="rounded bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground"
-                                  >
-                                    {tag}
-                                  </span>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                )}
               </div>
             </ScrollArea>
 
@@ -636,45 +760,21 @@ export default function DashboardPage() {
                 </Button>
                 <Button
                   size="sm"
+                  disabled={selectedVersion.parseStatus !== "parsed"}
                   onClick={() =>
                     router.push(
                       `/interviews/new?resumeVersionId=${selectedVersion?.id}`,
                     )
                   }
                 >
-                  Start Interview with this Version
+                  {selectedVersion.parseStatus === "parsed"
+                    ? "Start Interview with this Version"
+                    : "Resume Not Ready for Interview"}
                 </Button>
               </div>
             </div>
           </>
-        ) : selectedVersion?.parseStatus === "failed" ? (
-          <div className="flex flex-1 items-center justify-center">
-            <div className="max-w-xl space-y-3 text-center">
-              <AlertCircle className="mx-auto size-12 text-destructive/50" />
-              <h2 className="text-lg font-semibold">Parsing Failed</h2>
-              <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                We couldn&apos;t parse this resume. Please try uploading a
-                different PDF file.
-              </p>
-              {selectedVersion?.parseError && (
-                <div className="rounded-md border bg-muted/40 p-3 text-left">
-                  <p className="text-xs font-medium text-muted-foreground">
-                    Error Details
-                  </p>
-                  <p className="mt-1 text-xs leading-relaxed text-foreground">
-                    {selectedVersion.parseError}
-                  </p>
-                </div>
-              )}
-              {parseFailureHint && (
-                <p className="text-xs text-muted-foreground">
-                  {parseFailureHint}
-                </p>
-              )}
-            </div>
-          </div>
-        ) : loading ||
-          (selectedVersion && selectedVersion.parseStatus !== "parsed") ? (
+        ) : loading ? (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center space-y-3">
               <Loader2 className="mx-auto size-8 animate-spin text-primary" />
