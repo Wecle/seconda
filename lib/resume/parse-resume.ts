@@ -1,10 +1,10 @@
 import { generateObject } from "ai";
-import { openaiLanguageModel } from "@/lib/ai/openai";
+import { chatLanguageModel } from "@/lib/ai/chat-provider";
 import { parsedResumeSchema } from "./types";
 
 export async function parseResumeWithAI(extractedText: string) {
   const { object } = await generateObject({
-    model: openaiLanguageModel,
+    model: chatLanguageModel,
     schema: parsedResumeSchema,
     system: `你是专业的简历分析与面试专家。
 只允许基于简历原文进行解析，不得虚构或补充不存在的信息。

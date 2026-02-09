@@ -1,5 +1,5 @@
 import { generateObject } from "ai";
-import { openaiLanguageModel } from "@/lib/ai/openai";
+import { chatLanguageModel } from "@/lib/ai/chat-provider";
 import {
   generatedQuestionsSchema,
   scoreResultSchema,
@@ -44,7 +44,7 @@ ${truncatedText}
   }
 
   const { object } = await generateObject({
-    model: openaiLanguageModel,
+    model: chatLanguageModel,
     schema: generatedQuestionsSchema,
     system: "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。",
     prompt,
@@ -72,7 +72,7 @@ export async function scoreInterviewAnswer(params: {
 简历摘要：${params.resumeContext}`;
 
   const { object } = await generateObject({
-    model: openaiLanguageModel,
+    model: chatLanguageModel,
     schema: scoreResultSchema,
     system: "你是专业的面试评估专家。请根据以下六个维度对候选人的回答进行评分（0-10分）：理解力(Understanding)、表达力(Expression)、逻辑性(Logic)、深度(Depth)、真实性(Authenticity)、反思力(Reflection)。同时提供优点、改进建议和深度分析。评分必须客观公正，基于回答内容本身。",
     prompt,
@@ -121,7 +121,7 @@ ${questionsDetail}
 候选人简历摘要：${params.resumeSummary}`;
 
   const { object } = await generateObject({
-    model: openaiLanguageModel,
+    model: chatLanguageModel,
     schema: interviewReportSchema,
     system: "你是专业的面试教练。请基于候选人的所有面试回答和评分，生成一份全面的面试评估报告。报告应包含总分（0-100）、六维能力平均分、核心优势、需要改进的关键领域、总结和下一步建议。",
     prompt,

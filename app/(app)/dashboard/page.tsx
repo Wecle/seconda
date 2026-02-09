@@ -266,11 +266,15 @@ export default function DashboardPage() {
   const parseFailureHint = (() => {
     const error = selectedVersion?.parseError?.toLowerCase() ?? "";
     if (!error) return "";
-    if (error.includes("incorrect api key")) {
+    if (
+      error.includes("incorrect api key") ||
+      error.includes("invalid x-api-key") ||
+      error.includes("authentication")
+    ) {
       return "OPENAI_API_KEY 无效，请更新 .env 后重启服务。";
     }
     if (error.includes("not found")) {
-      return "BASE_MODEL 或 BASE_URL 不可用，请检查模型名和接口地址。";
+      return "接口返回 Not Found。请检查 BASE_MODEL 和 BASE_URL 是否正确。";
     }
     if (error.includes("rate limit") || error.includes("速率限制")) {
       return "接口触发限流，请稍后重试上传，或降低并发请求频率。";
@@ -282,9 +286,9 @@ export default function DashboardPage() {
   })();
 
   return (
-    <div className="flex h-screen overflow-hidden bg-background">
+    <div className="flex h-screen min-h-0 overflow-hidden bg-background">
       {/* Left Sidebar */}
-      <aside className="flex w-72 shrink-0 flex-col border-r bg-card">
+      <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r bg-card">
         <Link href="/" className="flex items-center gap-2.5 px-5 py-4">
           <div className="flex size-8 items-center justify-center rounded-lg bg-primary">
             <FileText className="size-4 text-primary-foreground" />
@@ -297,7 +301,7 @@ export default function DashboardPage() {
 
         <Separator />
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="p-3">
             <p className="mb-2 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
               Resumes
@@ -414,7 +418,7 @@ export default function DashboardPage() {
       </aside>
 
       {/* Main Content */}
-      <main className="relative flex flex-1 flex-col overflow-hidden">
+      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {parsed ? (
           <>
             {/* Top Nav */}
@@ -444,7 +448,7 @@ export default function DashboardPage() {
             </header>
 
             {/* Scrollable Content */}
-            <ScrollArea className="flex-1">
+            <ScrollArea className="min-h-0 flex-1">
               <div className="flex justify-center px-8 py-8 pb-24">
                 <div className="w-full max-w-[850px] space-y-6">
                   {/* Resume Header */}
