@@ -119,13 +119,6 @@ export async function POST(request: NextRequest) {
         .set({ parsedJson: parsed, parseStatus: "parsed" })
         .where(eq(resumeVersions.id, versionId));
 
-      if (parsed.title) {
-        await db
-          .update(resumes)
-          .set({ title: parsed.title, updatedAt: new Date() })
-          .where(eq(resumes.id, resumeId));
-      }
-
       return NextResponse.json({
         id: resumeId,
         versionId,

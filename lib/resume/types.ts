@@ -3,7 +3,7 @@ import { z } from "zod";
 export const parsedResumeSchema = z.object({
   name: z.string().describe("Full name of the candidate"),
   title: z.string().describe("Professional title or current role"),
-  summary: z.string().optional().describe("Professional summary or bio"),
+  summary: z.string().default("").describe("Professional summary or bio"),
   contact: z.object({
     email: z.string().optional(),
     phone: z.string().optional(),
@@ -27,7 +27,7 @@ export const parsedResumeSchema = z.object({
     name: z.string(),
     description: z.string(),
     tags: z.array(z.string()).optional(),
-  })).optional().describe("Notable projects"),
+  })).optional().describe("All project entries from the resume, in original order"),
 });
 
 export type ParsedResume = z.infer<typeof parsedResumeSchema>;
