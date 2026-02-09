@@ -1,124 +1,19 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  FileText,
-  ChevronRight,
-  ChevronDown,
-  FolderOpen,
-  Folder,
-  Upload,
-  Trash2,
-  Mail,
-  Phone,
-  MapPin,
-  Link as LinkIcon,
-  Settings,
-  CheckCircle,
-  ExternalLink,
-  Loader2,
-  AlertCircle,
-  X,
-  FileUp,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+import { FileUp, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { InterviewSettingsForm } from "@/components/interview/interview-settings-form";
 import {
   defaultInterviewConfig,
   type InterviewConfig,
 } from "@/lib/interview/settings";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-
-const ResumePdfPreview = dynamic(
-  () =>
-    import("@/components/resume/pdf-preview").then(
-      (module) => module.ResumePdfPreview,
-    ),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="flex h-[calc(100vh-380px)] items-center justify-center rounded-md border bg-muted/20">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
-      </div>
-    ),
-  },
-);
-
-interface ParsedResume {
-  name: string;
-  title: string;
-  summary?: string;
-  contact?: {
-    email?: string;
-    phone?: string;
-    location?: string;
-    linkedin?: string;
-    website?: string;
-  };
-  skills: string[];
-  experience: {
-    title: string;
-    company: string;
-    period: string;
-    bullets: string[];
-  }[];
-  education?: {
-    degree: string;
-    school: string;
-    period?: string;
-  }[];
-  projects?: {
-    name: string;
-    description: string;
-    tags?: string[];
-  }[];
-}
-
-interface ResumeVersion {
-  id: string;
-  versionNumber: number;
-  originalFilename: string;
-  originalFileUrl?: string | null;
-  parseStatus: string;
-  parseError?: string | null;
-  parsedData: ParsedResume | null;
-  createdAt: string;
-}
-
-interface Resume {
-  id: string;
-  title: string;
-  currentVersionId: string | null;
-  interviewSettings: InterviewConfig | null;
-  createdAt: string;
-  updatedAt: string;
-  versions: ResumeVersion[];
-}
+import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
+import { InterviewSettingsDialog } from "@/components/dashboard/interview-settings-dialog";
+import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
+import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
+import type { Resume } from "@/components/dashboard/types";
+import { UploadResumeDialog } from "@/components/dashboard/upload-resume-dialog";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -425,467 +320,34 @@ export default function DashboardPage() {
 
   return (
     <div className="flex h-screen min-h-0 overflow-hidden bg-background">
-      {/* Left Sidebar */}
-      <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r bg-card">
-        <Link href="/" className="flex items-center gap-2.5 px-5 py-4">
-          <div className="flex size-8 items-center justify-center rounded-lg bg-primary">
-            <FileText className="size-4 text-primary-foreground" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold">Resume AI</p>
-            <p className="text-xs text-muted-foreground">Dashboard</p>
-          </div>
-        </Link>
+      <ResumeSidebar
+        loading={loading}
+        resumes={resumes}
+        expandedFolders={expandedFolders}
+        selectedVersionId={selectedVersionId}
+        deletingResumeId={deletingResumeId}
+        onToggleFolder={toggleFolder}
+        onSelectVersion={selectVersion}
+        onRequestDelete={setPendingDeleteResume}
+        onOpenUpload={() => setUploadOpen(true)}
+      />
 
-        <Separator />
-
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="p-3">
-            <p className="mb-2 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-              Resumes
-            </p>
-
-            {loading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : resumes.length === 0 ? (
-              <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-                No resumes yet. Upload one to get started.
-              </p>
-            ) : (
-              resumes.map((resume) => {
-                const isExpanded = expandedFolders.has(resume.id);
-                return (
-                  <div key={resume.id} className="mb-1">
-                    <div className="group flex items-center gap-0.5 rounded-md hover:bg-accent/50 pr-1 transition-colors">
-                      <button
-                        onClick={() => toggleFolder(resume.id)}
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-l-md px-2 py-1.5 text-sm font-medium outline-none"
-                      >
-                        {isExpanded ? (
-                          <ChevronDown className="size-3.5 text-muted-foreground/70" />
-                        ) : (
-                          <ChevronRight className="size-3.5 text-muted-foreground/70" />
-                        )}
-                        {isExpanded ? (
-                          <FolderOpen className="size-4 text-primary" />
-                        ) : (
-                          <Folder className="size-4 text-muted-foreground" />
-                        )}
-                        <span className="truncate">{resume.title}</span>
-                      </button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon-sm"
-                        className="size-7 shrink-0 opacity-0 transition-opacity hover:bg-transparent hover:text-destructive group-hover:opacity-100"
-                        disabled={deletingResumeId === resume.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setPendingDeleteResume({
-                            id: resume.id,
-                            title: resume.title,
-                          });
-                        }}
-                        aria-label={`Delete ${resume.title}`}
-                      >
-                        {deletingResumeId === resume.id ? (
-                          <Loader2 className="size-3.5 animate-spin" />
-                        ) : (
-                          <Trash2 className="size-3.5" />
-                        )}
-                      </Button>
-                    </div>
-
-                    {isExpanded && (
-                      <div className="ml-5 border-l pl-3">
-                        {resume.versions.map((v) => {
-                          const isActive = v.id === selectedVersionId;
-                          return (
-                            <button
-                              key={v.id}
-                              onClick={() => selectVersion(resume.id, v.id)}
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-                                isActive
-                                  ? "bg-primary/10 font-medium text-primary"
-                                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                              )}
-                            >
-                              <FileText className="size-3.5" />
-                              <span>v{v.versionNumber}</span>
-                              {v.id === resume.currentVersionId && (
-                                <Badge
-                                  variant="default"
-                                  className="ml-auto text-[10px] px-1.5 py-0"
-                                >
-                                  Current
-                                </Badge>
-                              )}
-                              {v.parseStatus === "failed" && (
-                                <AlertCircle className="ml-2 size-3.5 text-destructive" />
-                              )}
-                              {v.parseStatus === "parsing" && (
-                                <Loader2 className="ml-2 size-3.5 animate-spin" />
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </ScrollArea>
-
-        <Separator />
-
-        <div className="p-3">
-          <Button
-            className="w-full"
-            size="sm"
-            onClick={() => setUploadOpen(true)}
-          >
-            <Upload className="size-4" />
-            Upload New Resume
-          </Button>
-        </div>
-      </aside>
-
-      {/* Main Content */}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         {selectedVersion ? (
-          <>
-            {/* Top Nav */}
-            <header className="flex items-center justify-between border-b bg-card px-6 py-3">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Resumes</span>
-                <ChevronRight className="size-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">
-                  {selectedResume?.title}
-                </span>
-                <ChevronRight className="size-3.5 text-muted-foreground" />
-                <span className="font-medium">
-                  v{selectedVersion?.versionNumber}
-                </span>
-              </div>
-              <div className="flex items-center gap-3">
-                {selectedVersion.parseStatus === "parsed" && (
-                  <Badge
-                    variant="secondary"
-                    className="gap-1 bg-emerald-50 text-emerald-700"
-                  >
-                    <CheckCircle className="size-3" />
-                    Parsed Successfully
-                  </Badge>
-                )}
-                {selectedVersion.parseStatus === "failed" && (
-                  <Badge variant="destructive" className="gap-1">
-                    <AlertCircle className="size-3" />
-                    Parsing Failed
-                  </Badge>
-                )}
-                {selectedVersion.parseStatus !== "parsed" &&
-                  selectedVersion.parseStatus !== "failed" && (
-                    <Badge variant="secondary" className="gap-1">
-                      <Loader2 className="size-3 animate-spin" />
-                      Parsing...
-                    </Badge>
-                  )}
-
-                <div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={
-                      activePreviewMode === "parsed" ? "secondary" : "ghost"
-                    }
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setPreviewMode("parsed")}
-                    disabled={!hasParsedPreview}
-                  >
-                    Parsed
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={
-                      activePreviewMode === "original" ? "secondary" : "ghost"
-                    }
-                    className="h-7 px-2 text-xs"
-                    onClick={() => setPreviewMode("original")}
-                    disabled={!hasOriginalPreview}
-                  >
-                    Original
-                  </Button>
-                </div>
-              </div>
-            </header>
-
-            {/* Scrollable Content */}
-            <ScrollArea className="min-h-0 flex-1">
-              <div className="flex justify-center px-8 py-8 pb-24">
-                {activePreviewMode === "parsed" && parsed ? (
-                  <div className="w-full max-w-[850px] space-y-6">
-                    {/* Resume Header */}
-                    <div className="rounded-xl border bg-card p-8">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <h1 className="text-2xl font-bold">{parsed.name}</h1>
-                          <p className="mt-1 text-lg font-medium text-primary">
-                            {parsed.title}
-                          </p>
-                          {parsed.summary && (
-                            <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                              {parsed.summary}
-                            </p>
-                          )}
-                        </div>
-                        {parsed.contact && (
-                          <div className="flex flex-col items-end gap-1.5 text-sm text-muted-foreground">
-                            {parsed.contact.email && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <Mail className="size-3.5" />
-                                {parsed.contact.email}
-                              </span>
-                            )}
-                            {parsed.contact.phone && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <Phone className="size-3.5" />
-                                {parsed.contact.phone}
-                              </span>
-                            )}
-                            {parsed.contact.location && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <MapPin className="size-3.5" />
-                                {parsed.contact.location}
-                              </span>
-                            )}
-                            {parsed.contact.linkedin && (
-                              <span className="inline-flex items-center gap-1.5">
-                                <LinkIcon className="size-3.5" />
-                                {parsed.contact.linkedin}
-                              </span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Skills */}
-                    {parsed.skills.length > 0 && (
-                      <div className="rounded-xl border bg-card p-8">
-                        <h2 className="mb-4 text-base font-semibold">Skills</h2>
-                        <div className="flex flex-wrap gap-2">
-                          {parsed.skills.map((skill) => (
-                            <span
-                              key={skill}
-                              className="rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                            >
-                              {skill}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Experience */}
-                    {parsed.experience.length > 0 && (
-                      <div className="rounded-xl border bg-card p-8">
-                        <h2 className="mb-6 text-base font-semibold">
-                          Experience
-                        </h2>
-                        <div className="space-y-8">
-                          {parsed.experience.map((job, i) => (
-                            <div key={i} className="relative pl-6">
-                              <div className="absolute left-0 top-1.5 size-2.5 rounded-full bg-primary" />
-                              {i < parsed.experience.length - 1 && (
-                                <div className="absolute left-[4.5px] top-4 h-[calc(100%+16px)] w-px bg-border" />
-                              )}
-                              <div className="flex items-baseline justify-between">
-                                <div>
-                                  <h3 className="text-sm font-semibold">
-                                    {job.title}
-                                  </h3>
-                                  <p className="text-sm text-primary">
-                                    {job.company}
-                                  </p>
-                                </div>
-                                <span className="text-xs text-muted-foreground">
-                                  {job.period}
-                                </span>
-                              </div>
-                              <ul className="mt-2 space-y-1.5">
-                                {job.bullets.map((b, j) => (
-                                  <li
-                                    key={j}
-                                    className="text-sm leading-relaxed text-muted-foreground"
-                                  >
-                                    • {b}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Education */}
-                    {parsed.education && parsed.education.length > 0 && (
-                      <div className="rounded-xl border bg-card p-8">
-                        <h2 className="mb-4 text-base font-semibold">
-                          Education
-                        </h2>
-                        <div className="space-y-4">
-                          {parsed.education.map((edu, i) => (
-                            <div key={i}>
-                              <h3 className="text-sm font-semibold">
-                                {edu.degree}
-                              </h3>
-                              <p className="text-sm text-primary">{edu.school}</p>
-                              {edu.period && (
-                                <p className="text-xs text-muted-foreground">
-                                  {edu.period}
-                                </p>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Projects */}
-                    {parsed.projects && parsed.projects.length > 0 && (
-                      <div className="rounded-xl border bg-card p-8">
-                        <h2 className="mb-4 text-base font-semibold">Projects</h2>
-                        <div className="grid grid-cols-2 gap-4">
-                          {parsed.projects.map((project) => (
-                            <div
-                              key={project.name}
-                              className="rounded-lg border bg-background p-5"
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <h3 className="text-sm font-semibold">
-                                  {project.name}
-                                </h3>
-                                <ExternalLink className="size-3.5 text-muted-foreground" />
-                              </div>
-                              <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                                {project.description}
-                              </p>
-                              {project.tags && project.tags.length > 0 && (
-                                <div className="mt-3 flex flex-wrap gap-1.5">
-                                  {project.tags.map((tag) => (
-                                    <span
-                                      key={tag}
-                                      className="rounded bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground"
-                                    >
-                                      {tag}
-                                    </span>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : hasOriginalPreview ? (
-                  <div className="w-full max-w-[1000px] space-y-4">
-                    {selectedVersion.parseStatus === "failed" && (
-                      <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
-                        <p className="text-sm font-medium text-destructive">
-                          Parsing failed. Showing original PDF.
-                        </p>
-                        {selectedVersion.parseError && (
-                          <p className="mt-1 text-xs leading-relaxed text-foreground">
-                            {selectedVersion.parseError}
-                          </p>
-                        )}
-                        {parseFailureHint && (
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {parseFailureHint}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {selectedVersion.parseStatus !== "parsed" &&
-                      selectedVersion.parseStatus !== "failed" && (
-                        <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                          Resume is being parsed. You can review the original
-                          PDF while waiting.
-                        </div>
-                      )}
-
-                    <ResumePdfPreview
-                      key={selectedVersion.originalFileUrl}
-                      fileUrl={selectedVersion.originalFileUrl!}
-                      filename={selectedVersion.originalFilename}
-                    />
-                  </div>
-                ) : (
-                  <div className="flex min-h-[300px] w-full max-w-[850px] items-center justify-center rounded-xl border border-dashed bg-card">
-                    <div className="space-y-2 text-center">
-                      <AlertCircle className="mx-auto size-10 text-muted-foreground/40" />
-                      <p className="text-sm text-muted-foreground">
-                        Original file preview is unavailable for this version.
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </ScrollArea>
-
-            {/* Floating Action Bar */}
-            <div className="absolute inset-x-0 bottom-0 flex items-center justify-between border-t bg-card/95 px-6 py-3 backdrop-blur-sm">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FileText className="size-4" />
-                <span>
-                  {selectedResume?.title} —{" "}
-                  <span className="font-medium text-foreground">
-                    v{selectedVersion?.versionNumber}
-                  </span>
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                {selectedInterviewConfig && (
-                  <Badge variant="secondary" className="h-8">
-                    Settings Saved
-                  </Badge>
-                )}
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  onClick={openSettingsDialog}
-                >
-                  <Settings className="size-4" />
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={
-                    selectedVersion.parseStatus !== "parsed" ||
-                    !selectedInterviewConfig ||
-                    creatingInterview
-                  }
-                  onClick={handleStartInterview}
-                >
-                  {selectedVersion.parseStatus !== "parsed"
-                    ? "Resume Not Ready for Interview"
-                    : creatingInterview
-                      ? "Starting Interview..."
-                      : selectedInterviewConfig
-                        ? "Start Interview with this Version"
-                        : "Configure Settings First"}
-                </Button>
-              </div>
-            </div>
-          </>
+          <ResumePreviewPane
+            selectedResumeTitle={selectedResume?.title}
+            selectedVersion={selectedVersion}
+            parsed={parsed}
+            activePreviewMode={activePreviewMode}
+            hasParsedPreview={hasParsedPreview}
+            hasOriginalPreview={hasOriginalPreview}
+            parseFailureHint={parseFailureHint}
+            onPreviewModeChange={setPreviewMode}
+            selectedInterviewConfig={selectedInterviewConfig}
+            creatingInterview={creatingInterview}
+            onOpenSettings={openSettingsDialog}
+            onStartInterview={handleStartInterview}
+          />
         ) : loading ? (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center space-y-3">
@@ -912,212 +374,54 @@ export default function DashboardPage() {
         )}
       </main>
 
-      <Dialog
+      <InterviewSettingsDialog
         open={settingsOpen}
+        saving={savingInterviewSettings}
+        value={draftInterviewConfig}
         onOpenChange={(open) => {
           if (!savingInterviewSettings) {
             setSettingsOpen(open);
           }
         }}
-      >
-        <DialogContent className="flex max-h-[90vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
-          <DialogHeader className="border-b px-6 py-5 text-left">
-            <DialogTitle>Interview Settings</DialogTitle>
-            <DialogDescription>
-              Configure your AI mock interview session parameters.
-            </DialogDescription>
-          </DialogHeader>
+        onChange={setDraftInterviewConfig}
+        onCancel={() => setSettingsOpen(false)}
+        onSave={handleSaveInterviewSettings}
+      />
 
-          <div className="flex-1 overflow-y-auto px-6 py-6">
-            <InterviewSettingsForm
-              value={draftInterviewConfig}
-              onChange={setDraftInterviewConfig}
-            />
-          </div>
-          <div className="flex items-center justify-end gap-3 border-t px-6 py-4">
-            <Button
-              variant="ghost"
-              onClick={() => setSettingsOpen(false)}
-              disabled={savingInterviewSettings}
-            >
-              Cancel
-            </Button>
-            <Button
-              className="bg-primary text-primary-foreground"
-              onClick={handleSaveInterviewSettings}
-              disabled={savingInterviewSettings}
-            >
-              {savingInterviewSettings ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                "Save"
-              )}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <UploadResumeDialog
+        open={uploadOpen}
+        onOpenChange={setUploadOpen}
+        uploadTitle={uploadTitle}
+        onUploadTitleChange={setUploadTitle}
+        dragOver={dragOver}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleFileDrop}
+        fileInputRef={fileInputRef}
+        onFileSelect={handleFileSelect}
+        selectedFile={selectedFile}
+        onClearFile={() => setSelectedFile(null)}
+        uploadError={uploadError}
+        uploading={uploading}
+        onCancel={() => setUploadOpen(false)}
+        onUpload={handleUpload}
+      />
 
-      {/* Upload Dialog */}
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Upload Resume</DialogTitle>
-            <DialogDescription>
-              Upload a PDF resume. It will be automatically parsed by AI.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="title">Resume Title</Label>
-              <Input
-                id="title"
-                value={uploadTitle}
-                onChange={(e) => setUploadTitle(e.target.value)}
-                placeholder="e.g. Frontend Developer"
-              />
-            </div>
-
-            <div
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleFileDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors",
-                dragOver
-                  ? "border-primary bg-primary/5"
-                  : "border-muted-foreground/25 hover:border-primary/50",
-              )}
-            >
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".pdf"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              {selectedFile ? (
-                <div className="flex items-center gap-3">
-                  <FileText className="size-8 text-primary" />
-                  <div>
-                    <p className="text-sm font-medium">{selectedFile.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedFile(null);
-                    }}
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-              ) : (
-                <>
-                  <Upload className="size-8 text-muted-foreground/50" />
-                  <p className="mt-2 text-sm font-medium">
-                    Drop PDF here or click to browse
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    PDF up to 10MB
-                  </p>
-                </>
-              )}
-            </div>
-
-            {uploadError && (
-              <div className="flex items-center gap-2 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-                <AlertCircle className="size-4 shrink-0" />
-                {uploadError}
-              </div>
-            )}
-
-            <div className="flex justify-end gap-2">
-              <Button
-                variant="outline"
-                onClick={() => setUploadOpen(false)}
-                disabled={uploading}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleUpload}
-                disabled={!selectedFile || uploading}
-              >
-                {uploading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="size-4" />
-                    Upload &amp; Parse
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <AlertDialog
-        open={Boolean(pendingDeleteResume)}
+      <DeleteResumeDialog
+        pendingDeleteResume={pendingDeleteResume}
+        deletingResumeId={deletingResumeId}
         onOpenChange={(open) => {
           if (!open && !deletingResumeId) {
             setPendingDeleteResume(null);
           }
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Resume?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {pendingDeleteResume
-                ? `Are you sure you want to delete "${pendingDeleteResume.title}"? This will also delete its versions and related interviews. This action cannot be undone.`
-                : "This action cannot be undone."}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={Boolean(deletingResumeId)}>
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
-              disabled={
-                !pendingDeleteResume ||
-                deletingResumeId === pendingDeleteResume.id
-              }
-              onClick={(event) => {
-                event.preventDefault();
-                if (!pendingDeleteResume) return;
-                void handleDeleteResume(pendingDeleteResume.id);
-              }}
-            >
-              {pendingDeleteResume &&
-              deletingResumeId === pendingDeleteResume.id ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Deleting...
-                </>
-              ) : (
-                "Delete"
-              )}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        onConfirm={(resumeId) => {
+          void handleDeleteResume(resumeId);
+        }}
+      />
     </div>
   );
 }
