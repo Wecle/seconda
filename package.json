@@ -10,7 +10,7 @@
     "db:migrate": "tsx --env-file=.env lib/db/migrate.ts"
   },
   "dependencies": {
-    "@ai-sdk/openai": "^3.0.25",
+    "@ai-sdk/openai": "^3.0.26",
     "@vercel/blob": "^2.2.0",
     "ai": "^6.0.73",
     "class-variance-authority": "^0.7.1",
