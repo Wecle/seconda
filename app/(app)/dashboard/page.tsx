@@ -9,6 +9,7 @@ import {
   type InterviewConfig,
 } from "@/lib/interview/settings";
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
+import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
 import { InterviewSettingsDialog } from "@/components/dashboard/interview-settings-dialog";
 import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
@@ -48,6 +49,12 @@ export default function DashboardPage() {
   >({});
   const [savingInterviewSettings, setSavingInterviewSettings] = useState(false);
   const [creatingInterview, setCreatingInterview] = useState(false);
+  const [retryingVersionId, setRetryingVersionId] = useState<string | null>(
+    null,
+  );
+  const [errorAlertMessage, setErrorAlertMessage] = useState<string | null>(
+    null,
+  );
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchResumes = useCallback(async () => {
@@ -155,7 +162,7 @@ export default function DashboardPage() {
       const res = await fetch(`/api/resumes/${resumeId}`, { method: "DELETE" });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        window.alert(data?.error ?? "Failed to delete resume.");
+        setErrorAlertMessage(data?.error ?? "Failed to delete resume.");
         return;
       }
 
@@ -178,7 +185,7 @@ export default function DashboardPage() {
       await fetchResumes();
     } catch (e) {
       console.error("Failed to delete resume:", e);
-      window.alert("Failed to delete resume. Please try again.");
+      setErrorAlertMessage("Failed to delete resume. Please try again.");
     } finally {
       setDeletingResumeId(null);
       setPendingDeleteResume(null);
@@ -204,7 +211,7 @@ export default function DashboardPage() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok || !data?.interviewSettings) {
-        window.alert(data?.error ?? "Failed to save interview settings.");
+        setErrorAlertMessage(data?.error ?? "Failed to save interview settings.");
         return;
       }
 
@@ -215,7 +222,7 @@ export default function DashboardPage() {
       setSettingsOpen(false);
     } catch (e) {
       console.error("Failed to save interview settings:", e);
-      window.alert("Failed to save interview settings. Please try again.");
+      setErrorAlertMessage("Failed to save interview settings. Please try again.");
     } finally {
       setSavingInterviewSettings(false);
     }
@@ -245,15 +252,41 @@ export default function DashboardPage() {
       });
       const data = await res.json().catch(() => null);
       if (!res.ok) {
-        window.alert(data?.error ?? "Failed to create interview.");
+        setErrorAlertMessage(data?.error ?? "Failed to create interview.");
         return;
       }
       router.push(`/interviews/${data.interviewId}/room`);
     } catch (e) {
       console.error("Failed to start interview:", e);
-      window.alert("Failed to create interview. Please try again.");
+      setErrorAlertMessage("Failed to create interview. Please try again.");
     } finally {
       setCreatingInterview(false);
+    }
+  };
+
+  const handleRetryParse = async () => {
+    if (!selectedResumeId || !selectedVersion) return;
+    if (retryingVersionId === selectedVersion.id) return;
+
+    setRetryingVersionId(selectedVersion.id);
+    try {
+      const res = await fetch(
+        `/api/resumes/${selectedResumeId}/versions/${selectedVersion.id}/reparse`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setErrorAlertMessage(data?.error ?? "Failed to re-parse resume.");
+        return;
+      }
+
+      await fetchResumes();
+    } catch (e) {
+      console.error("Failed to re-parse resume:", e);
+      setErrorAlertMessage("Failed to re-parse resume. Please try again.");
+    } finally {
+      setRetryingVersionId(null);
     }
   };
 
@@ -342,7 +375,9 @@ export default function DashboardPage() {
             hasParsedPreview={hasParsedPreview}
             hasOriginalPreview={hasOriginalPreview}
             parseFailureHint={parseFailureHint}
+            retryingParse={retryingVersionId === selectedVersion.id}
             onPreviewModeChange={setPreviewMode}
+            onRetryParse={handleRetryParse}
             selectedInterviewConfig={selectedInterviewConfig}
             creatingInterview={creatingInterview}
             onOpenSettings={openSettingsDialog}
@@ -420,6 +455,15 @@ export default function DashboardPage() {
         }}
         onConfirm={(resumeId) => {
           void handleDeleteResume(resumeId);
+        }}
+      />
+
+      <ErrorAlertDialog
+        message={errorAlertMessage}
+        onOpenChange={(open) => {
+          if (!open) {
+            setErrorAlertMessage(null);
+          }
         }}
       />
     </div>
