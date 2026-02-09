@@ -10,12 +10,11 @@ import {
   FolderOpen,
   Folder,
   Upload,
+  Trash2,
   Mail,
   Phone,
   MapPin,
   Link as LinkIcon,
-  Download,
-  Pencil,
   Settings,
   CheckCircle,
   ExternalLink,
@@ -31,6 +30,16 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -93,11 +102,20 @@ export default function DashboardPage() {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
-  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(
+    null,
+  );
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set(),
+  );
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [deletingResumeId, setDeletingResumeId] = useState<string | null>(null);
+  const [pendingDeleteResume, setPendingDeleteResume] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
   const [uploadTitle, setUploadTitle] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -109,7 +127,10 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = await res.json();
         setResumes(data);
-        if (data.length > 0 && !selectedResumeId) {
+        const hasSelectedResume = selectedResumeId
+          ? data.some((resume: Resume) => resume.id === selectedResumeId)
+          : false;
+        if (data.length > 0 && !hasSelectedResume) {
           const first = data[0];
           setSelectedResumeId(first.id);
           setExpandedFolders(new Set([first.id]));
@@ -136,7 +157,10 @@ export default function DashboardPage() {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
-    formData.append("title", uploadTitle || selectedFile.name.replace(/\.[^/.]+$/, ""));
+    formData.append(
+      "title",
+      uploadTitle || selectedFile.name.replace(/\.[^/.]+$/, ""),
+    );
 
     try {
       const res = await fetch("/api/resumes/upload", {
@@ -150,7 +174,10 @@ export default function DashboardPage() {
         return;
       }
 
-      if (data.status === "extraction_failed" || data.status === "parse_failed") {
+      if (
+        data.status === "extraction_failed" ||
+        data.status === "parse_failed"
+      ) {
         setUploadError(data.error || "Processing failed");
       }
 
@@ -161,7 +188,7 @@ export default function DashboardPage() {
       setSelectedVersionId(data.versionId);
       setExpandedFolders((prev) => new Set([...prev, data.id]));
       await fetchResumes();
-    } catch (e) {
+    } catch {
       setUploadError("Upload failed. Please try again.");
     } finally {
       setUploading(false);
@@ -186,6 +213,36 @@ export default function DashboardPage() {
     }
   };
 
+  const handleDeleteResume = async (resumeId: string) => {
+    setDeletingResumeId(resumeId);
+    try {
+      const res = await fetch(`/api/resumes/${resumeId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        window.alert(data?.error ?? "Failed to delete resume.");
+        return;
+      }
+
+      if (selectedResumeId === resumeId) {
+        setSelectedResumeId(null);
+        setSelectedVersionId(null);
+      }
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        next.delete(resumeId);
+        return next;
+      });
+
+      await fetchResumes();
+    } catch (e) {
+      console.error("Failed to delete resume:", e);
+      window.alert("Failed to delete resume. Please try again.");
+    } finally {
+      setDeletingResumeId(null);
+      setPendingDeleteResume(null);
+    }
+  };
+
   const toggleFolder = (resumeId: string) => {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
@@ -202,7 +259,7 @@ export default function DashboardPage() {
 
   const selectedResume = resumes.find((r) => r.id === selectedResumeId);
   const selectedVersion = selectedResume?.versions.find(
-    (v) => v.id === selectedVersionId
+    (v) => v.id === selectedVersionId,
   );
   const parsed = selectedVersion?.parsedData;
 
@@ -259,22 +316,45 @@ export default function DashboardPage() {
                 const isExpanded = expandedFolders.has(resume.id);
                 return (
                   <div key={resume.id} className="mb-1">
-                    <button
-                      onClick={() => toggleFolder(resume.id)}
-                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium hover:bg-accent"
-                    >
-                      {isExpanded ? (
-                        <ChevronDown className="size-3.5 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="size-3.5 text-muted-foreground" />
-                      )}
-                      {isExpanded ? (
-                        <FolderOpen className="size-4 text-primary" />
-                      ) : (
-                        <Folder className="size-4 text-muted-foreground" />
-                      )}
-                      <span className="truncate">{resume.title}</span>
-                    </button>
+                    <div className="group flex items-center gap-0.5 rounded-md hover:bg-accent/50 pr-1 transition-colors">
+                      <button
+                        onClick={() => toggleFolder(resume.id)}
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-l-md px-2 py-1.5 text-sm font-medium outline-none"
+                      >
+                        {isExpanded ? (
+                          <ChevronDown className="size-3.5 text-muted-foreground/70" />
+                        ) : (
+                          <ChevronRight className="size-3.5 text-muted-foreground/70" />
+                        )}
+                        {isExpanded ? (
+                          <FolderOpen className="size-4 text-primary" />
+                        ) : (
+                          <Folder className="size-4 text-muted-foreground" />
+                        )}
+                        <span className="truncate">{resume.title}</span>
+                      </button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="size-7 shrink-0 opacity-0 transition-opacity hover:bg-transparent hover:text-destructive group-hover:opacity-100"
+                        disabled={deletingResumeId === resume.id}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPendingDeleteResume({
+                            id: resume.id,
+                            title: resume.title,
+                          });
+                        }}
+                        aria-label={`Delete ${resume.title}`}
+                      >
+                        {deletingResumeId === resume.id ? (
+                          <Loader2 className="size-3.5 animate-spin" />
+                        ) : (
+                          <Trash2 className="size-3.5" />
+                        )}
+                      </Button>
+                    </div>
 
                     {isExpanded && (
                       <div className="ml-5 border-l pl-3">
@@ -288,13 +368,16 @@ export default function DashboardPage() {
                                 "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
                                 isActive
                                   ? "bg-primary/10 font-medium text-primary"
-                                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
                               )}
                             >
                               <FileText className="size-3.5" />
                               <span>v{v.versionNumber}</span>
                               {v.id === resume.currentVersionId && (
-                                <Badge variant="default" className="ml-auto text-[10px] px-1.5 py-0">
+                                <Badge
+                                  variant="default"
+                                  className="ml-auto text-[10px] px-1.5 py-0"
+                                >
                                   Current
                                 </Badge>
                               )}
@@ -319,7 +402,11 @@ export default function DashboardPage() {
         <Separator />
 
         <div className="p-3">
-          <Button className="w-full" size="sm" onClick={() => setUploadOpen(true)}>
+          <Button
+            className="w-full"
+            size="sm"
+            onClick={() => setUploadOpen(true)}
+          >
             <Upload className="size-4" />
             Upload New Resume
           </Button>
@@ -335,13 +422,20 @@ export default function DashboardPage() {
               <div className="flex items-center gap-2 text-sm">
                 <span className="text-muted-foreground">Resumes</span>
                 <ChevronRight className="size-3.5 text-muted-foreground" />
-                <span className="text-muted-foreground">{selectedResume?.title}</span>
+                <span className="text-muted-foreground">
+                  {selectedResume?.title}
+                </span>
                 <ChevronRight className="size-3.5 text-muted-foreground" />
-                <span className="font-medium">v{selectedVersion?.versionNumber}</span>
+                <span className="font-medium">
+                  v{selectedVersion?.versionNumber}
+                </span>
               </div>
               <div className="flex items-center gap-2">
                 {selectedVersion?.parseStatus === "parsed" && (
-                  <Badge variant="secondary" className="gap-1 bg-emerald-50 text-emerald-700">
+                  <Badge
+                    variant="secondary"
+                    className="gap-1 bg-emerald-50 text-emerald-700"
+                  >
                     <CheckCircle className="size-3" />
                     Parsed Successfully
                   </Badge>
@@ -358,7 +452,9 @@ export default function DashboardPage() {
                     <div className="flex items-start justify-between">
                       <div>
                         <h1 className="text-2xl font-bold">{parsed.name}</h1>
-                        <p className="mt-1 text-lg font-medium text-primary">{parsed.title}</p>
+                        <p className="mt-1 text-lg font-medium text-primary">
+                          {parsed.title}
+                        </p>
                         {parsed.summary && (
                           <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
                             {parsed.summary}
@@ -416,7 +512,9 @@ export default function DashboardPage() {
                   {/* Experience */}
                   {parsed.experience.length > 0 && (
                     <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-6 text-base font-semibold">Experience</h2>
+                      <h2 className="mb-6 text-base font-semibold">
+                        Experience
+                      </h2>
                       <div className="space-y-8">
                         {parsed.experience.map((job, i) => (
                           <div key={i} className="relative pl-6">
@@ -426,14 +524,23 @@ export default function DashboardPage() {
                             )}
                             <div className="flex items-baseline justify-between">
                               <div>
-                                <h3 className="text-sm font-semibold">{job.title}</h3>
-                                <p className="text-sm text-primary">{job.company}</p>
+                                <h3 className="text-sm font-semibold">
+                                  {job.title}
+                                </h3>
+                                <p className="text-sm text-primary">
+                                  {job.company}
+                                </p>
                               </div>
-                              <span className="text-xs text-muted-foreground">{job.period}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {job.period}
+                              </span>
                             </div>
                             <ul className="mt-2 space-y-1.5">
                               {job.bullets.map((b, j) => (
-                                <li key={j} className="text-sm leading-relaxed text-muted-foreground">
+                                <li
+                                  key={j}
+                                  className="text-sm leading-relaxed text-muted-foreground"
+                                >
                                   • {b}
                                 </li>
                               ))}
@@ -447,14 +554,20 @@ export default function DashboardPage() {
                   {/* Education */}
                   {parsed.education && parsed.education.length > 0 && (
                     <div className="rounded-xl border bg-card p-8">
-                      <h2 className="mb-4 text-base font-semibold">Education</h2>
+                      <h2 className="mb-4 text-base font-semibold">
+                        Education
+                      </h2>
                       <div className="space-y-4">
                         {parsed.education.map((edu, i) => (
                           <div key={i}>
-                            <h3 className="text-sm font-semibold">{edu.degree}</h3>
+                            <h3 className="text-sm font-semibold">
+                              {edu.degree}
+                            </h3>
                             <p className="text-sm text-primary">{edu.school}</p>
                             {edu.period && (
-                              <p className="text-xs text-muted-foreground">{edu.period}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {edu.period}
+                              </p>
                             )}
                           </div>
                         ))}
@@ -468,9 +581,14 @@ export default function DashboardPage() {
                       <h2 className="mb-4 text-base font-semibold">Projects</h2>
                       <div className="grid grid-cols-2 gap-4">
                         {parsed.projects.map((project) => (
-                          <div key={project.name} className="rounded-lg border bg-background p-5">
+                          <div
+                            key={project.name}
+                            className="rounded-lg border bg-background p-5"
+                          >
                             <div className="flex items-center gap-1.5">
-                              <h3 className="text-sm font-semibold">{project.name}</h3>
+                              <h3 className="text-sm font-semibold">
+                                {project.name}
+                              </h3>
                               <ExternalLink className="size-3.5 text-muted-foreground" />
                             </div>
                             <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
@@ -503,14 +621,23 @@ export default function DashboardPage() {
                 <FileText className="size-4" />
                 <span>
                   {selectedResume?.title} —{" "}
-                  <span className="font-medium text-foreground">v{selectedVersion?.versionNumber}</span>
+                  <span className="font-medium text-foreground">
+                    v{selectedVersion?.versionNumber}
+                  </span>
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="icon-sm">
                   <Settings className="size-4" />
                 </Button>
-                <Button size="sm" onClick={() => router.push(`/interviews/new?resumeVersionId=${selectedVersion?.id}`)}>
+                <Button
+                  size="sm"
+                  onClick={() =>
+                    router.push(
+                      `/interviews/new?resumeVersionId=${selectedVersion?.id}`,
+                    )
+                  }
+                >
                   Start Interview with this Version
                 </Button>
               </div>
@@ -522,22 +649,28 @@ export default function DashboardPage() {
               <AlertCircle className="mx-auto size-12 text-destructive/50" />
               <h2 className="text-lg font-semibold">Parsing Failed</h2>
               <p className="mx-auto max-w-md text-sm text-muted-foreground">
-                We couldn&apos;t parse this resume. Please try uploading a different PDF file.
+                We couldn&apos;t parse this resume. Please try uploading a
+                different PDF file.
               </p>
               {selectedVersion?.parseError && (
                 <div className="rounded-md border bg-muted/40 p-3 text-left">
-                  <p className="text-xs font-medium text-muted-foreground">Error Details</p>
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Error Details
+                  </p>
                   <p className="mt-1 text-xs leading-relaxed text-foreground">
                     {selectedVersion.parseError}
                   </p>
                 </div>
               )}
               {parseFailureHint && (
-                <p className="text-xs text-muted-foreground">{parseFailureHint}</p>
+                <p className="text-xs text-muted-foreground">
+                  {parseFailureHint}
+                </p>
               )}
             </div>
           </div>
-        ) : loading || (selectedVersion && selectedVersion.parseStatus !== "parsed") ? (
+        ) : loading ||
+          (selectedVersion && selectedVersion.parseStatus !== "parsed") ? (
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center space-y-3">
               <Loader2 className="mx-auto size-8 animate-spin text-primary" />
@@ -585,13 +718,18 @@ export default function DashboardPage() {
             </div>
 
             <div
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
               onDragLeave={() => setDragOver(false)}
               onDrop={handleFileDrop}
               onClick={() => fileInputRef.current?.click()}
               className={cn(
                 "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors",
-                dragOver ? "border-primary bg-primary/5" : "border-muted-foreground/25 hover:border-primary/50"
+                dragOver
+                  ? "border-primary bg-primary/5"
+                  : "border-muted-foreground/25 hover:border-primary/50",
               )}
             >
               <input
@@ -613,7 +751,10 @@ export default function DashboardPage() {
                   <Button
                     variant="ghost"
                     size="icon-sm"
-                    onClick={(e) => { e.stopPropagation(); setSelectedFile(null); }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedFile(null);
+                    }}
                   >
                     <X className="size-4" />
                   </Button>
@@ -624,7 +765,9 @@ export default function DashboardPage() {
                   <p className="mt-2 text-sm font-medium">
                     Drop PDF here or click to browse
                   </p>
-                  <p className="text-xs text-muted-foreground">PDF up to 10MB</p>
+                  <p className="text-xs text-muted-foreground">
+                    PDF up to 10MB
+                  </p>
                 </>
               )}
             </div>
@@ -637,10 +780,17 @@ export default function DashboardPage() {
             )}
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setUploadOpen(false)} disabled={uploading}>
+              <Button
+                variant="outline"
+                onClick={() => setUploadOpen(false)}
+                disabled={uploading}
+              >
                 Cancel
               </Button>
-              <Button onClick={handleUpload} disabled={!selectedFile || uploading}>
+              <Button
+                onClick={handleUpload}
+                disabled={!selectedFile || uploading}
+              >
                 {uploading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
@@ -657,6 +807,53 @@ export default function DashboardPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(pendingDeleteResume)}
+        onOpenChange={(open) => {
+          if (!open && !deletingResumeId) {
+            setPendingDeleteResume(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Resume?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDeleteResume
+                ? `Are you sure you want to delete "${pendingDeleteResume.title}"? This will also delete its versions and related interviews. This action cannot be undone.`
+                : "This action cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={Boolean(deletingResumeId)}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
+              disabled={
+                !pendingDeleteResume ||
+                deletingResumeId === pendingDeleteResume.id
+              }
+              onClick={(event) => {
+                event.preventDefault();
+                if (!pendingDeleteResume) return;
+                void handleDeleteResume(pendingDeleteResume.id);
+              }}
+            >
+              {pendingDeleteResume &&
+              deletingResumeId === pendingDeleteResume.id ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
