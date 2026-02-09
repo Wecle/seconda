@@ -5,18 +5,7 @@ import { eq } from "drizzle-orm";
 import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { randomUUID } from "crypto";
-import fs from "fs/promises";
-import path from "path";
-
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
-
-async function ensureUploadsDir() {
-  try {
-    await fs.access(UPLOADS_DIR);
-  } catch {
-    await fs.mkdir(UPLOADS_DIR, { recursive: true });
-  }
-}
+import { put } from "@vercel/blob";
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,16 +31,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    await ensureUploadsDir();
-
     const resumeId = randomUUID();
     const versionId = randomUUID();
-    const ext = path.extname(file.name) || ".pdf";
-    const storedFilename = `${versionId}${ext}`;
-    const storedPath = path.join(UPLOADS_DIR, storedFilename);
+    const normalizedName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const blobPathname = `resumes/${versionId}-${normalizedName}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    await fs.writeFile(storedPath, buffer);
+    const blob = await put(blobPathname, buffer, {
+      access: "public",
+      contentType: file.type,
+      addRandomSuffix: false,
+    });
 
     await db.insert(resumes).values({
       id: resumeId,
@@ -64,7 +54,7 @@ export async function POST(request: NextRequest) {
       resumeId,
       versionNumber: 1,
       originalFilename: file.name,
-      storedPath,
+      storedPath: blob.url,
       mimeType: file.type,
       fileSize: file.size,
       parseStatus: "extracting",

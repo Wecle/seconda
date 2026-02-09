@@ -74,6 +74,7 @@ interface ResumeVersion {
   versionNumber: number;
   originalFilename: string;
   parseStatus: string;
+  parseError?: string | null;
   parsedData: ParsedResume | null;
   createdAt: string;
 }
@@ -204,6 +205,24 @@ export default function DashboardPage() {
     (v) => v.id === selectedVersionId
   );
   const parsed = selectedVersion?.parsedData;
+
+  const parseFailureHint = (() => {
+    const error = selectedVersion?.parseError?.toLowerCase() ?? "";
+    if (!error) return "";
+    if (error.includes("incorrect api key")) {
+      return "OPENAI_API_KEY 无效，请更新 .env 后重启服务。";
+    }
+    if (error.includes("not found")) {
+      return "BASE_MODEL 或 BASE_URL 不可用，请检查模型名和接口地址。";
+    }
+    if (error.includes("rate limit") || error.includes("速率限制")) {
+      return "接口触发限流，请稍后重试上传，或降低并发请求频率。";
+    }
+    if (error.includes("text extraction failed")) {
+      return "PDF 文本提取失败，可能是扫描件，请换可复制文本的 PDF。";
+    }
+    return "";
+  })();
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -499,12 +518,23 @@ export default function DashboardPage() {
           </>
         ) : selectedVersion?.parseStatus === "failed" ? (
           <div className="flex flex-1 items-center justify-center">
-            <div className="text-center space-y-3">
+            <div className="max-w-xl space-y-3 text-center">
               <AlertCircle className="mx-auto size-12 text-destructive/50" />
               <h2 className="text-lg font-semibold">Parsing Failed</h2>
-              <p className="text-sm text-muted-foreground max-w-md">
+              <p className="mx-auto max-w-md text-sm text-muted-foreground">
                 We couldn&apos;t parse this resume. Please try uploading a different PDF file.
               </p>
+              {selectedVersion?.parseError && (
+                <div className="rounded-md border bg-muted/40 p-3 text-left">
+                  <p className="text-xs font-medium text-muted-foreground">Error Details</p>
+                  <p className="mt-1 text-xs leading-relaxed text-foreground">
+                    {selectedVersion.parseError}
+                  </p>
+                </div>
+              )}
+              {parseFailureHint && (
+                <p className="text-xs text-muted-foreground">{parseFailureHint}</p>
+              )}
             </div>
           </div>
         ) : loading || (selectedVersion && selectedVersion.parseStatus !== "parsed") ? (

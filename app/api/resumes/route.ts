@@ -26,6 +26,7 @@ export async function GET() {
             versionNumber: v.versionNumber,
             originalFilename: v.originalFilename,
             parseStatus: v.parseStatus,
+            parseError: v.parseError,
             parsedData: (v.parsedJson as ParsedResume) ?? null,
             createdAt: v.createdAt,
           })),
