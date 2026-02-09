@@ -40,7 +40,9 @@ interface ResumePreviewPaneProps {
   hasParsedPreview: boolean;
   hasOriginalPreview: boolean;
   parseFailureHint: string;
+  retryingParse: boolean;
   onPreviewModeChange: (mode: "parsed" | "original") => void;
+  onRetryParse: () => void;
   selectedInterviewConfig: InterviewConfig | null;
   creatingInterview: boolean;
   onOpenSettings: () => void;
@@ -55,7 +57,9 @@ export function ResumePreviewPane({
   hasParsedPreview,
   hasOriginalPreview,
   parseFailureHint,
+  retryingParse,
   onPreviewModeChange,
+  onRetryParse,
   selectedInterviewConfig,
   creatingInterview,
   onOpenSettings,
@@ -141,6 +145,24 @@ export function ResumePreviewPane({
                       {parseFailureHint}
                     </p>
                   )}
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={onRetryParse}
+                      disabled={retryingParse}
+                    >
+                      {retryingParse ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          Re-parsing...
+                        </>
+                      ) : (
+                        "Retry Parsing"
+                      )}
+                    </Button>
+                  </div>
                 </div>
               )}
 
