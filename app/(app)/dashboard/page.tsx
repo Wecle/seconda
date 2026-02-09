@@ -31,6 +31,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { InterviewSettingsForm } from "@/components/interview/interview-settings-form";
+import {
+  defaultInterviewConfig,
+  type InterviewConfig,
+} from "@/lib/interview/settings";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -109,6 +114,7 @@ interface Resume {
   id: string;
   title: string;
   currentVersionId: string | null;
+  interviewSettings: InterviewConfig | null;
   createdAt: string;
   updatedAt: string;
   versions: ResumeVersion[];
@@ -139,14 +145,29 @@ export default function DashboardPage() {
   const [previewMode, setPreviewMode] = useState<"parsed" | "original">(
     "parsed",
   );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftInterviewConfig, setDraftInterviewConfig] =
+    useState<InterviewConfig>(defaultInterviewConfig);
+  const [interviewConfigByResumeId, setInterviewConfigByResumeId] = useState<
+    Record<string, InterviewConfig>
+  >({});
+  const [savingInterviewSettings, setSavingInterviewSettings] = useState(false);
+  const [creatingInterview, setCreatingInterview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchResumes = useCallback(async () => {
     try {
       const res = await fetch("/api/resumes");
       if (res.ok) {
-        const data = await res.json();
+        const data = (await res.json()) as Resume[];
         setResumes(data);
+        const persistedConfigMap: Record<string, InterviewConfig> = {};
+        for (const resume of data) {
+          if (resume.interviewSettings) {
+            persistedConfigMap[resume.id] = resume.interviewSettings;
+          }
+        }
+        setInterviewConfigByResumeId(persistedConfigMap);
         const hasSelectedResume = selectedResumeId
           ? data.some((resume: Resume) => resume.id === selectedResumeId)
           : false;
@@ -252,6 +273,12 @@ export default function DashboardPage() {
         next.delete(resumeId);
         return next;
       });
+      setInterviewConfigByResumeId((prev) => {
+        if (!(resumeId in prev)) return prev;
+        const next = { ...prev };
+        delete next[resumeId];
+        return next;
+      });
 
       await fetchResumes();
     } catch (e) {
@@ -260,6 +287,78 @@ export default function DashboardPage() {
     } finally {
       setDeletingResumeId(null);
       setPendingDeleteResume(null);
+    }
+  };
+
+  const openSettingsDialog = () => {
+    if (!selectedResumeId) return;
+    setDraftInterviewConfig(
+      interviewConfigByResumeId[selectedResumeId] ?? defaultInterviewConfig,
+    );
+    setSettingsOpen(true);
+  };
+
+  const handleSaveInterviewSettings = async () => {
+    if (!selectedResumeId) return;
+    setSavingInterviewSettings(true);
+    try {
+      const res = await fetch(`/api/resumes/${selectedResumeId}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(draftInterviewConfig),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.interviewSettings) {
+        window.alert(data?.error ?? "Failed to save interview settings.");
+        return;
+      }
+
+      setInterviewConfigByResumeId((prev) => ({
+        ...prev,
+        [selectedResumeId]: data.interviewSettings as InterviewConfig,
+      }));
+      setSettingsOpen(false);
+    } catch (e) {
+      console.error("Failed to save interview settings:", e);
+      window.alert("Failed to save interview settings. Please try again.");
+    } finally {
+      setSavingInterviewSettings(false);
+    }
+  };
+
+  const selectedInterviewConfig = selectedResumeId
+    ? interviewConfigByResumeId[selectedResumeId] ?? null
+    : null;
+
+  const handleStartInterview = async () => {
+    if (!selectedVersion || !selectedInterviewConfig || creatingInterview)
+      return;
+
+    setCreatingInterview(true);
+    try {
+      const res = await fetch("/api/interviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          level: selectedInterviewConfig.level.toLowerCase(),
+          type: selectedInterviewConfig.type,
+          language: selectedInterviewConfig.language,
+          questionCount: selectedInterviewConfig.questionCount,
+          persona: selectedInterviewConfig.persona,
+          resumeVersionId: selectedVersion.id,
+        }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        window.alert(data?.error ?? "Failed to create interview.");
+        return;
+      }
+      router.push(`/interviews/${data.interviewId}/room`);
+    } catch (e) {
+      console.error("Failed to start interview:", e);
+      window.alert("Failed to create interview. Please try again.");
+    } finally {
+      setCreatingInterview(false);
     }
   };
 
@@ -755,21 +854,34 @@ export default function DashboardPage() {
                 </span>
               </div>
               <div className="flex items-center gap-2">
-                <Button variant="outline" size="icon-sm">
+                {selectedInterviewConfig && (
+                  <Badge variant="secondary" className="h-8">
+                    Settings Saved
+                  </Badge>
+                )}
+                <Button
+                  variant="outline"
+                  size="icon-sm"
+                  onClick={openSettingsDialog}
+                >
                   <Settings className="size-4" />
                 </Button>
                 <Button
                   size="sm"
-                  disabled={selectedVersion.parseStatus !== "parsed"}
-                  onClick={() =>
-                    router.push(
-                      `/interviews/new?resumeVersionId=${selectedVersion?.id}`,
-                    )
+                  disabled={
+                    selectedVersion.parseStatus !== "parsed" ||
+                    !selectedInterviewConfig ||
+                    creatingInterview
                   }
+                  onClick={handleStartInterview}
                 >
-                  {selectedVersion.parseStatus === "parsed"
-                    ? "Start Interview with this Version"
-                    : "Resume Not Ready for Interview"}
+                  {selectedVersion.parseStatus !== "parsed"
+                    ? "Resume Not Ready for Interview"
+                    : creatingInterview
+                      ? "Starting Interview..."
+                      : selectedInterviewConfig
+                        ? "Start Interview with this Version"
+                        : "Configure Settings First"}
                 </Button>
               </div>
             </div>
@@ -799,6 +911,54 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+
+      <Dialog
+        open={settingsOpen}
+        onOpenChange={(open) => {
+          if (!savingInterviewSettings) {
+            setSettingsOpen(open);
+          }
+        }}
+      >
+        <DialogContent className="flex max-h-[90vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
+          <DialogHeader className="border-b px-6 py-5 text-left">
+            <DialogTitle>Interview Settings</DialogTitle>
+            <DialogDescription>
+              Configure your AI mock interview session parameters.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto px-6 py-6">
+            <InterviewSettingsForm
+              value={draftInterviewConfig}
+              onChange={setDraftInterviewConfig}
+            />
+          </div>
+          <div className="flex items-center justify-end gap-3 border-t px-6 py-4">
+            <Button
+              variant="ghost"
+              onClick={() => setSettingsOpen(false)}
+              disabled={savingInterviewSettings}
+            >
+              Cancel
+            </Button>
+            <Button
+              className="bg-primary text-primary-foreground"
+              onClick={handleSaveInterviewSettings}
+              disabled={savingInterviewSettings}
+            >
+              {savingInterviewSettings ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                "Save"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Upload Dialog */}
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>

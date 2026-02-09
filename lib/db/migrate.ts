@@ -14,9 +14,15 @@ async function migrate() {
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       title TEXT NOT NULL,
       current_version_id UUID,
+      interview_settings JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+
+  await sql`
+    ALTER TABLE resumes
+    ADD COLUMN IF NOT EXISTS interview_settings JSONB
   `;
 
   await sql`
