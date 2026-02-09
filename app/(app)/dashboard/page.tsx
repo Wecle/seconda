@@ -222,7 +222,7 @@ export default function DashboardPage() {
   };
 
   const selectedInterviewConfig = selectedResumeId
-    ? interviewConfigByResumeId[selectedResumeId] ?? null
+    ? (interviewConfigByResumeId[selectedResumeId] ?? null)
     : null;
 
   const handleStartInterview = async () => {
