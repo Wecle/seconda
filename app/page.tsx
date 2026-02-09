@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FileText, Brain, Target, ArrowRight } from "lucide-react";
 import { auth } from "@/auth";
 import { AuthRequiredLink } from "@/components/auth/auth-required-link";
+import { BrandIcon } from "@/components/brand/brand-icon";
 import { StartInterviewButton } from "@/components/auth/start-interview-button";
 import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
 import { Button } from "@/components/ui/button";
@@ -16,14 +17,12 @@ const features = [
   {
     icon: Brain,
     title: "六维评分",
-    description:
-      "从理解力、表达力、逻辑性等六个维度给出精准评分与改进建议",
+    description: "从理解力、表达力、逻辑性等六个维度给出精准评分与改进建议",
   },
   {
     icon: Target,
     title: "深度复盘",
-    description:
-      "支持追问模式与教练模式，从错误中彻底掌握知识点",
+    description: "支持追问模式与教练模式，从错误中彻底掌握知识点",
   },
 ];
 
@@ -60,8 +59,12 @@ export default async function Home() {
       {/* Navigation */}
       <nav className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-          <Link href="/" className="text-xl font-bold tracking-tight">
-            Seconda
+          <Link
+            href="/"
+            className="flex items-center gap-2 text-xl font-bold tracking-tight"
+          >
+            <BrandIcon size={28} priority />
+            <span>Seconda</span>
           </Link>
           <div className="flex items-center gap-6">
             {isAuthenticated && currentUser ? (
@@ -125,8 +128,8 @@ export default async function Home() {
               size="lg"
               className="gap-2 px-6"
             >
-                开始模拟面试
-                <ArrowRight className="size-4" />
+              开始模拟面试
+              <ArrowRight className="size-4" />
             </StartInterviewButton>
             <Button asChild variant="outline" size="lg" className="px-6">
               <Link href="#features">了解更多</Link>
@@ -211,8 +214,8 @@ export default async function Home() {
                   size="lg"
                   className="gap-2 px-8"
                 >
-                    免费开始
-                    <ArrowRight className="size-4" />
+                  免费开始
+                  <ArrowRight className="size-4" />
                 </StartInterviewButton>
               </div>
             </div>
@@ -223,7 +226,7 @@ export default async function Home() {
       {/* Footer */}
       <footer className="border-t py-8">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-muted-foreground md:flex-row">
-          <p>&copy; 2024 Seconda. All rights reserved.</p>
+          <p>&copy; 2026 Seconda. All rights reserved.</p>
           <div className="flex gap-6">
             <Link href="#" className="transition-colors hover:text-foreground">
               隐私政策

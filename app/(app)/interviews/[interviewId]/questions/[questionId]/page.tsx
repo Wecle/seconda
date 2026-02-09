@@ -4,7 +4,6 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter, useParams } from "next/navigation"
 import {
-  Bot,
   Settings,
   ChevronRight,
   ChevronLeft,
@@ -15,9 +14,9 @@ import {
   Sparkles,
   Clock,
   CheckCircle2,
-  Image as ImageIcon,
   Loader2,
 } from "lucide-react"
+import { BrandIcon } from "@/components/brand/brand-icon"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -145,9 +144,11 @@ export default function QuestionDeepDivePage() {
       {/* Header */}
       <header className="flex items-center justify-between border-b bg-card px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <Bot className="size-5 text-primary" />
-            <Link href="/" className="text-sm font-semibold">Seconda</Link>
+          <div className="flex items-center gap-2.5">
+            <Link href="/" className="flex items-center gap-2">
+              <BrandIcon size={24} />
+              <span className="text-sm font-semibold">Seconda</span>
+            </Link>
           </div>
           <Separator orientation="vertical" className="h-5" />
           <nav className="flex items-center gap-1 text-xs text-muted-foreground">
