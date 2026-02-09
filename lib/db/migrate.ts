@@ -10,8 +10,32 @@ const sql = postgres(connectionString);
 
 async function migrate() {
   await sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      email TEXT NOT NULL UNIQUE,
+      name TEXT,
+      password_hash TEXT,
+      image TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS oauth_accounts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      provider_account_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (provider, provider_account_id)
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS resumes (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       current_version_id UUID,
       interview_settings JSONB,
@@ -23,6 +47,11 @@ async function migrate() {
   await sql`
     ALTER TABLE resumes
     ADD COLUMN IF NOT EXISTS interview_settings JSONB
+  `;
+
+  await sql`
+    ALTER TABLE resumes
+    ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE
   `;
 
   await sql`
@@ -97,6 +126,8 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_interviews_resume_version ON interviews(resume_version_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_questions_interview ON interview_questions(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_question_scores_question ON question_scores(question_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes(user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id)`;
 
   console.log("Database migrated successfully");
   await sql.end();

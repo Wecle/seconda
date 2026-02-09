@@ -6,9 +6,15 @@ import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { randomUUID } from "crypto";
 import { put } from "@vercel/blob";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const title = (formData.get("title") as string) || "Untitled Resume";
@@ -45,6 +51,7 @@ export async function POST(request: NextRequest) {
 
     await db.insert(resumes).values({
       id: resumeId,
+      userId,
       title,
       currentVersionId: versionId,
     });

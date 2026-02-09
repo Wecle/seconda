@@ -4,12 +4,19 @@ import { resumes, resumeVersions } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeInterviewConfig } from "@/lib/interview/settings";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 export async function GET() {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const allResumes = await db
       .select()
       .from(resumes)
+      .where(eq(resumes.userId, userId))
       .orderBy(desc(resumes.createdAt));
 
     const result = await Promise.all(
