@@ -5,7 +5,6 @@ import { eq, desc } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeInterviewConfig } from "@/lib/interview/settings";
 import { getCurrentUserId } from "@/lib/auth/session";
-export { POST } from "./upload/route";
 
 export async function GET() {
   try {

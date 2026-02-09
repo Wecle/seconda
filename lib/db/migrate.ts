@@ -6,7 +6,7 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const sql = postgres(connectionString);
+const sql = postgres(connectionString, { prepare: false });
 
 async function migrate() {
   await sql`
