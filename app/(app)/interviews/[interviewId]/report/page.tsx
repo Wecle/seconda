@@ -391,7 +391,7 @@ export default function ReportPage() {
 
         <Accordion type="single" defaultValue={filteredQuestions[0]?.id} collapsible className="space-y-4">
           {filteredQuestions.map((q: QuestionData, idx: number) => {
-            const score = q.score?.overall ?? q.score ?? 0
+            const score = q.score?.overall ?? 0
             const feedback = q.feedbackJson || q.feedback || {}
             const strengths = feedback.strengths || []
             const improvements = feedback.improvements || []

@@ -132,8 +132,10 @@ export default function QuestionDeepDivePage() {
   const totalQuestions = questions.length
 
   const feedback = question?.feedbackJson || question?.feedback || {}
-  const deepDive = feedback?.deepDive || {}
-  const score = question?.score?.overall ?? question?.score ?? 0
+  const deepDive: DeepDiveData = feedback?.deepDive ?? {}
+  const pitfalls = deepDive.pitfalls ?? []
+  const modelSteps = deepDive.modelAnswer?.steps ?? []
+  const score = question?.score?.overall ?? 0
 
   const hasPrev = questionIndex > 1
   const hasNext = questionIndex < totalQuestions
@@ -375,9 +377,9 @@ export default function QuestionDeepDivePage() {
                 </button>
                 {expandedSections.has("pitfalls") && (
                   <div className="border-t px-4 pb-4 pt-3 space-y-3">
-                    {deepDive?.pitfalls?.length > 0 ? (
+                    {pitfalls.length > 0 ? (
                       <ul className="space-y-2 text-xs leading-relaxed text-muted-foreground">
-                        {deepDive.pitfalls.map((pitfall: string, i: number) => (
+                        {pitfalls.map((pitfall: string, i: number) => (
                           <li key={i} className="flex gap-2">
                             <span className="mt-1 size-1.5 shrink-0 rounded-full bg-red-400" />
                             {pitfall}
@@ -413,15 +415,15 @@ export default function QuestionDeepDivePage() {
                 </button>
                 {expandedSections.has("model") && (
                   <div className="border-t px-4 pb-4 pt-3 space-y-4">
-                    {deepDive?.modelAnswer?.steps?.length > 0 ? (
+                    {modelSteps.length > 0 ? (
                       <div className="space-y-4">
-                        {deepDive.modelAnswer.steps.map((step: { title: string; description: string }, i: number) => (
+                        {modelSteps.map((step: { title: string; description: string }, i: number) => (
                           <div key={i} className="flex gap-3">
                             <div className="flex flex-col items-center">
                               <div className="flex size-6 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
                                 {i + 1}
                               </div>
-                              {i < deepDive.modelAnswer.steps.length - 1 && (
+                              {i < modelSteps.length - 1 && (
                                 <div className="mt-1 flex-1 w-px bg-border" />
                               )}
                             </div>
