@@ -1,19 +1,24 @@
 type PdfJsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+type PdfJsWorkerModule = typeof import("pdfjs-dist/legacy/build/pdf.worker.mjs");
 
 let pdfJsModulePromise: Promise<PdfJsModule> | null = null;
 let pdfNodePolyfillPromise: Promise<void> | null = null;
+let pdfWorkerModulePromise: Promise<PdfJsWorkerModule> | null = null;
+
+type PdfGlobal = typeof globalThis & {
+  DOMMatrix?: typeof DOMMatrix;
+  ImageData?: typeof ImageData;
+  Path2D?: typeof Path2D;
+  navigator?: Navigator;
+  pdfjsWorker?: { WorkerMessageHandler?: unknown };
+};
 
 async function ensurePdfJsNodePolyfills() {
   if (typeof window !== "undefined") {
     return;
   }
 
-  const globalWithPolyfills = globalThis as typeof globalThis & {
-    DOMMatrix?: typeof DOMMatrix;
-    ImageData?: typeof ImageData;
-    Path2D?: typeof Path2D;
-    navigator?: Navigator;
-  };
+  const globalWithPolyfills = globalThis as PdfGlobal;
 
   if (
     globalWithPolyfills.DOMMatrix &&
@@ -67,11 +72,36 @@ async function ensurePdfJsNodePolyfills() {
   }
 }
 
+async function ensurePdfJsWorkerGlobal() {
+  if (typeof window !== "undefined") {
+    return;
+  }
+
+  const pdfGlobal = globalThis as PdfGlobal;
+  if (pdfGlobal.pdfjsWorker?.WorkerMessageHandler) {
+    return;
+  }
+
+  if (!pdfWorkerModulePromise) {
+    pdfWorkerModulePromise = import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  }
+
+  const workerModule = await pdfWorkerModulePromise;
+  pdfGlobal.pdfjsWorker = {
+    WorkerMessageHandler: workerModule.WorkerMessageHandler,
+  };
+}
+
 async function getPdfJsModule() {
   if (!pdfJsModulePromise) {
-    pdfJsModulePromise = ensurePdfJsNodePolyfills().then(() =>
+    pdfJsModulePromise = Promise.all([
+      ensurePdfJsNodePolyfills(),
+      ensurePdfJsWorkerGlobal(),
       import("pdfjs-dist/legacy/build/pdf.mjs"),
-    );
+    ]).then(([, , pdfJs]) => {
+      pdfJs.GlobalWorkerOptions.workerSrc = "pdfjs-dist/legacy/build/pdf.worker.mjs";
+      return pdfJs;
+    });
   }
   return pdfJsModulePromise;
 }
