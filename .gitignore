@@ -27,3 +27,6 @@ pnpm-debug.log*
 # local data
 data/
 uploads/
+
+# agents
+AGENTS.md

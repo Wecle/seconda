@@ -382,10 +382,10 @@ export default function DashboardPage() {
                                 </Badge>
                               )}
                               {v.parseStatus === "failed" && (
-                                <AlertCircle className="ml-auto size-3.5 text-destructive" />
+                                <AlertCircle className="ml-2 size-3.5 text-destructive" />
                               )}
                               {v.parseStatus === "parsing" && (
-                                <Loader2 className="ml-auto size-3.5 animate-spin" />
+                                <Loader2 className="ml-2 size-3.5 animate-spin" />
                               )}
                             </button>
                           );
