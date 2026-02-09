@@ -5,6 +5,7 @@ import {
   interviews,
   interviewQuestions,
   questionScores,
+  resumes,
   resumeVersions,
 } from "@/lib/db/schema";
 import { eq, and, asc, isNull, isNotNull } from "drizzle-orm";
@@ -13,6 +14,7 @@ import {
   scoreInterviewAnswer,
 } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 const answerSchema = z.object({
   questionId: z.string().uuid(),
@@ -24,6 +26,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id } = await params;
 
     const rawBody = await request.json();
@@ -38,10 +45,14 @@ export async function POST(
 
     const body = parsed.data;
 
-    const [interview] = await db
-      .select()
+    const [interviewRow] = await db
+      .select({ interview: interviews })
       .from(interviews)
-      .where(eq(interviews.id, id));
+      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
+      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
+      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+
+    const interview = interviewRow?.interview;
 
     if (!interview) {
       return NextResponse.json(

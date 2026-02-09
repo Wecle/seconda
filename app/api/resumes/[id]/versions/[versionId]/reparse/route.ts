@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
 import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -14,6 +15,11 @@ export async function POST(
   { params }: { params: Promise<{ id: string; versionId: string }> },
 ) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { id, versionId } = await params;
 
     const [version] = await db
@@ -25,8 +31,13 @@ export async function POST(
         parseStatus: resumeVersions.parseStatus,
       })
       .from(resumeVersions)
+      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
       .where(
-        and(eq(resumeVersions.id, versionId), eq(resumeVersions.resumeId, id)),
+        and(
+          eq(resumeVersions.id, versionId),
+          eq(resumeVersions.resumeId, id),
+          eq(resumes.userId, userId),
+        ),
       );
 
     if (!version) {
@@ -110,7 +121,7 @@ export async function POST(
         await db
           .update(resumes)
           .set({ title: parsed.title, updatedAt: new Date() })
-          .where(eq(resumes.id, id));
+          .where(and(eq(resumes.id, id), eq(resumes.userId, userId)));
       }
 
       return NextResponse.json({

@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { FileText, Brain, Target, ArrowRight } from "lucide-react";
+import { auth } from "@/auth";
+import { AuthRequiredLink } from "@/components/auth/auth-required-link";
+import { StartInterviewButton } from "@/components/auth/start-interview-button";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -46,7 +49,10 @@ const steps = [
   },
 ];
 
-export default function Home() {
+export default async function Home() {
+  const session = await auth();
+  const isAuthenticated = Boolean(session?.user?.id);
+
   return (
     <div className="min-h-screen bg-background text-foreground">
       {/* Navigation */}
@@ -56,15 +62,16 @@ export default function Home() {
             Seconda
           </Link>
           <div className="flex items-center gap-6">
-            <Link
-              href="#"
+            <AuthRequiredLink
+              isAuthenticated={isAuthenticated}
+              href="/dashboard"
               className="text-sm text-muted-foreground transition-colors hover:text-foreground"
             >
-              登录
-            </Link>
-            <Button asChild size="sm">
-              <Link href="/dashboard">开始使用</Link>
-            </Button>
+              {isAuthenticated ? "控制台" : "登录"}
+            </AuthRequiredLink>
+            <StartInterviewButton isAuthenticated={isAuthenticated} size="sm">
+              开始使用
+            </StartInterviewButton>
           </div>
         </div>
       </nav>
@@ -107,12 +114,14 @@ export default function Home() {
           </p>
 
           <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-            <Button asChild size="lg" className="gap-2 px-6">
-              <Link href="/dashboard">
+            <StartInterviewButton
+              isAuthenticated={isAuthenticated}
+              size="lg"
+              className="gap-2 px-6"
+            >
                 开始模拟面试
                 <ArrowRight className="size-4" />
-              </Link>
-            </Button>
+            </StartInterviewButton>
             <Button asChild variant="outline" size="lg" className="px-6">
               <Link href="#features">了解更多</Link>
             </Button>
@@ -191,12 +200,14 @@ export default function Home() {
                 现在就开始你的第一场模拟面试
               </p>
               <div className="mt-8">
-                <Button asChild size="lg" className="gap-2 px-8">
-                  <Link href="/dashboard">
+                <StartInterviewButton
+                  isAuthenticated={isAuthenticated}
+                  size="lg"
+                  className="gap-2 px-8"
+                >
                     免费开始
                     <ArrowRight className="size-4" />
-                  </Link>
-                </Button>
+                </StartInterviewButton>
               </div>
             </div>
           </div>

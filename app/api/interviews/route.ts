@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { interviews, interviewQuestions, resumeVersions } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { interviews, interviewQuestions, resumes, resumeVersions } from "@/lib/db/schema";
+import { and, eq } from "drizzle-orm";
 import { generateInterviewQuestions } from "@/lib/interview";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 const createSchema = z.object({
   level: z.string(),
@@ -16,6 +17,11 @@ const createSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const userId = await getCurrentUserId();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const rawBody = await request.json();
     const parsed = createSchema.safeParse(rawBody);
 
@@ -31,7 +37,13 @@ export async function POST(request: NextRequest) {
     const [resumeVersion] = await db
       .select()
       .from(resumeVersions)
-      .where(eq(resumeVersions.id, body.resumeVersionId));
+      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
+      .where(
+        and(
+          eq(resumeVersions.id, body.resumeVersionId),
+          eq(resumes.userId, userId),
+        ),
+      );
 
     if (!resumeVersion) {
       return NextResponse.json(
@@ -40,7 +52,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (resumeVersion.parseStatus !== "parsed") {
+    if (resumeVersion.resume_versions.parseStatus !== "parsed") {
       return NextResponse.json(
         { error: "Resume has not been parsed yet" },
         { status: 400 }
@@ -63,8 +75,8 @@ export async function POST(request: NextRequest) {
     const initialCount = Math.min(3, body.questionCount);
 
     const generatedQuestions = await generateInterviewQuestions({
-      resumeData: resumeVersion.parsedJson,
-      resumeText: resumeVersion.extractedText ?? "",
+      resumeData: resumeVersion.resume_versions.parsedJson,
+      resumeText: resumeVersion.resume_versions.extractedText ?? "",
       level: body.level,
       type: body.type,
       language: body.language,
