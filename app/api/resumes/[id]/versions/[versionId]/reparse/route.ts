@@ -117,13 +117,6 @@ export async function POST(
         })
         .where(eq(resumeVersions.id, versionId));
 
-      if (parsed.title) {
-        await db
-          .update(resumes)
-          .set({ title: parsed.title, updatedAt: new Date() })
-          .where(and(eq(resumes.id, id), eq(resumes.userId, userId)));
-      }
-
       return NextResponse.json({
         id,
         versionId,

@@ -106,6 +106,19 @@ async function getPdfJsModule() {
   return pdfJsModulePromise;
 }
 
+function normalizeExtractedPdfText(text: string): string {
+  return text
+    .replace(/\u00A0/g, " ")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/(\p{Script=Han})\s+(?=\p{Script=Han})/gu, "$1")
+    .replace(/(\p{Script=Han})\s+([，。！？：；、）】》」』])/gu, "$1$2")
+    .replace(/([（【《「『])\s+(\p{Script=Han})/gu, "$1$2")
+    .replace(/[ \t]+/g, " ")
+    .replace(/[ ]*\n[ ]*/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   const { getDocument } = await getPdfJsModule();
   const data = new Uint8Array(buffer);
@@ -123,12 +136,17 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const text = content.items
-      .filter((item) => "str" in item)
-      .map((item) => (item as { str: string }).str)
-      .join(" ");
-    pages.push(text);
+      .map((item) => {
+        if (!("str" in item)) {
+          return "";
+        }
+        const textItem = item as { str: string; hasEOL?: boolean };
+        return `${textItem.str}${textItem.hasEOL ? "\n" : " "}`;
+      })
+      .join("");
+    pages.push(normalizeExtractedPdfText(text));
   }
 
   doc.destroy();
-  return pages.join(" ").replace(/\s+/g, " ").trim();
+  return normalizeExtractedPdfText(pages.join("\n\n"));
 }
