@@ -1,0 +1,44 @@
+import { NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { resumes, resumeVersions } from "@/lib/db/schema";
+import { eq, desc } from "drizzle-orm";
+import type { ParsedResume } from "@/lib/resume/types";
+
+export async function GET() {
+  try {
+    const allResumes = await db
+      .select()
+      .from(resumes)
+      .orderBy(desc(resumes.createdAt));
+
+    const result = await Promise.all(
+      allResumes.map(async (resume) => {
+        const versions = await db
+          .select()
+          .from(resumeVersions)
+          .where(eq(resumeVersions.resumeId, resume.id))
+          .orderBy(desc(resumeVersions.versionNumber));
+
+        return {
+          ...resume,
+          versions: versions.map((v) => ({
+            id: v.id,
+            versionNumber: v.versionNumber,
+            originalFilename: v.originalFilename,
+            parseStatus: v.parseStatus,
+            parsedData: (v.parsedJson as ParsedResume) ?? null,
+            createdAt: v.createdAt,
+          })),
+        };
+      })
+    );
+
+    return NextResponse.json(result);
+  } catch (error) {
+    console.error("Error fetching resumes:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch resumes" },
+      { status: 500 }
+    );
+  }
+}
