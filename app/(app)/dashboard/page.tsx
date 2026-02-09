@@ -132,7 +132,7 @@ export default function DashboardPage() {
     );
 
     try {
-      const res = await fetch("/api/resumes/upload", {
+      const res = await fetch("/api/resumes", {
         method: "POST",
         body: formData,
       });
