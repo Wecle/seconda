@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import type { Resume } from "@/components/dashboard/types";
+import type { Resume, ResumeVersion } from "@/components/dashboard/types";
 
 interface ResumeSidebarProps {
   loading: boolean;
@@ -114,14 +114,16 @@ export function ResumeSidebar({
 
                   {isExpanded && (
                     <div className="ml-5 border-l pl-3">
-                      {resume.versions.map((version) => {
+                      {resume.versions.map((version: ResumeVersion) => {
                         const isActive = version.id === selectedVersionId;
                         return (
                           <button
                             key={version.id}
-                            onClick={() => onSelectVersion(resume.id, version.id)}
+                            onClick={() =>
+                              onSelectVersion(resume.id, version.id)
+                            }
                             className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 pr-4 text-sm",
                               isActive
                                 ? "bg-primary/10 font-medium text-primary"
                                 : "text-muted-foreground hover:bg-accent hover:text-foreground",
