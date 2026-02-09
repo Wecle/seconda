@@ -63,7 +63,7 @@ export function UserAvatarMenu({
     panelAlign === "left" ? "start" : panelAlign === "center" ? "center" : "end";
 
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("relative flex items-center", className)}>
       <HoverCard openDelay={100} closeDelay={100}>
         <HoverCardTrigger asChild>
           <button
