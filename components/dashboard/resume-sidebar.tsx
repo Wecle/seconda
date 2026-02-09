@@ -12,6 +12,8 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
+import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +27,7 @@ interface ResumeSidebarProps {
   expandedFolders: Set<string>;
   selectedVersionId: string | null;
   deletingResumeId: string | null;
+  currentUser: UserAvatarMenuUser | null;
   onToggleFolder: (resumeId: string) => void;
   onSelectVersion: (resumeId: string, versionId: string) => void;
   onRequestDelete: (resume: { id: string; title: string }) => void;
@@ -37,6 +40,7 @@ export function ResumeSidebar({
   expandedFolders,
   selectedVersionId,
   deletingResumeId,
+  currentUser,
   onToggleFolder,
   onSelectVersion,
   onRequestDelete,
@@ -44,15 +48,22 @@ export function ResumeSidebar({
 }: ResumeSidebarProps) {
   return (
     <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r bg-card">
-      <Link href="/" className="flex items-center gap-2.5 px-5 py-4">
-        <div className="flex size-8 items-center justify-center rounded-lg bg-primary">
-          <FileText className="size-4 text-primary-foreground" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold">Resume AI</p>
-          <p className="text-xs text-muted-foreground">Dashboard</p>
-        </div>
-      </Link>
+      <div className="flex items-center justify-between px-5 py-4">
+        <Link href="/" className="flex min-w-0 items-center gap-2.5">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary">
+            <FileText className="size-4 text-primary-foreground" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold">Resume AI</p>
+            <p className="truncate text-xs text-muted-foreground">Dashboard</p>
+          </div>
+        </Link>
+        {currentUser ? (
+          <UserAvatarMenu user={currentUser} avatarSize="sm" />
+        ) : (
+          <div className="size-6 rounded-full bg-muted" />
+        )}
+      </div>
 
       <Separator />
 

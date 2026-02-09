@@ -14,10 +14,14 @@ import { InterviewSettingsDialog } from "@/components/dashboard/interview-settin
 import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
 import type { Resume } from "@/components/dashboard/types";
+import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import { UploadResumeDialog } from "@/components/dashboard/upload-resume-dialog";
 
 export default function DashboardPage() {
   const router = useRouter();
+  const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
+    null,
+  );
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
@@ -92,6 +96,28 @@ export default function DashboardPage() {
   useEffect(() => {
     fetchResumes();
   }, [fetchResumes]);
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchSession = async () => {
+      try {
+        const res = await fetch("/api/auth/session");
+        if (!res.ok) return;
+        const data = (await res.json()) as { user?: UserAvatarMenuUser | null };
+        if (mounted) {
+          setCurrentUser(data.user ?? null);
+        }
+      } catch {
+        if (mounted) {
+          setCurrentUser(null);
+        }
+      }
+    };
+    void fetchSession();
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const handleUpload = async () => {
     if (!selectedFile) return;
@@ -359,6 +385,7 @@ export default function DashboardPage() {
         expandedFolders={expandedFolders}
         selectedVersionId={selectedVersionId}
         deletingResumeId={deletingResumeId}
+        currentUser={currentUser}
         onToggleFolder={toggleFolder}
         onSelectVersion={selectVersion}
         onRequestDelete={setPendingDeleteResume}

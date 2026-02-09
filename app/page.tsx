@@ -3,6 +3,7 @@ import { FileText, Brain, Target, ArrowRight } from "lucide-react";
 import { auth } from "@/auth";
 import { AuthRequiredLink } from "@/components/auth/auth-required-link";
 import { StartInterviewButton } from "@/components/auth/start-interview-button";
+import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -51,6 +52,7 @@ const steps = [
 
 export default async function Home() {
   const session = await auth();
+  const currentUser = session?.user ?? null;
   const isAuthenticated = Boolean(session?.user?.id);
 
   return (
@@ -62,13 +64,17 @@ export default async function Home() {
             Seconda
           </Link>
           <div className="flex items-center gap-6">
-            <AuthRequiredLink
-              isAuthenticated={isAuthenticated}
-              href="/dashboard"
-              className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              {isAuthenticated ? "控制台" : "登录"}
-            </AuthRequiredLink>
+            {isAuthenticated && currentUser ? (
+              <UserAvatarMenu user={currentUser} />
+            ) : (
+              <AuthRequiredLink
+                isAuthenticated={false}
+                href="/dashboard"
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                登录
+              </AuthRequiredLink>
+            )}
             <StartInterviewButton isAuthenticated={isAuthenticated} size="sm">
               开始使用
             </StartInterviewButton>
