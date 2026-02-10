@@ -133,6 +133,11 @@ export const zh = {
     startingInterview: "正在创建面试...",
     startInterview: "使用此版本开始面试",
     configureFirst: "请先配置面试设置",
+    interviewHistory: "面试记录",
+    noInterviews: "暂无面试记录",
+    sessionDuration: "时长",
+    interviewScore: "{score}/100",
+    inProgress: "进行中",
     actionFailed: "操作失败",
     pleaseTryAgain: "请稍后重试。",
     parseHints: {

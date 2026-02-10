@@ -21,7 +21,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import type { Resume, ResumeVersion } from "@/components/dashboard/types";
+import type {
+  Resume,
+  ResumeVersion,
+} from "@/components/dashboard/types";
 
 interface ResumeSidebarProps {
   loading: boolean;
@@ -129,35 +132,36 @@ export function ResumeSidebar({
                       {resume.versions.map((version: ResumeVersion) => {
                         const isActive = version.id === selectedVersionId;
                         return (
-                          <button
-                            key={version.id}
-                            onClick={() =>
-                              onSelectVersion(resume.id, version.id)
-                            }
-                            className={cn(
-                              "flex w-full items-center gap-2 rounded-md px-2 py-1.5 pr-4 text-sm",
-                              isActive
-                                ? "bg-primary/10 font-medium text-primary"
-                                : "text-muted-foreground hover:bg-accent hover:text-foreground",
-                            )}
-                          >
-                            <FileText className="size-3.5" />
-                            <span>v{version.versionNumber}</span>
-                            {version.id === resume.currentVersionId && (
-                              <Badge
-                                variant="default"
-                                className="ml-auto px-1.5 py-0 text-[10px]"
-                              >
-                                {t.common.current}
-                              </Badge>
-                            )}
-                            {version.parseStatus === "failed" && (
-                              <AlertCircle className="ml-2 size-3.5 text-destructive" />
-                            )}
-                            {version.parseStatus === "parsing" && (
-                              <Loader2 className="ml-2 size-3.5 animate-spin" />
-                            )}
-                          </button>
+                          <div key={version.id}>
+                            <button
+                              onClick={() =>
+                                onSelectVersion(resume.id, version.id)
+                              }
+                              className={cn(
+                                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 pr-4 text-sm",
+                                isActive
+                                  ? "bg-primary/10 font-medium text-primary"
+                                  : "text-muted-foreground hover:bg-accent hover:text-foreground",
+                              )}
+                            >
+                              <FileText className="size-3.5" />
+                              <span>v{version.versionNumber}</span>
+                              {version.id === resume.currentVersionId && (
+                                <Badge
+                                  variant="default"
+                                  className="ml-auto px-1.5 py-0 text-[10px]"
+                                >
+                                  {t.common.current}
+                                </Badge>
+                              )}
+                              {version.parseStatus === "failed" && (
+                                <AlertCircle className="ml-2 size-3.5 text-destructive" />
+                              )}
+                              {version.parseStatus === "parsing" && (
+                                <Loader2 className="ml-2 size-3.5 animate-spin" />
+                              )}
+                            </button>
+                          </div>
                         );
                       })}
                     </div>
