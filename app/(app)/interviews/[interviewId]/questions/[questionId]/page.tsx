@@ -17,6 +17,7 @@ import {
   Loader2,
 } from "lucide-react"
 import { BrandIcon } from "@/components/brand/brand-icon"
+import { useTranslation } from "@/lib/i18n/context"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -89,6 +90,7 @@ type AccordionSection = "concepts" | "pitfalls" | "model"
 export default function QuestionDeepDivePage() {
   const router = useRouter()
   const { interviewId, questionId } = useParams()
+  const { t } = useTranslation()
   const [expandedSections, setExpandedSections] = useState<Set<AccordionSection>>(
     new Set(["concepts", "model"])
   )
@@ -152,11 +154,11 @@ export default function QuestionDeepDivePage() {
           </div>
           <Separator orientation="vertical" className="h-5" />
           <nav className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Link href="/" className="hover:text-foreground cursor-pointer">Home</Link>
+            <Link href="/" className="hover:text-foreground cursor-pointer">{t.deepDive.home}</Link>
             <ChevronRight className="size-3" />
-            <Link href={`/interviews/${interviewId}/report`} className="hover:text-foreground cursor-pointer">Interview Report</Link>
+            <Link href={`/interviews/${interviewId}/report`} className="hover:text-foreground cursor-pointer">{t.deepDive.interviewReport}</Link>
             <ChevronRight className="size-3" />
-            <span className="text-foreground font-medium">Deep Dive</span>
+            <span className="text-foreground font-medium">{t.deepDive.deepDiveLabel}</span>
           </nav>
         </div>
         <div className="flex items-center gap-2">
@@ -181,12 +183,12 @@ export default function QuestionDeepDivePage() {
                   <Sparkles className="size-3.5 text-primary" />
                 </div>
                 <span className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">
-                  Original Question
+                  {t.deepDive.originalQuestion}
                 </span>
               </div>
               <div className="rounded-lg border bg-card p-4">
                 <p className="text-sm font-semibold leading-relaxed">
-                  {question?.question || "Question not found"}
+                  {question?.question || t.deepDive.questionNotFound}
                 </p>
                 <div className="mt-3 flex flex-wrap gap-1.5">
                   {question?.questionType && (
@@ -210,7 +212,7 @@ export default function QuestionDeepDivePage() {
                 <Avatar size="sm">
                   <AvatarFallback className="text-[10px]">JD</AvatarFallback>
                 </Avatar>
-                <span className="text-xs font-medium">Your Answer</span>
+                <span className="text-xs font-medium">{t.deepDive.yourAnswer}</span>
                 <div className="ml-auto flex items-center gap-1 text-muted-foreground">
                   <Clock className="size-3" />
                   <span className="text-[11px]">—</span>
@@ -218,7 +220,7 @@ export default function QuestionDeepDivePage() {
               </div>
               <div className="ml-7 rounded-lg bg-muted/60 p-3">
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {question?.answerText || "No answer provided"}
+                  {question?.answerText || t.deepDive.noAnswer}
                 </p>
               </div>
             </div>
@@ -229,17 +231,17 @@ export default function QuestionDeepDivePage() {
                 <div className="flex size-6 items-center justify-center rounded-full bg-primary">
                   <Sparkles className="size-3.5 text-white" />
                 </div>
-                <span className="text-xs font-medium">Initial Feedback</span>
+                <span className="text-xs font-medium">{t.deepDive.initialFeedback}</span>
               </div>
               <div className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
                 <div className="mb-2 flex items-center gap-2">
                   <Badge className="bg-blue-600 text-white hover:bg-blue-600">{score}/10</Badge>
                   <span className="text-sm font-medium">
-                    {score >= 8 ? "Strong Answer" : score >= 5 ? "Solid Foundation" : "Needs Work"}
+                    {score >= 8 ? t.deepDive.strongAnswer : score >= 5 ? t.deepDive.solidFoundation : t.deepDive.needsWork}
                   </span>
                 </div>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  {feedback?.summary || feedback?.overallFeedback || "No detailed feedback available."}
+                  {feedback?.summary || feedback?.overallFeedback || t.deepDive.noFeedback}
                 </p>
               </div>
             </div>
@@ -254,16 +256,16 @@ export default function QuestionDeepDivePage() {
               onClick={() => router.push(`/interviews/${interviewId}/questions/${questionIndex - 1}`)}
             >
               <ChevronLeft className="size-4" />
-              Previous
+              {t.common.previous}
             </Button>
-            <span className="text-xs text-muted-foreground">Question {questionIndex} of {totalQuestions}</span>
+            <span className="text-xs text-muted-foreground">{t.deepDive.questionOf.replace("{current}", String(questionIndex)).replace("{total}", String(totalQuestions))}</span>
             <Button
               variant="ghost"
               size="sm"
               disabled={!hasNext}
               onClick={() => router.push(`/interviews/${interviewId}/questions/${questionIndex + 1}`)}
             >
-              Next
+              {t.common.next}
               <ChevronRight className="size-4" />
             </Button>
           </div>
@@ -283,7 +285,7 @@ export default function QuestionDeepDivePage() {
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                Follow-up Mode
+                {t.deepDive.followUpMode}
               </button>
               <button
                 onClick={() => setActiveTab("coach")}
@@ -294,7 +296,7 @@ export default function QuestionDeepDivePage() {
                     : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                Coach Mode
+                {t.deepDive.coachMode}
               </button>
             </div>
           </div>
@@ -303,9 +305,9 @@ export default function QuestionDeepDivePage() {
           <div className="relative flex-1 overflow-y-auto">
             <div className="mx-auto max-w-3xl px-8 py-8 pb-24 space-y-6">
               <div className="space-y-1">
-                <h1 className="text-xl font-semibold">Deep Dive Analysis</h1>
+                <h1 className="text-xl font-semibold">{t.deepDive.title}</h1>
                 <p className="text-sm text-muted-foreground">
-                  Explore the key concepts, common pitfalls, and model answers for this question.
+                  {t.deepDive.description}
                 </p>
               </div>
 
@@ -319,9 +321,9 @@ export default function QuestionDeepDivePage() {
                     <Lightbulb className="size-4 text-purple-600 dark:text-purple-400" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-sm font-semibold">{deepDive?.coreConcepts?.title || "Core Concepts"}</p>
+                    <p className="text-sm font-semibold">{deepDive?.coreConcepts?.title || t.deepDive.coreConcepts}</p>
                     <p className="text-xs text-muted-foreground">
-                      {deepDive?.coreConcepts?.subtitle || "Key concepts for this question"}
+                      {deepDive?.coreConcepts?.subtitle || t.deepDive.coreConceptsSub}
                     </p>
                   </div>
                   <ChevronDown
@@ -348,7 +350,7 @@ export default function QuestionDeepDivePage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-muted-foreground">No core concepts data available.</p>
+                      <p className="text-xs text-muted-foreground">{t.deepDive.noCoreConcepts}</p>
                     )}
                   </div>
                 )}
@@ -364,9 +366,9 @@ export default function QuestionDeepDivePage() {
                     <AlertTriangle className="size-4 text-red-600 dark:text-red-400" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-sm font-semibold">Common Pitfalls</p>
+                    <p className="text-sm font-semibold">{t.deepDive.commonPitfalls}</p>
                     <p className="text-xs text-muted-foreground">
-                      What most candidates miss
+                      {t.deepDive.commonPitfallsSub}
                     </p>
                   </div>
                   <ChevronDown
@@ -388,7 +390,7 @@ export default function QuestionDeepDivePage() {
                         ))}
                       </ul>
                     ) : (
-                      <p className="text-xs text-muted-foreground">No pitfall data available.</p>
+                      <p className="text-xs text-muted-foreground">{t.deepDive.noPitfalls}</p>
                     )}
                   </div>
                 )}
@@ -404,8 +406,8 @@ export default function QuestionDeepDivePage() {
                     <BadgeCheck className="size-4 text-green-600 dark:text-green-400" />
                   </div>
                   <div className="flex-1 text-left">
-                    <p className="text-sm font-semibold">Model Answer Structure</p>
-                    <p className="text-xs text-muted-foreground">{deepDive?.modelAnswer?.approach || "Recommended approach"}</p>
+                    <p className="text-sm font-semibold">{t.deepDive.modelAnswerStructure}</p>
+                    <p className="text-xs text-muted-foreground">{deepDive?.modelAnswer?.approach || t.deepDive.recommendedApproach}</p>
                   </div>
                   <ChevronDown
                     className={cn(
@@ -438,7 +440,7 @@ export default function QuestionDeepDivePage() {
                         ))}
                       </div>
                     ) : (
-                      <p className="text-xs text-muted-foreground">No model answer data available.</p>
+                      <p className="text-xs text-muted-foreground">{t.deepDive.noModelAnswer}</p>
                     )}
                   </div>
                 )}
@@ -449,7 +451,7 @@ export default function QuestionDeepDivePage() {
             <div className="absolute bottom-8 right-8">
               <Button size="default" className="shadow-lg" onClick={() => router.push(`/interviews/${interviewId}/report`)}>
                 <CheckCircle2 className="size-4" />
-                Mark as Review Completed
+                {t.deepDive.markReviewCompleted}
               </Button>
             </div>
           </div>

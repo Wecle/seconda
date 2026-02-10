@@ -2,6 +2,7 @@
 
 import { Brain, Code, Gavel, Globe, Merge, Smile, Timer } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n/context";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
@@ -24,51 +25,42 @@ const levels: readonly InterviewLevel[] = ["Junior", "Mid", "Senior"];
 const interviewTypes = [
   {
     id: "behavioral" as InterviewType,
-    label: "Behavioral",
     icon: Brain,
     color: "bg-blue-100 text-blue-600 dark:bg-blue-900/40 dark:text-blue-400",
   },
   {
     id: "technical" as InterviewType,
-    label: "Technical",
     icon: Code,
     color:
       "bg-purple-100 text-purple-600 dark:bg-purple-900/40 dark:text-purple-400",
   },
   {
     id: "mixed" as InterviewType,
-    label: "Mixed",
     icon: Merge,
     color: "bg-teal-100 text-teal-600 dark:bg-teal-900/40 dark:text-teal-400",
   },
 ] as const;
 const interviewLanguages = [
-  { id: "en" as InterviewLanguage, label: "English" },
-  { id: "zh" as InterviewLanguage, label: "Chinese" },
-  { id: "es" as InterviewLanguage, label: "Spanish" },
-  { id: "de" as InterviewLanguage, label: "German" },
+  { id: "en" as InterviewLanguage },
+  { id: "zh" as InterviewLanguage },
+  { id: "es" as InterviewLanguage },
+  { id: "de" as InterviewLanguage },
 ] as const;
 const personas = [
   {
     id: "friendly" as InterviewPersona,
-    label: "Friendly",
-    description: "Warm and encouraging, helps you feel comfortable.",
     icon: Smile,
     color:
       "bg-green-100 text-green-600 dark:bg-green-900/40 dark:text-green-400",
   },
   {
     id: "standard" as InterviewPersona,
-    label: "Standard",
-    description: "Professional and balanced, mirrors real interviews.",
     icon: Gavel,
     color:
       "bg-slate-100 text-slate-600 dark:bg-slate-800/60 dark:text-slate-400",
   },
   {
     id: "stressful" as InterviewPersona,
-    label: "Stressful",
-    description: "High-pressure, tests how you handle tough questions.",
     icon: Timer,
     color: "bg-red-100 text-red-600 dark:bg-red-900/40 dark:text-red-400",
   },
@@ -84,14 +76,39 @@ export function InterviewSettingsForm({
   value,
   onChange,
 }: InterviewSettingsFormProps) {
-  const activeLanguageLabel =
-    interviewLanguages.find((language) => language.id === value.language)
-      ?.label ?? "English";
+  const { t } = useTranslation();
+
+  const levelLabels: Record<string, string> = {
+    Junior: t.interview.levels.Junior,
+    Mid: t.interview.levels.Mid,
+    Senior: t.interview.levels.Senior,
+  };
+
+  const typeLabels: Record<string, string> = {
+    behavioral: t.interview.behavioral,
+    technical: t.interview.technical,
+    mixed: t.interview.mixed,
+  };
+
+  const languageLabels: Record<string, string> = {
+    en: t.interview.languages.en,
+    zh: t.interview.languages.zh,
+    es: t.interview.languages.es,
+    de: t.interview.languages.de,
+  };
+
+  const personaLabels: Record<string, { label: string; description: string }> = {
+    friendly: t.interview.personas.friendly,
+    standard: t.interview.personas.standard,
+    stressful: t.interview.personas.stressful,
+  };
+
+  const activeLanguageLabel = languageLabels[value.language] ?? languageLabels.en;
 
   return (
     <div className="space-y-8">
       <section className="space-y-3">
-        <Label className="text-muted-foreground">Target Level</Label>
+        <Label className="text-muted-foreground">{t.interview.targetLevel}</Label>
         <div className="inline-flex rounded-lg bg-muted p-1">
           {levels.map((level) => (
             <label key={level} className="cursor-pointer">
@@ -110,7 +127,7 @@ export function InterviewSettingsForm({
                   value.level !== level && "text-muted-foreground",
                 )}
               >
-                {level}
+                {levelLabels[level] ?? level}
               </span>
             </label>
           ))}
@@ -118,7 +135,7 @@ export function InterviewSettingsForm({
       </section>
 
       <section className="space-y-3">
-        <Label className="text-muted-foreground">Interview Type</Label>
+        <Label className="text-muted-foreground">{t.interview.interviewType}</Label>
         <div className="grid grid-cols-3 gap-3">
           {interviewTypes.map((type) => (
             <button
@@ -140,7 +157,7 @@ export function InterviewSettingsForm({
               >
                 <type.icon className="size-5" />
               </div>
-              <span className="text-sm font-medium">{type.label}</span>
+              <span className="text-sm font-medium">{typeLabels[type.id]}</span>
             </button>
           ))}
         </div>
@@ -148,7 +165,7 @@ export function InterviewSettingsForm({
 
       <section className="grid grid-cols-2 gap-5">
         <div className="space-y-2">
-          <Label className="text-muted-foreground">Language</Label>
+          <Label className="text-muted-foreground">{t.interview.language}</Label>
           <Select
             value={value.language}
             onValueChange={(language: InterviewLanguage) =>
@@ -164,7 +181,7 @@ export function InterviewSettingsForm({
             <SelectContent>
               {interviewLanguages.map((language) => (
                 <SelectItem key={language.id} value={language.id}>
-                  {language.label}
+                  {languageLabels[language.id]}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -173,9 +190,9 @@ export function InterviewSettingsForm({
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <Label className="text-muted-foreground">Question Count</Label>
+            <Label className="text-muted-foreground">{t.interview.questionCount}</Label>
             <Badge variant="secondary" className="tabular-nums">
-              {value.questionCount} Questions
+              {value.questionCount} {t.interview.questionsUnit}
             </Badge>
           </div>
           <Slider
@@ -202,7 +219,7 @@ export function InterviewSettingsForm({
       </section>
 
       <section className="space-y-3">
-        <Label className="text-muted-foreground">Interviewer Persona</Label>
+        <Label className="text-muted-foreground">{t.interview.persona}</Label>
         <div className="grid grid-cols-3 gap-3">
           {personas.map((persona) => (
             <button
@@ -225,9 +242,9 @@ export function InterviewSettingsForm({
                 <persona.icon className="size-4" />
               </div>
               <div>
-                <span className="text-sm font-medium">{persona.label}</span>
+                <span className="text-sm font-medium">{personaLabels[persona.id].label}</span>
                 <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
-                  {persona.description}
+                  {personaLabels[persona.id].description}
                 </p>
               </div>
             </button>

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslation } from "@/lib/i18n/context";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,17 +20,18 @@ export function ErrorAlertDialog({
   message,
   onOpenChange,
 }: ErrorAlertDialogProps) {
+  const { t } = useTranslation();
   return (
     <AlertDialog open={Boolean(message)} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Action failed</AlertDialogTitle>
+          <AlertDialogTitle>{t.dashboard.actionFailed}</AlertDialogTitle>
           <AlertDialogDescription>
-            {message ?? "Please try again."}
+            {message ?? t.dashboard.pleaseTryAgain}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogAction>OK</AlertDialogAction>
+          <AlertDialogAction>{t.common.ok}</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

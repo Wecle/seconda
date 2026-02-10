@@ -33,6 +33,7 @@ import {
   Search,
   Loader2,
 } from "lucide-react"
+import { useTranslation } from "@/lib/i18n/context"
 
 const radarLabels = [
   { label: "Understanding", angle: -90 },
@@ -48,7 +49,7 @@ function polarToCartesian(cx: number, cy: number, r: number, angleDeg: number) {
   return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) }
 }
 
-function RadarChart({ values }: { values: number[] }) {
+function RadarChart({ values, labelNames }: { values: number[]; labelNames: string[] }) {
   const cx = 120
   const cy = 120
   const maxR = 90
@@ -85,7 +86,7 @@ function RadarChart({ values }: { values: number[] }) {
             dominantBaseline="central"
             className="fill-muted-foreground text-[9px]"
           >
-            {l.label}
+            {labelNames[i]}
           </text>
         )
       })}
@@ -208,6 +209,7 @@ export default function ReportPage() {
   const [data, setData] = useState<InterviewApiResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeFilter, setActiveFilter] = useState<FilterTab>("All")
+  const { t } = useTranslation()
 
   useEffect(() => {
     fetch(`/api/interviews/${interviewId}`)
@@ -219,6 +221,21 @@ export default function ReportPage() {
   }, [interviewId])
 
   const filterTabs: FilterTab[] = ["All", "Behavioral", "Technical"]
+
+  const filterTabLabels: Record<FilterTab, string> = {
+    All: t.report.all,
+    Behavioral: t.interview.behavioral,
+    Technical: t.interview.technical,
+  }
+
+  const radarLabelNames = [
+    t.report.radarLabels.understanding,
+    t.report.radarLabels.expression,
+    t.report.radarLabels.logic,
+    t.report.radarLabels.depth,
+    t.report.radarLabels.authenticity,
+    t.report.radarLabels.reflection,
+  ]
 
   if (loading) {
     return (
@@ -257,13 +274,13 @@ export default function ReportPage() {
         <div className="max-w-[1200px] mx-auto flex items-center justify-between px-4 sm:px-8 h-14">
           <div className="flex items-center gap-2">
             <Mic className="size-5 text-primary" />
-            <span className="font-semibold text-sm">AI Mock Interviewer</span>
+            <span className="font-semibold text-sm">{t.report.aiMockInterviewer}</span>
           </div>
           <div className="flex items-center gap-6">
             <nav className="hidden sm:flex items-center gap-5 text-sm text-muted-foreground">
-              <Link href="/dashboard" className="hover:text-foreground transition-colors">Dashboard</Link>
-              <Link href="/dashboard" className="hover:text-foreground transition-colors">History</Link>
-              <a href="#" className="hover:text-foreground transition-colors">Settings</a>
+              <Link href="/dashboard" className="hover:text-foreground transition-colors">{t.report.dashboard}</Link>
+              <Link href="/dashboard" className="hover:text-foreground transition-colors">{t.report.history}</Link>
+              <a href="#" className="hover:text-foreground transition-colors">{t.report.settings}</a>
             </nav>
             <div className="size-8 rounded-full bg-primary/10 flex items-center justify-center text-primary text-xs font-semibold">
               JD
@@ -278,23 +295,23 @@ export default function ReportPage() {
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-8">
           <div>
             <div className="flex items-center gap-3 mb-1">
-              <h1 className="text-2xl font-bold tracking-tight">Interview Evaluation</h1>
+              <h1 className="text-2xl font-bold tracking-tight">{t.report.title}</h1>
               <Badge className="bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300 border-0">
                 {interview?.status?.toUpperCase() || "COMPLETED"}
               </Badge>
             </div>
             <p className="text-sm text-muted-foreground">
-              {interview?.type} &bull; {interview?.level} &bull; {questions.length} questions
+              {interview?.type} &bull; {interview?.level} &bull; {questions.length} {t.report.questions}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm">
               <Share2 />
-              Share
+              {t.report.shareReport}
             </Button>
             <Button variant="outline" size="sm">
               <FileDown />
-              Export Report
+              {t.report.exportReport}
             </Button>
           </div>
         </div>
@@ -304,16 +321,16 @@ export default function ReportPage() {
           {/* Overall Performance */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm">Overall Performance</CardTitle>
+              <CardTitle className="text-sm">{t.report.overallPerformance}</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col items-center gap-3">
               <DonutChart score={overallScore} />
               <p className="text-sm font-semibold text-primary">
-                {overallScore >= 80 ? "Strong Performer" : overallScore >= 60 ? "Good Progress" : "Needs Improvement"}
+                {overallScore >= 80 ? t.report.strongPerformer : overallScore >= 60 ? t.report.goodProgress : t.report.needsImprovement}
               </p>
               <div className="flex items-center gap-1 text-xs text-green-600">
                 <TrendingUp className="size-3.5" />
-                Score: {overallScore}/100
+                {t.report.score}: {overallScore}/100
               </div>
             </CardContent>
           </Card>
@@ -322,21 +339,21 @@ export default function ReportPage() {
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between w-full">
-                <CardTitle className="text-sm">Competency Breakdown</CardTitle>
+                <CardTitle className="text-sm">{t.report.competencyBreakdown}</CardTitle>
                 <Button variant="ghost" size="icon-xs">
                   <Info className="size-3.5 text-muted-foreground" />
                 </Button>
               </div>
             </CardHeader>
             <CardContent>
-              <RadarChart values={radarValues} />
+              <RadarChart values={radarValues} labelNames={radarLabelNames} />
             </CardContent>
           </Card>
 
           {/* Analysis Summary */}
           <Card>
             <CardHeader className="bg-muted/50 rounded-t-xl">
-              <CardTitle className="text-sm">Analysis Summary</CardTitle>
+              <CardTitle className="text-sm">{t.report.analysisSummary}</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               {topStrengths.slice(0, 2).map((strength: string, i: number) => (
@@ -345,7 +362,7 @@ export default function ReportPage() {
                     {i === 0 ? <ThumbsUp className="size-3.5 text-green-600" /> : <BadgeCheck className="size-3.5 text-blue-600" />}
                   </div>
                   <div>
-                    <p className={cn("text-[10px] font-semibold uppercase tracking-wider", i === 0 ? "text-green-600" : "text-blue-600")}>Top Strength</p>
+                    <p className={cn("text-[10px] font-semibold uppercase tracking-wider", i === 0 ? "text-green-600" : "text-blue-600")}>{t.report.topStrength}</p>
                     <p className="text-sm text-foreground">{strength}</p>
                   </div>
                 </div>
@@ -356,13 +373,13 @@ export default function ReportPage() {
                     <AlertTriangle className="size-3.5 text-orange-600" />
                   </div>
                   <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-orange-600">Critical Focus</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-orange-600">{t.report.criticalFocus}</p>
                     <p className="text-sm text-foreground">{focus}</p>
                   </div>
                 </div>
               ))}
               {topStrengths.length === 0 && criticalFocus.length === 0 && (
-                <p className="text-sm text-muted-foreground">No analysis data available yet.</p>
+                <p className="text-sm text-muted-foreground">{t.report.noAnalysisData}</p>
               )}
             </CardContent>
           </Card>
@@ -370,7 +387,7 @@ export default function ReportPage() {
 
         {/* Detailed Question Analysis */}
         <div className="mb-4">
-          <h2 className="text-lg font-semibold mb-4">Detailed Question Analysis</h2>
+          <h2 className="text-lg font-semibold mb-4">{t.report.detailedAnalysis}</h2>
           <div className="flex items-center gap-2 mb-4">
             {filterTabs.map((tab) => (
               <button
@@ -383,7 +400,7 @@ export default function ReportPage() {
                     : "bg-muted text-muted-foreground hover:text-foreground"
                 )}
               >
-                {tab}
+                {filterTabLabels[tab]}
               </button>
             ))}
           </div>
@@ -406,7 +423,7 @@ export default function ReportPage() {
                         Q{q.questionIndex ?? idx + 1} &bull; {q.questionType || q.topic || "Question"}
                       </Badge>
                       <Badge className={cn("border-0 text-xs", getScoreColor(score))}>
-                        Score: {score}/10
+                        {t.report.score}: {score}/10
                       </Badge>
                     </div>
                     <p className="font-medium text-sm leading-snug">{q.question}</p>
@@ -416,13 +433,13 @@ export default function ReportPage() {
                     {score < 5 && (
                       <div className="flex items-center gap-1.5 text-orange-600 text-xs font-medium">
                         <AlertCircle className="size-3.5" />
-                        Needs Improvement
+                        {t.report.needsImprovementLabel}
                       </div>
                     )}
                     {score >= 8 && (
                       <div className="flex items-center gap-1.5 text-green-600 text-xs font-medium">
                         <CheckCircle2 className="size-3.5" />
-                        Strong Answer
+                        {t.report.strongAnswer}
                       </div>
                     )}
                   </div>
@@ -431,7 +448,7 @@ export default function ReportPage() {
                   <div className="space-y-5">
                     {q.answerText && (
                       <div>
-                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Your Answer Transcript</h4>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">{t.report.yourAnswer}</h4>
                         <div className="bg-muted/50 rounded-lg p-4">
                           <p className="text-sm italic text-muted-foreground leading-relaxed">
                             &ldquo;{q.answerText}&rdquo;
@@ -442,14 +459,14 @@ export default function ReportPage() {
 
                     {(strengths.length > 0 || improvements.length > 0 || advice.length > 0) && (
                       <div>
-                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">AI Feedback</h4>
+                        <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">{t.report.aiFeedback}</h4>
                         <div className="bg-primary/5 rounded-lg p-4">
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             {strengths.length > 0 && (
                               <div>
                                 <p className="text-xs font-semibold text-green-600 mb-2 flex items-center gap-1.5">
                                   <span className="size-1.5 rounded-full bg-green-500" />
-                                  Strengths
+                                  {t.report.strengths}
                                 </p>
                                 <ul className="space-y-1.5">
                                   {strengths.map((s: string, i: number) => (
@@ -462,7 +479,7 @@ export default function ReportPage() {
                               <div>
                                 <p className="text-xs font-semibold text-orange-600 mb-2 flex items-center gap-1.5">
                                   <span className="size-1.5 rounded-full bg-orange-500" />
-                                  Improvements
+                                  {t.report.improvements}
                                 </p>
                                 <ul className="space-y-1.5">
                                   {improvements.map((s: string, i: number) => (
@@ -475,7 +492,7 @@ export default function ReportPage() {
                               <div>
                                 <p className="text-xs font-semibold text-blue-600 mb-2 flex items-center gap-1.5">
                                   <span className="size-1.5 rounded-full bg-blue-500" />
-                                  Advice
+                                  {t.report.advice}
                                 </p>
                                 <ul className="space-y-1.5">
                                   {advice.map((s: string, i: number) => (
@@ -491,7 +508,7 @@ export default function ReportPage() {
 
                     <Button className="w-full" onClick={() => router.push(`/interviews/${interviewId}/questions/${q.questionIndex}`)}>
                       <Search className="size-4" />
-                      Deep Dive into this Question
+                      {t.report.deepDive}
                     </Button>
                   </div>
                 </AccordionContent>
@@ -506,7 +523,7 @@ export default function ReportPage() {
         <div className="pointer-events-auto bg-card border rounded-full px-2 py-2 shadow-lg">
           <Button className="rounded-full" size="lg" onClick={() => router.push("/dashboard")}>
             <RefreshCw className="size-4" />
-            Start New Practice Session
+            {t.report.startNewSession}
           </Button>
         </div>
       </div>

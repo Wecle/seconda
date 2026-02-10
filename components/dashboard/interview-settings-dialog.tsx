@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 import { InterviewSettingsForm } from "@/components/interview/interview-settings-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,13 +32,14 @@ export function InterviewSettingsDialog({
   onCancel,
   onSave,
 }: InterviewSettingsDialogProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[90vh] w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-[680px]">
         <DialogHeader className="border-b px-6 py-5 text-left">
-          <DialogTitle>Interview Settings</DialogTitle>
+          <DialogTitle>{t.interview.settingsTitle}</DialogTitle>
           <DialogDescription>
-            Configure your AI mock interview session parameters.
+            {t.interview.settingsDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -46,7 +48,7 @@ export function InterviewSettingsDialog({
         </div>
         <div className="flex items-center justify-end gap-3 border-t px-6 py-4">
           <Button variant="ghost" onClick={onCancel} disabled={saving}>
-            Cancel
+            {t.common.cancel}
           </Button>
           <Button
             className="bg-primary text-primary-foreground"
@@ -56,10 +58,10 @@ export function InterviewSettingsDialog({
             {saving ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Saving...
+                {t.common.saving}
               </>
             ) : (
-              "Save"
+              t.common.save
             )}
           </Button>
         </div>

@@ -2,6 +2,7 @@
 
 import type { ChangeEvent, DragEvent, RefObject } from "react";
 import { AlertCircle, FileText, Loader2, Upload, X } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -51,24 +52,25 @@ export function UploadResumeDialog({
   onCancel,
   onUpload,
 }: UploadResumeDialogProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Upload Resume</DialogTitle>
+          <DialogTitle>{t.dashboard.uploadResumeTitle}</DialogTitle>
           <DialogDescription>
-            Upload a PDF resume. It will be automatically parsed by AI.
+            {t.dashboard.uploadResumeDescription}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="title">Resume Title</Label>
+            <Label htmlFor="title">{t.dashboard.resumeTitle}</Label>
             <Input
               id="title"
               value={uploadTitle}
               onChange={(e) => onUploadTitleChange(e.target.value)}
-              placeholder="e.g. Frontend Developer"
+              placeholder={t.dashboard.resumeTitlePlaceholder}
             />
           </div>
 
@@ -115,9 +117,9 @@ export function UploadResumeDialog({
               <>
                 <Upload className="size-8 text-muted-foreground/50" />
                 <p className="mt-2 text-sm font-medium">
-                  Drop PDF here or click to browse
+                  {t.dashboard.dropPdf}
                 </p>
-                <p className="text-xs text-muted-foreground">PDF up to 10MB</p>
+                <p className="text-xs text-muted-foreground">{t.dashboard.pdfLimit}</p>
               </>
             )}
           </div>
@@ -131,18 +133,18 @@ export function UploadResumeDialog({
 
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={onCancel} disabled={uploading}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button onClick={onUpload} disabled={!selectedFile || uploading}>
               {uploading ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
-                  Processing...
+                  {t.common.processing}
                 </>
               ) : (
                 <>
                   <Upload className="size-4" />
-                  Upload &amp; Parse
+                  {t.dashboard.uploadAndParse}
                 </>
               )}
             </Button>
