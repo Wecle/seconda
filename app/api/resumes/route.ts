@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { resumes, resumeVersions } from "@/lib/db/schema";
+import { resumes, resumeVersions, interviews } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeInterviewConfig } from "@/lib/interview/settings";
@@ -27,19 +27,41 @@ export async function GET() {
           .where(eq(resumeVersions.resumeId, resume.id))
           .orderBy(desc(resumeVersions.versionNumber));
 
+        const versionsWithInterviews = await Promise.all(
+          versions.map(async (v) => {
+            const versionInterviews = await db
+              .select()
+              .from(interviews)
+              .where(eq(interviews.resumeVersionId, v.id))
+              .orderBy(desc(interviews.createdAt));
+
+            return {
+              id: v.id,
+              versionNumber: v.versionNumber,
+              originalFilename: v.originalFilename,
+              originalFileUrl: v.storedPath,
+              parseStatus: v.parseStatus,
+              parseError: v.parseError,
+              parsedData: (v.parsedJson as ParsedResume) ?? null,
+              createdAt: v.createdAt,
+              interviews: versionInterviews.map((i) => ({
+                id: i.id,
+                status: i.status,
+                type: i.type,
+                level: i.level,
+                overallScore: i.overallScore,
+                questionCount: i.questionCount,
+                createdAt: i.createdAt,
+                completedAt: i.completedAt,
+              })),
+            };
+          })
+        );
+
         return {
           ...resume,
           interviewSettings: normalizeInterviewConfig(resume.interviewSettings),
-          versions: versions.map((v) => ({
-            id: v.id,
-            versionNumber: v.versionNumber,
-            originalFilename: v.originalFilename,
-            originalFileUrl: v.storedPath,
-            parseStatus: v.parseStatus,
-            parseError: v.parseError,
-            parsedData: (v.parsedJson as ParsedResume) ?? null,
-            createdAt: v.createdAt,
-          })),
+          versions: versionsWithInterviews,
         };
       })
     );

@@ -12,6 +12,7 @@ import {
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
 import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
 import { InterviewSettingsDialog } from "@/components/dashboard/interview-settings-dialog";
+import { InterviewHistoryPanel } from "@/components/dashboard/interview-history-panel";
 import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
 import type { Resume } from "@/components/dashboard/types";
@@ -336,6 +337,8 @@ export default function DashboardPage() {
   const selectedVersion = selectedResume?.versions.find(
     (v) => v.id === selectedVersionId,
   );
+  const showInterviewHistoryPanel =
+    (selectedVersion?.interviews.length ?? 0) > 0;
   const parsed = selectedVersion?.parsedData;
   const hasParsedPreview =
     selectedVersion?.parseStatus === "parsed" && Boolean(parsed);
@@ -394,49 +397,62 @@ export default function DashboardPage() {
         onOpenUpload={() => setUploadOpen(true)}
       />
 
-      <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {selectedVersion ? (
-          <ResumePreviewPane
-            selectedResumeTitle={selectedResume?.title}
-            selectedVersion={selectedVersion}
-            parsed={parsed}
-            activePreviewMode={activePreviewMode}
-            hasParsedPreview={hasParsedPreview}
-            hasOriginalPreview={hasOriginalPreview}
-            parseFailureHint={parseFailureHint}
-            retryingParse={retryingVersionId === selectedVersion.id}
-            onPreviewModeChange={setPreviewMode}
-            onRetryParse={handleRetryParse}
-            selectedInterviewConfig={selectedInterviewConfig}
-            creatingInterview={creatingInterview}
-            onOpenSettings={openSettingsDialog}
-            onStartInterview={handleStartInterview}
-          />
-        ) : loading ? (
-          <div className="flex flex-1 items-center justify-center">
-            <div className="text-center space-y-3">
-              <Loader2 className="mx-auto size-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">{t.common.loading}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center">
-            <div className="text-center space-y-4">
-              <FileUp className="mx-auto size-12 text-muted-foreground/30" />
-              <div>
-                <h2 className="text-lg font-semibold">{t.dashboard.noResumeSelected}</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {t.dashboard.uploadToStart}
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          {selectedVersion ? (
+            <ResumePreviewPane
+              selectedResumeTitle={selectedResume?.title}
+              selectedVersion={selectedVersion}
+              parsed={parsed}
+              activePreviewMode={activePreviewMode}
+              hasParsedPreview={hasParsedPreview}
+              hasOriginalPreview={hasOriginalPreview}
+              parseFailureHint={parseFailureHint}
+              retryingParse={retryingVersionId === selectedVersion.id}
+              onPreviewModeChange={setPreviewMode}
+              onRetryParse={handleRetryParse}
+              selectedInterviewConfig={selectedInterviewConfig}
+              creatingInterview={creatingInterview}
+              onOpenSettings={openSettingsDialog}
+              onStartInterview={handleStartInterview}
+            />
+          ) : loading ? (
+            <div className="flex flex-1 items-center justify-center">
+              <div className="text-center space-y-3">
+                <Loader2 className="mx-auto size-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">
+                  {t.common.loading}
                 </p>
               </div>
-              <Button onClick={() => setUploadOpen(true)}>
-                <Upload className="size-4" />
-                {t.dashboard.uploadResume}
-              </Button>
             </div>
-          </div>
-        )}
-      </main>
+          ) : (
+            <div className="flex flex-1 items-center justify-center">
+              <div className="text-center space-y-4">
+                <FileUp className="mx-auto size-12 text-muted-foreground/30" />
+                <div>
+                  <h2 className="text-lg font-semibold">
+                    {t.dashboard.noResumeSelected}
+                  </h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    {t.dashboard.uploadToStart}
+                  </p>
+                </div>
+                <Button onClick={() => setUploadOpen(true)}>
+                  <Upload className="size-4" />
+                  {t.dashboard.uploadResume}
+                </Button>
+              </div>
+            </div>
+          )}
+        </main>
+
+        {showInterviewHistoryPanel ? (
+          <InterviewHistoryPanel
+            selectedResumeTitle={selectedResume?.title}
+            selectedVersion={selectedVersion ?? null}
+          />
+        ) : null}
+      </div>
 
       <InterviewSettingsDialog
         open={settingsOpen}

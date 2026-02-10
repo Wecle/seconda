@@ -140,6 +140,11 @@ export const en = {
     startingInterview: "Starting Interview...",
     startInterview: "Start Interview with this Version",
     configureFirst: "Configure Settings First",
+    interviewHistory: "Interview History",
+    noInterviews: "No interviews yet",
+    sessionDuration: "Duration",
+    interviewScore: "{score}/100",
+    inProgress: "In Progress",
     actionFailed: "Action failed",
     pleaseTryAgain: "Please try again.",
     parseHints: {
