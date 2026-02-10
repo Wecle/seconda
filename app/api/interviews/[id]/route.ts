@@ -61,6 +61,7 @@ export async function GET(
       resumeSnapshot: resumeVersion
         ? {
             id: resumeVersion.id,
+            versionNumber: resumeVersion.versionNumber,
             originalFilename: resumeVersion.originalFilename,
             originalFileUrl: resumeVersion.storedPath,
             parseStatus: resumeVersion.parseStatus,
