@@ -214,6 +214,20 @@ export const en = {
     submitAnswer: "Submit Answer",
     allAnswered: "All questions answered",
     viewReport: "View Report",
+    completionTitle: "Interview Session Completed",
+    completionDescription:
+      "Excellent work. You have finished this mock interview, and your performance data is being processed.",
+    completionProcessing: "Generating your final report...",
+    completionDuration: "Duration",
+    completionQuestions: "Questions",
+    completionResumeVersion: "Resume Version",
+    completionResumeVersionFallback: "Snapshot",
+    completionDurationMinutes: "{minutes} mins",
+    completionDurationHoursMinutes: "{hours}h {minutes}m",
+    viewFullReport: "View Full Evaluation Report",
+    returnDashboard: "Return to Dashboard",
+    completionTip:
+      "Tip: Reviewing your report after each session helps you improve faster.",
   },
   report: {
     title: "Interview Evaluation",
@@ -221,6 +235,16 @@ export const en = {
     dashboard: "Dashboard",
     history: "History",
     settings: "Settings",
+    meta: {
+      interviewType: "Interview Type",
+      targetLevel: "Target Level",
+      status: "Status",
+    },
+    statuses: {
+      active: "In Progress",
+      completed: "Completed",
+    },
+    question: "Question",
     questions: "questions",
     overallPerformance: "Overall Performance",
     strongPerformer: "Strong Performer",

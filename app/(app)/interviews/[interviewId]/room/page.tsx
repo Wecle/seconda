@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { InterviewAnswerPanel } from "@/components/interview/interview-answer-panel";
 import { InterviewResumeContextSheet } from "@/components/interview/interview-resume-context-sheet";
+import { InterviewCompletionView } from "@/components/interview/interview-completion-view";
 import type { ParsedResume } from "@/lib/resume/types";
 import {
   Bot,
@@ -29,6 +30,8 @@ interface InterviewData {
   status: string;
   overallScore: number | null;
   reportJson: unknown;
+  startedAt: string | null;
+  completedAt: string | null;
 }
 
 interface QuestionData {
@@ -55,10 +58,17 @@ interface QuestionData {
 
 interface ResumeSnapshotData {
   id: string;
+  versionNumber: number;
   originalFilename: string;
   originalFileUrl: string | null;
   parseStatus: string;
   parsedData: ParsedResume | null;
+}
+
+interface InterviewApiResponse {
+  interview: InterviewData;
+  questions: QuestionData[];
+  resumeSnapshot: ResumeSnapshotData | null;
 }
 
 export default function InterviewRoomPage() {
@@ -75,17 +85,24 @@ export default function InterviewRoomPage() {
   const [resumeSnapshot, setResumeSnapshot] = useState<ResumeSnapshotData | null>(
     null,
   );
+  const [completingReport, setCompletingReport] = useState(false);
+  const [autoCompletionTriggered, setAutoCompletionTriggered] = useState(false);
+  const [openingReport, setOpeningReport] = useState(false);
+  const completionTaskRef = useRef<Promise<void> | null>(null);
+
+  const refreshInterview = useCallback(async () => {
+    const data = (await fetch(`/api/interviews/${interviewId}`).then((r) =>
+      r.json(),
+    )) as InterviewApiResponse;
+    setInterview(data.interview);
+    setQuestions(data.questions);
+    setResumeSnapshot(data.resumeSnapshot ?? null);
+    setLoading(false);
+  }, [interviewId]);
 
   useEffect(() => {
-    fetch(`/api/interviews/${interviewId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        setInterview(data.interview);
-        setQuestions(data.questions);
-        setResumeSnapshot(data.resumeSnapshot ?? null);
-        setLoading(false);
-      });
-  }, [interviewId]);
+    void refreshInterview();
+  }, [refreshInterview]);
 
   const currentQ = questions.find((q) => !q.answeredAt);
   const answeredCount = questions.filter((q) => q.answeredAt).length;
@@ -113,6 +130,100 @@ export default function InterviewRoomPage() {
     setIsTipExpanded(false);
   }, [currentQ?.id]);
 
+  const ensureInterviewCompleted = useCallback(async () => {
+    if (interview?.status === "completed") {
+      return;
+    }
+
+    if (completionTaskRef.current) {
+      await completionTaskRef.current;
+      return;
+    }
+
+    const task = (async () => {
+      setCompletingReport(true);
+      try {
+        const completeRes = await fetch(`/api/interviews/${interviewId}/complete`, {
+          method: "POST",
+        });
+        if (!completeRes.ok && completeRes.status !== 400) {
+          throw new Error("Failed to complete interview");
+        }
+        const refreshData = (await fetch(`/api/interviews/${interviewId}`).then((r) =>
+          r.json(),
+        )) as InterviewApiResponse;
+        setQuestions(refreshData.questions);
+        setInterview(refreshData.interview);
+        setResumeSnapshot(refreshData.resumeSnapshot ?? null);
+      } catch (error) {
+        console.error(error);
+      } finally {
+        setCompletingReport(false);
+        completionTaskRef.current = null;
+      }
+    })();
+
+    completionTaskRef.current = task;
+    await task;
+  }, [interview?.status, interviewId]);
+
+  const sessionDuration = useMemo(() => {
+    if (!interview?.startedAt) return "--";
+
+    const started = new Date(interview.startedAt);
+    const ended = interview.completedAt ? new Date(interview.completedAt) : new Date();
+    const diffMs = ended.getTime() - started.getTime();
+    if (!Number.isFinite(diffMs)) return "--";
+
+    const totalMinutes = Math.max(1, Math.round(diffMs / 60000));
+    if (totalMinutes < 60) {
+      return t.interview.completionDurationMinutes.replace(
+        "{minutes}",
+        String(totalMinutes),
+      );
+    }
+
+    const hours = Math.floor(totalMinutes / 60);
+    const minutes = totalMinutes % 60;
+    return t.interview.completionDurationHoursMinutes
+      .replace("{hours}", String(hours))
+      .replace("{minutes}", String(minutes));
+  }, [
+    interview?.completedAt,
+    interview?.startedAt,
+    t.interview.completionDurationHoursMinutes,
+    t.interview.completionDurationMinutes,
+  ]);
+
+  const resumeVersionLabel =
+    typeof resumeSnapshot?.versionNumber === "number"
+      ? `v${resumeSnapshot.versionNumber}`
+      : t.interview.completionResumeVersionFallback;
+
+  const questionsSummary = `${answeredCount} / ${interview?.questionCount ?? answeredCount}`;
+
+  useEffect(() => {
+    if (loading || currentQ || interview?.status === "completed" || autoCompletionTriggered) {
+      return;
+    }
+    setAutoCompletionTriggered(true);
+    void ensureInterviewCompleted();
+  }, [
+    autoCompletionTriggered,
+    currentQ,
+    ensureInterviewCompleted,
+    interview?.status,
+    loading,
+  ]);
+
+  async function handleViewReport() {
+    if (openingReport) return;
+    setOpeningReport(true);
+    await ensureInterviewCompleted();
+    router.push(`/interviews/${interviewId}/report`);
+    setOpeningReport(false);
+  }
+
   async function handleSubmit() {
     const normalizedAnswer = answerText.trim();
     if (!currentQ || !normalizedAnswer) return;
@@ -133,10 +244,7 @@ export default function InterviewRoomPage() {
       setResumeSnapshot(refreshData.resumeSnapshot ?? null);
       setAnswerText("");
       if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
-        await fetch(`/api/interviews/${interviewId}/complete`, {
-          method: "POST",
-        });
-        router.push(`/interviews/${interviewId}/report`);
+        void ensureInterviewCompleted();
       }
     } catch (e) {
       console.error(e);
@@ -161,10 +269,7 @@ export default function InterviewRoomPage() {
       setResumeSnapshot(refreshData.resumeSnapshot ?? null);
       setAnswerText("");
       if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
-        await fetch(`/api/interviews/${interviewId}/complete`, {
-          method: "POST",
-        });
-        router.push(`/interviews/${interviewId}/report`);
+        void ensureInterviewCompleted();
       }
     } catch (e) {
       console.error(e);
@@ -183,16 +288,24 @@ export default function InterviewRoomPage() {
 
   if (!currentQ) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <p className="text-lg font-semibold">{t.interview.allAnswered}</p>
-          <Button
-            onClick={() => router.push(`/interviews/${interviewId}/report`)}
-          >
-            {t.interview.viewReport}
-          </Button>
-        </div>
-      </div>
+      <InterviewCompletionView
+        title={t.interview.completionTitle}
+        description={t.interview.completionDescription}
+        processingLabel={t.interview.completionProcessing}
+        isProcessing={completingReport || openingReport}
+        durationLabel={t.interview.completionDuration}
+        durationValue={sessionDuration}
+        questionsLabel={t.interview.completionQuestions}
+        questionsValue={questionsSummary}
+        resumeLabel={t.interview.completionResumeVersion}
+        resumeValue={resumeVersionLabel}
+        reportButtonLabel={t.interview.viewFullReport}
+        dashboardButtonLabel={t.interview.returnDashboard}
+        tipText={t.interview.completionTip}
+        isReportButtonDisabled={openingReport}
+        onViewReport={handleViewReport}
+        onBackToDashboard={() => router.push("/dashboard")}
+      />
     );
   }
 
