@@ -15,11 +15,16 @@ export type Dictionary = DeepStringify<typeof zh>;
 
 export const defaultLocale: Locale = "zh";
 export const locales: Locale[] = ["zh", "en"];
+export const localeCookieName = "seconda-locale";
 
 const dictionaries: Record<Locale, Dictionary> = { zh, en };
 
 export function getDictionary(locale: Locale): Dictionary {
   return dictionaries[locale] ?? dictionaries[defaultLocale];
+}
+
+export function isLocale(value: string | null | undefined): value is Locale {
+  return value === "zh" || value === "en";
 }
 
 export const localeNames: Record<Locale, string> = {

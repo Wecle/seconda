@@ -6,11 +6,19 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   type ReactNode,
 } from "react";
-import { type Locale, type Dictionary, defaultLocale, getDictionary } from ".";
+import {
+  type Locale,
+  type Dictionary,
+  defaultLocale,
+  getDictionary,
+  localeCookieName,
+} from ".";
 
 const LOCALE_STORAGE_KEY = "seconda-locale";
+const LOCALE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 type I18nContextValue = {
   locale: Locale;
@@ -20,25 +28,27 @@ type I18nContextValue = {
 
 const I18nContext = createContext<I18nContextValue | null>(null);
 
-function getInitialLocale(): Locale {
-  if (typeof window === "undefined") return defaultLocale;
-  const stored = localStorage.getItem(LOCALE_STORAGE_KEY);
-  if (stored === "zh" || stored === "en") return stored;
-  return defaultLocale;
-}
-
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(getInitialLocale);
-  const [t, setT] = useState<Dictionary>(() => getDictionary(getInitialLocale()));
+export function I18nProvider({
+  children,
+  initialLocale = defaultLocale,
+}: {
+  children: ReactNode;
+  initialLocale?: Locale;
+}) {
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
+  const t = useMemo(() => getDictionary(locale), [locale]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
     document.documentElement.lang = locale;
+    localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    document.cookie = `${localeCookieName}=${locale}; path=/; max-age=${LOCALE_COOKIE_MAX_AGE}; samesite=lax`;
   }, [locale]);
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
-    setT(getDictionary(newLocale));
-    localStorage.setItem(LOCALE_STORAGE_KEY, newLocale);
   }, []);
 
   return (
