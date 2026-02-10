@@ -83,8 +83,16 @@ export default function InterviewRoomPage() {
     mid: t.interview.levels.Mid,
     senior: t.interview.levels.Senior,
   };
+  const interviewTypeLabels: Record<string, string> = {
+    behavioral: t.interview.behavioral,
+    technical: t.interview.technical,
+    mixed: t.interview.mixed,
+  };
   const levelLabel = interview?.level
     ? (levelLabels[interview.level.toLowerCase()] ?? interview.level)
+    : "";
+  const interviewTypeLabel = interview?.type
+    ? (interviewTypeLabels[interview.type.toLowerCase()] ?? interview.type)
     : "";
 
   useEffect(() => {
@@ -187,7 +195,7 @@ export default function InterviewRoomPage() {
                 {t.interview.session}
               </h1>
               <p className="text-sm text-muted-foreground">
-                {currentQ?.topic || currentQ?.questionType || "Interview"}
+                {currentQ?.topic || "Interview"}
               </p>
             </div>
           </div>
@@ -214,7 +222,9 @@ export default function InterviewRoomPage() {
           {/* Right */}
           <div className="flex items-center gap-2">
             <Badge variant="secondary">{levelLabel}</Badge>
-            <Badge variant="outline">{currentQ?.topic}</Badge>
+            {interviewTypeLabel && (
+              <Badge variant="secondary">{interviewTypeLabel}</Badge>
+            )}
             <button className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
               <FileText className="size-3.5" />
               {t.interview.resumeContext}
