@@ -199,9 +199,10 @@ export const en = {
     aiInterviewer: "AI Interviewer",
     askingNow: "Asking now...",
     tip: "Tip",
-    markdownSupported: "Markdown Supported",
-    answerPlaceholder:
-      "Type your answer here...\nUse ``` for code blocks.",
+    expandTip: "Click to expand",
+    collapseTip: "Click to collapse",
+    markdownSupported: "Rich text formatting enabled",
+    answerPlaceholder: "Type your answer here...",
     skipQuestion: "Skip Question",
     answerWithAudio: "Answer with Audio",
     submitAnswer: "Submit Answer",
