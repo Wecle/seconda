@@ -12,6 +12,10 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.26",
     "@napi-rs/canvas": "^0.1.91",
+    "@tiptap/extension-placeholder": "^3.19.0",
+    "@tiptap/pm": "^3.19.0",
+    "@tiptap/react": "^3.19.0",
+    "@tiptap/starter-kit": "^3.19.0",
     "@vercel/blob": "^2.2.0",
     "ai": "^6.0.73",
     "class-variance-authority": "^0.7.1",

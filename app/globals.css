@@ -145,3 +145,61 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #94a3b8;
 }
+
+.interview-rich-editor .tiptap p {
+  margin: 0 0 0.75rem;
+}
+
+.interview-rich-editor .tiptap p:last-child {
+  margin-bottom: 0;
+}
+
+.interview-rich-editor .tiptap ul,
+.interview-rich-editor .tiptap ol {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+}
+
+.interview-rich-editor .tiptap ul {
+  list-style: disc;
+}
+
+.interview-rich-editor .tiptap ol {
+  list-style: decimal;
+}
+
+.interview-rich-editor .tiptap pre {
+  margin: 0 0 0.75rem;
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 0.75rem;
+  font-family: var(--font-mono);
+}
+
+.interview-rich-editor .tiptap code {
+  border-radius: var(--radius-sm);
+  background: var(--muted);
+  padding: 0.125rem 0.375rem;
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+}
+
+.interview-rich-editor .tiptap pre code {
+  background: transparent;
+  padding: 0;
+}
+
+.interview-rich-editor .tiptap blockquote {
+  margin: 0 0 0.75rem;
+  border-left: 3px solid var(--border);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+.interview-rich-editor .tiptap p.is-editor-empty:first-child::before {
+  pointer-events: none;
+  float: left;
+  height: 0;
+  color: var(--muted-foreground);
+  content: attr(data-placeholder);
+}
