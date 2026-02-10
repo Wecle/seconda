@@ -1,5 +1,6 @@
 "use client";
 
+import { Fragment, useMemo } from "react";
 import {
   ExternalLink,
   Link as LinkIcon,
@@ -14,13 +15,75 @@ import { useTranslation } from "@/lib/i18n/context";
 interface ParsedResumePreviewProps {
   parsed: ParsedResume;
   className?: string;
+  highlightKeywords?: string[];
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 export function ParsedResumePreview({
   parsed,
   className,
+  highlightKeywords = [],
 }: ParsedResumePreviewProps) {
   const { t } = useTranslation();
+  const normalizedKeywords = useMemo(() => {
+    return Array.from(
+      new Set(
+        highlightKeywords
+          .map((token) => token.trim())
+          .filter((token) => token.length >= 2),
+      ),
+    )
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 80);
+  }, [highlightKeywords]);
+
+  const splitRegex = useMemo(() => {
+    if (normalizedKeywords.length === 0) return null;
+    const pattern = normalizedKeywords.map(escapeRegExp).join("|");
+    return new RegExp(`(${pattern})`, "iu");
+  }, [normalizedKeywords]);
+
+  const countRegex = useMemo(() => {
+    if (normalizedKeywords.length === 0) return null;
+    const pattern = normalizedKeywords.map(escapeRegExp).join("|");
+    return new RegExp(`(${pattern})`, "giu");
+  }, [normalizedKeywords]);
+
+  const highlightSet = useMemo(
+    () => new Set(normalizedKeywords.map((token) => token.toLowerCase())),
+    [normalizedKeywords],
+  );
+
+  const getMatchCount = (text: string): number => {
+    if (!countRegex) return 0;
+    return text.match(countRegex)?.length ?? 0;
+  };
+
+  const hasMatch = (text: string): boolean => getMatchCount(text) > 0;
+
+  const renderText = (text: string) => {
+    if (!splitRegex) return text;
+    const parts = text.split(splitRegex);
+    if (parts.length <= 1) return text;
+
+    return parts.map((part, index) => {
+      const isMatch = highlightSet.has(part.toLowerCase());
+      return isMatch ? (
+        <mark
+          key={`${part}-${index}`}
+          className="rounded-sm bg-amber-200/70 px-0.5 text-foreground"
+        >
+          {part}
+        </mark>
+      ) : (
+        <Fragment key={`${part}-${index}`}>{part}</Fragment>
+      );
+    });
+  };
+
   return (
     <div className={cn("w-full max-w-[850px] space-y-6", className)}>
       <div className="rounded-xl border bg-card p-8">
@@ -32,7 +95,7 @@ export function ParsedResumePreview({
             </p>
             {parsed.summary && (
               <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
-                {parsed.summary}
+                {renderText(parsed.summary)}
               </p>
             )}
           </div>
@@ -74,9 +137,14 @@ export function ParsedResumePreview({
             {parsed.skills.map((skill) => (
               <span
                 key={skill}
-                className="rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                className={cn(
+                  "rounded-md px-2.5 py-1 text-xs font-medium",
+                  hasMatch(skill)
+                    ? "bg-amber-100 text-amber-800 ring-1 ring-amber-200"
+                    : "bg-primary/10 text-primary",
+                )}
               >
-                {skill}
+                {renderText(skill)}
               </span>
             ))}
           </div>
@@ -95,20 +163,25 @@ export function ParsedResumePreview({
                 )}
                 <div className="flex items-baseline justify-between">
                   <div>
-                    <h3 className="text-sm font-semibold">{job.title}</h3>
-                    <p className="text-sm text-primary">{job.company}</p>
+                    <h3 className="text-sm font-semibold">
+                      {renderText(job.title)}
+                    </h3>
+                    <p className="text-sm text-primary">{renderText(job.company)}</p>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {job.period}
+                    {renderText(job.period)}
                   </span>
                 </div>
                 <ul className="mt-2 space-y-1.5">
                   {job.bullets.map((bullet, j) => (
                     <li
                       key={j}
-                      className="text-sm leading-relaxed text-muted-foreground"
+                      className={cn(
+                        "rounded-sm text-sm leading-relaxed text-muted-foreground",
+                        hasMatch(bullet) && "bg-amber-50 px-1.5 py-0.5",
+                      )}
                     >
-                      • {bullet}
+                      • {renderText(bullet)}
                     </li>
                   ))}
                 </ul>
@@ -124,10 +197,12 @@ export function ParsedResumePreview({
           <div className="space-y-4">
             {parsed.education.map((edu, i) => (
               <div key={i}>
-                <h3 className="text-sm font-semibold">{edu.degree}</h3>
-                <p className="text-sm text-primary">{edu.school}</p>
+                <h3 className="text-sm font-semibold">{renderText(edu.degree)}</h3>
+                <p className="text-sm text-primary">{renderText(edu.school)}</p>
                 {edu.period && (
-                  <p className="text-xs text-muted-foreground">{edu.period}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {renderText(edu.period)}
+                  </p>
                 )}
               </div>
             ))}
@@ -145,20 +220,27 @@ export function ParsedResumePreview({
                 className="rounded-lg border bg-background p-5"
               >
                 <div className="flex items-center gap-1.5">
-                  <h3 className="text-sm font-semibold">{project.name}</h3>
+                  <h3 className="text-sm font-semibold">
+                    {renderText(project.name)}
+                  </h3>
                   <ExternalLink className="size-3.5 text-muted-foreground" />
                 </div>
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  {project.description}
+                  {renderText(project.description)}
                 </p>
                 {project.tags && project.tags.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {project.tags.map((tag) => (
                       <span
                         key={tag}
-                        className="rounded bg-secondary px-2 py-0.5 text-[11px] font-medium text-secondary-foreground"
+                        className={cn(
+                          "rounded px-2 py-0.5 text-[11px] font-medium",
+                          hasMatch(tag)
+                            ? "bg-amber-100 text-amber-800"
+                            : "bg-secondary text-secondary-foreground",
+                        )}
                       >
-                        {tag}
+                        {renderText(tag)}
                       </span>
                     ))}
                   </div>

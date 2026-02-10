@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
+import type { ParsedResume } from "@/lib/resume/types";
 
 export async function GET(
   _request: NextRequest,
@@ -17,13 +18,14 @@ export async function GET(
     const { id } = await params;
 
     const [interviewRow] = await db
-      .select({ interview: interviews })
+      .select({ interview: interviews, resumeVersion: resumeVersions })
       .from(interviews)
       .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
       .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
       .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
 
     const interview = interviewRow?.interview;
+    const resumeVersion = interviewRow?.resumeVersion;
 
     if (!interview) {
       return NextResponse.json(
@@ -56,6 +58,15 @@ export async function GET(
     return NextResponse.json({
       interview,
       questions: questionsWithScores,
+      resumeSnapshot: resumeVersion
+        ? {
+            id: resumeVersion.id,
+            originalFilename: resumeVersion.originalFilename,
+            originalFileUrl: resumeVersion.storedPath,
+            parseStatus: resumeVersion.parseStatus,
+            parsedData: (resumeVersion.parsedJson as ParsedResume) ?? null,
+          }
+        : null,
     });
   } catch (error) {
     console.error("Error fetching interview:", error);

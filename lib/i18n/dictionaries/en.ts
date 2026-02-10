@@ -196,6 +196,12 @@ export const en = {
     questionOf: "QUESTION {current} OF {total}",
     percentComplete: "{percent}% COMPLETE",
     resumeContext: "Resume Context",
+    parsedResume: "Parsed Resume",
+    originalResume: "Original Resume",
+    highlightRelatedContent:
+      "Potentially relevant resume content is highlighted for this question.",
+    parsedResumeUnavailable: "Parsed resume snapshot is unavailable.",
+    originalResumeUnavailable: "Original resume file is unavailable.",
     aiInterviewer: "AI Interviewer",
     askingNow: "Asking now...",
     tip: "Tip",
