@@ -109,6 +109,18 @@ async function migrate() {
   `;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS interview_shares (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL UNIQUE REFERENCES interviews(id) ON DELETE CASCADE,
+      nonce TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+
+  await sql`
     CREATE TABLE IF NOT EXISTS question_scores (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       question_id UUID NOT NULL UNIQUE REFERENCES interview_questions(id) ON DELETE CASCADE,
@@ -128,6 +140,7 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_question_scores_question ON question_scores(question_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_shares_interview ON interview_shares(interview_id)`;
 
   console.log("Database migrated successfully");
   await sql.end();

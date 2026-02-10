@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useRouter, useParams } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -20,15 +20,33 @@ import {
 } from "@/components/ui/accordion";
 import {
   Share2,
+  Copy,
   FileDown,
   RefreshCw,
   AlertCircle,
   CheckCircle2,
   Search,
   Loader2,
+  ShieldOff,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { ReportOverviewGrid } from "@/components/interview/report/report-overview-grid";
+import type { ReportPdfQuestionItem } from "@/components/interview/report/report-pdf-document";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 function getScoreColor(score: number) {
   if (score >= 8)
@@ -132,6 +150,14 @@ interface InterviewApiResponse {
 }
 
 type FilterTab = "All" | "Behavioral" | "Technical";
+type ShareMethod = "copy" | "system";
+
+interface ShareStateResponse {
+  status: "none" | "active" | "revoked" | "expired";
+  isActive: boolean;
+  expiresAt: string | null;
+  shareUrl: string | null;
+}
 
 function normalizeRadarScore(score: unknown) {
   if (typeof score !== "number" || Number.isNaN(score)) return 0.5;
@@ -154,15 +180,49 @@ function buildRadarValues(dimensions: ReportDimensions | undefined) {
   });
 }
 
+function blobToDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Failed to convert blob to data URL"));
+    };
+    reader.onerror = () => reject(new Error("Failed to read blob"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+const shareExpiryOptions = [
+  { value: "24", hours: 24 },
+  { value: "72", hours: 72 },
+  { value: "168", hours: 168 },
+  { value: "720", hours: 720 },
+] as const;
+
 export default function ReportPage() {
   const router = useRouter();
   const { interviewId } = useParams();
+  const logoDataUrlRef = useRef<string | null>(null);
   const [data, setData] = useState<InterviewApiResponse | null>(null);
   const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState<FilterTab>("All");
+  const [exportLoading, setExportLoading] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [shareState, setShareState] = useState<ShareStateResponse | null>(null);
+  const [shareStateLoading, setShareStateLoading] = useState(false);
+  const [shareActionLoading, setShareActionLoading] = useState<ShareMethod | null>(
+    null,
+  );
+  const [shareRevokeLoading, setShareRevokeLoading] = useState(false);
+  const [shareExpiry, setShareExpiry] = useState<string>("168");
+  const [shareDialogMessage, setShareDialogMessage] = useState<string | null>(null);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -209,13 +269,12 @@ export default function ReportPage() {
     t.report.radarLabels.reflection,
   ];
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="size-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  const shareExpiryLabels: Record<string, string> = {
+    "24": t.report.shareExpiry24h,
+    "72": t.report.shareExpiry72h,
+    "168": t.report.shareExpiry168h,
+    "720": t.report.shareExpiry720h,
+  };
 
   const interview = data?.interview;
   const questions = data?.questions || [];
@@ -259,6 +318,241 @@ export default function ReportPage() {
     report && Array.isArray(report.topStrengths) ? report.topStrengths : [];
   const criticalFocus =
     report && Array.isArray(report.criticalFocus) ? report.criticalFocus : [];
+  const displayName =
+    currentUser?.name?.trim() ||
+    currentUser?.email?.split("@")[0] ||
+    t.auth.defaultUser;
+  const websiteName = "Seconda";
+
+  const fetchShareState = useCallback(async () => {
+    const reportId =
+      typeof interviewId === "string" ? interviewId : data?.interview?.id;
+    if (!reportId) return;
+
+    setShareStateLoading(true);
+    try {
+      const response = await fetch(`/api/interviews/${reportId}/share-link`);
+      if (!response.ok) {
+        throw new Error("Failed to load share state");
+      }
+      const payload = (await response.json()) as ShareStateResponse;
+      setShareState(payload);
+    } catch {
+      setShareState(null);
+    } finally {
+      setShareStateLoading(false);
+    }
+  }, [interviewId, data?.interview?.id]);
+
+  useEffect(() => {
+    if (!shareDialogOpen) return;
+    setShareDialogMessage(null);
+    void fetchShareState();
+  }, [shareDialogOpen, fetchShareState]);
+
+  const createShareLink = async () => {
+    const reportId =
+      typeof interviewId === "string" ? interviewId : data?.interview?.id;
+    if (!reportId) return null;
+
+    const expiresInHours = Number(shareExpiry);
+    const response = await fetch(`/api/interviews/${reportId}/share-link`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expiresInHours }),
+    });
+    if (!response.ok) return null;
+    const payload = (await response.json()) as ShareStateResponse;
+    setShareState(payload);
+    return payload.shareUrl;
+  };
+
+  const handleShareByMethod = async (method: ShareMethod) => {
+    if (
+      typeof window === "undefined" ||
+      shareActionLoading ||
+      shareRevokeLoading ||
+      exportLoading
+    ) {
+      return;
+    }
+
+    const shareTitle = `${websiteName} · ${t.report.title}`;
+    setShareActionLoading(method);
+    setShareDialogMessage(null);
+    setActionMessage(null);
+
+    try {
+      const shareUrl = await createShareLink();
+      if (!shareUrl) {
+        setShareDialogMessage(t.report.shareFailed);
+        return;
+      }
+
+      if (method === "system" && typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({
+          title: shareTitle,
+          text: t.report.shareDescription,
+          url: shareUrl,
+        });
+        setShareDialogMessage(t.report.shareSuccess);
+        setActionMessage(t.report.shareSuccess);
+        return;
+      }
+
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        setShareDialogMessage(
+          method === "copy" ? t.report.shareCopied : t.report.shareSystemFallback,
+        );
+        setActionMessage(
+          method === "copy" ? t.report.shareCopied : t.report.shareSystemFallback,
+        );
+        return;
+      }
+
+      setShareDialogMessage(t.report.shareFailed);
+    } catch (error) {
+      if (
+        error &&
+        typeof error === "object" &&
+        "name" in error &&
+        error.name === "AbortError"
+      ) {
+        return;
+      }
+      setShareDialogMessage(t.report.shareFailed);
+    } finally {
+      setShareActionLoading(null);
+    }
+  };
+
+  const handleRevokeShare = async () => {
+    if (shareRevokeLoading || shareActionLoading || exportLoading) return;
+    const reportId =
+      typeof interviewId === "string" ? interviewId : data?.interview?.id;
+    if (!reportId) return;
+
+    setShareRevokeLoading(true);
+    setShareDialogMessage(null);
+    setActionMessage(null);
+    try {
+      const response = await fetch(`/api/interviews/${reportId}/share-link`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error("Failed to revoke share");
+      }
+      await fetchShareState();
+      setShareDialogMessage(t.report.shareRevokedSuccess);
+      setActionMessage(t.report.shareRevokedSuccess);
+    } catch {
+      setShareDialogMessage(t.report.shareRevokedFailed);
+    } finally {
+      setShareRevokeLoading(false);
+    }
+  };
+
+  const handleExportPdf = async () => {
+    if (exportLoading || shareActionLoading !== null || shareRevokeLoading) return;
+
+    setExportLoading(true);
+    setActionMessage(null);
+
+    try {
+      const generatedAt = new Date();
+      const [{ pdf }, { ReportPdfDocument }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("@/components/interview/report/report-pdf-document"),
+      ]);
+
+      let logoDataUrl = logoDataUrlRef.current;
+      if (!logoDataUrl) {
+        const logoResponse = await fetch("/logo.png");
+        if (!logoResponse.ok) {
+          throw new Error("Failed to load logo");
+        }
+        logoDataUrl = await blobToDataUrl(await logoResponse.blob());
+        logoDataUrlRef.current = logoDataUrl;
+      }
+
+      const reportQuestions: ReportPdfQuestionItem[] = questions.map((q, idx) => {
+        const feedback = q.feedbackJson || q.feedback || {};
+        return {
+          id: q.id,
+          questionIndex: q.questionIndex ?? idx + 1,
+          question: q.question,
+          answerText: q.answerText,
+          score: q.score?.overall ?? 0,
+          strengths: feedback.strengths || [],
+          improvements: feedback.improvements || [],
+          advice: feedback.advice || [],
+        };
+      });
+
+      const reportId =
+        typeof interviewId === "string" ? interviewId : "interview-report";
+
+      const blob = await pdf(
+        <ReportPdfDocument
+          websiteName={websiteName}
+          logoDataUrl={logoDataUrl}
+          reportTitle={t.report.title}
+          userName={displayName}
+          generatedAtText={generatedAt.toLocaleString()}
+          interviewId={reportId}
+          overallScore={overallScore}
+          interviewTypeLabel={interviewTypeLabel}
+          levelLabel={levelLabel}
+          questionCount={questions.length}
+          summary={report?.summary || t.report.noAnalysisData}
+          topStrengths={topStrengths}
+          criticalFocus={criticalFocus}
+          questions={reportQuestions}
+          labels={{
+            score: t.report.score,
+            interviewType: t.report.meta.interviewType,
+            targetLevel: t.report.meta.targetLevel,
+            questions: t.report.questions,
+            analysisSummary: t.report.analysisSummary,
+            topStrength: t.report.topStrength,
+            criticalFocus: t.report.criticalFocus,
+            noAnalysisData: t.report.noAnalysisData,
+            yourAnswer: t.report.yourAnswer,
+            strengths: t.report.strengths,
+            improvements: t.report.improvements,
+            advice: t.report.advice,
+            exportedFor: t.report.exportedFor,
+            generatedAt: t.report.generatedAt,
+            detailedAnalysis: t.report.detailedAnalysis,
+          }}
+        />,
+      ).toBlob();
+
+      const pdfUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = pdfUrl;
+      link.download = `${websiteName.toLowerCase()}-report-${reportId}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(pdfUrl);
+
+      setActionMessage(t.report.exportSuccess);
+    } catch {
+      setActionMessage(t.report.exportFailed);
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <Loader2 className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   const filteredQuestions = questions.filter((q: QuestionData) => {
     if (activeFilter === "All") return true;
@@ -335,15 +629,36 @@ export default function ReportPage() {
               {questions.length} {t.report.questions}
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm">
-              <Share2 />
-              {t.report.shareReport}
-            </Button>
-            <Button variant="outline" size="sm">
-              <FileDown />
-              {t.report.exportReport}
-            </Button>
+          <div className="flex flex-col items-start sm:items-end gap-2">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShareDialogOpen(true)}
+                disabled={exportLoading}
+              >
+                <Share2 />
+                {t.report.shareReport}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void handleExportPdf()}
+                disabled={
+                  exportLoading || shareActionLoading !== null || shareRevokeLoading
+                }
+              >
+                {exportLoading ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <FileDown />
+                )}
+                {t.report.exportReport}
+              </Button>
+            </div>
+            {actionMessage ? (
+              <p className="text-xs text-muted-foreground">{actionMessage}</p>
+            ) : null}
           </div>
         </div>
 
@@ -558,6 +873,113 @@ export default function ReportPage() {
           })}
         </Accordion>
       </main>
+
+      <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t.report.shareDialogTitle}</DialogTitle>
+            <DialogDescription>{t.report.shareDialogDescription}</DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                {t.report.shareExpiryLabel}
+              </p>
+              <Select value={shareExpiry} onValueChange={setShareExpiry}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent align="start">
+                  {shareExpiryOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {shareExpiryLabels[option.value]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="rounded-lg border bg-muted/20 p-3 text-sm">
+              {shareStateLoading ? (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" />
+                  {t.report.shareStateLoading}
+                </div>
+              ) : shareState?.isActive && shareState.expiresAt ? (
+                <div className="space-y-1">
+                  <p className="font-medium text-foreground">
+                    {t.report.shareStateActive}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {t.report.shareActiveUntil}:{" "}
+                    {new Date(shareState.expiresAt).toLocaleString()}
+                  </p>
+                </div>
+              ) : shareState?.status === "expired" ? (
+                <p className="text-muted-foreground">{t.report.shareStateExpired}</p>
+              ) : shareState?.status === "revoked" ? (
+                <p className="text-muted-foreground">{t.report.shareStateRevoked}</p>
+              ) : (
+                <p className="text-muted-foreground">{t.report.shareStateNone}</p>
+              )}
+            </div>
+
+            {shareDialogMessage ? (
+              <p className="text-xs text-muted-foreground">{shareDialogMessage}</p>
+            ) : null}
+          </div>
+
+          <DialogFooter className="sm:justify-between">
+            <Button
+              variant="outline"
+              onClick={() => void handleRevokeShare()}
+              disabled={
+                !shareState?.isActive ||
+                shareRevokeLoading ||
+                shareActionLoading !== null ||
+                shareStateLoading
+              }
+            >
+              {shareRevokeLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <ShieldOff className="size-4" />
+              )}
+              {t.report.shareRevokeAction}
+            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void handleShareByMethod("copy")}
+                disabled={
+                  shareActionLoading !== null || shareRevokeLoading || shareStateLoading
+                }
+              >
+                {shareActionLoading === "copy" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Copy className="size-4" />
+                )}
+                {t.report.shareCopyAction}
+              </Button>
+              <Button
+                onClick={() => void handleShareByMethod("system")}
+                disabled={
+                  shareActionLoading !== null || shareRevokeLoading || shareStateLoading
+                }
+              >
+                {shareActionLoading === "system" ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Share2 className="size-4" />
+                )}
+                {t.report.shareSystemAction}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Floating Footer */}
       <div className="sticky bottom-6 z-50 flex justify-center pointer-events-none">

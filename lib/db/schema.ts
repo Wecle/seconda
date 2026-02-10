@@ -69,6 +69,19 @@ export const interviews = pgTable("interviews", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const interviewShares = pgTable("interview_shares", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .unique()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  nonce: text("nonce").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const interviewQuestions = pgTable("interview_questions", {
   id: uuid("id").primaryKey().defaultRandom(),
   interviewId: uuid("interview_id")
