@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { InterviewAnswerPanel } from "@/components/interview/interview-answer-panel";
+import { InterviewResumeContextSheet } from "@/components/interview/interview-resume-context-sheet";
+import type { ParsedResume } from "@/lib/resume/types";
 import {
   Bot,
   FileText,
@@ -14,7 +16,6 @@ import {
   Lightbulb,
   Loader2,
   ChevronDown,
-  ChevronUp,
 } from "lucide-react";
 
 interface InterviewData {
@@ -52,6 +53,14 @@ interface QuestionData {
   feedback: unknown;
 }
 
+interface ResumeSnapshotData {
+  id: string;
+  originalFilename: string;
+  originalFileUrl: string | null;
+  parseStatus: string;
+  parsedData: ParsedResume | null;
+}
+
 export default function InterviewRoomPage() {
   const router = useRouter();
   const { interviewId } = useParams();
@@ -62,6 +71,10 @@ export default function InterviewRoomPage() {
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isTipExpanded, setIsTipExpanded] = useState(false);
+  const [resumeContextOpen, setResumeContextOpen] = useState(false);
+  const [resumeSnapshot, setResumeSnapshot] = useState<ResumeSnapshotData | null>(
+    null,
+  );
 
   useEffect(() => {
     fetch(`/api/interviews/${interviewId}`)
@@ -69,6 +82,7 @@ export default function InterviewRoomPage() {
       .then((data) => {
         setInterview(data.interview);
         setQuestions(data.questions);
+        setResumeSnapshot(data.resumeSnapshot ?? null);
         setLoading(false);
       });
   }, [interviewId]);
@@ -116,6 +130,7 @@ export default function InterviewRoomPage() {
       const refreshData = await refreshRes.json();
       setQuestions(refreshData.questions);
       setInterview(refreshData.interview);
+      setResumeSnapshot(refreshData.resumeSnapshot ?? null);
       setAnswerText("");
       if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
         await fetch(`/api/interviews/${interviewId}/complete`, {
@@ -143,6 +158,7 @@ export default function InterviewRoomPage() {
       const refreshData = await refreshRes.json();
       setQuestions(refreshData.questions);
       setInterview(refreshData.interview);
+      setResumeSnapshot(refreshData.resumeSnapshot ?? null);
       setAnswerText("");
       if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
         await fetch(`/api/interviews/${interviewId}/complete`, {
@@ -225,10 +241,22 @@ export default function InterviewRoomPage() {
             {interviewTypeLabel && (
               <Badge variant="secondary">{interviewTypeLabel}</Badge>
             )}
-            <button className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
+            <button
+              type="button"
+              className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2"
+              onClick={() => setResumeContextOpen(true)}
+            >
               <FileText className="size-3.5" />
               {t.interview.resumeContext}
             </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="sm:hidden"
+              onClick={() => setResumeContextOpen(true)}
+            >
+              <FileText className="size-4" />
+            </Button>
             <Button
               variant="ghost"
               size="icon"
@@ -333,6 +361,13 @@ export default function InterviewRoomPage() {
           onSubmit={handleSubmit}
         />
       </div>
+
+      <InterviewResumeContextSheet
+        open={resumeContextOpen}
+        onOpenChange={setResumeContextOpen}
+        snapshot={resumeSnapshot}
+        currentQuestion={currentQ.question}
+      />
     </div>
   );
 }
