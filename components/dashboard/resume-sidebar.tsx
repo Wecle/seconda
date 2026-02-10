@@ -15,6 +15,7 @@ import {
 import { BrandIcon } from "@/components/brand/brand-icon";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
+import { useTranslation } from "@/lib/i18n/context";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,7 @@ export function ResumeSidebar({
   onRequestDelete,
   onOpenUpload,
 }: ResumeSidebarProps) {
+  const { t } = useTranslation();
   return (
     <aside className="flex min-h-0 w-72 shrink-0 flex-col border-r bg-card">
       <div className="flex items-center justify-between px-5 py-4">
@@ -69,7 +71,7 @@ export function ResumeSidebar({
       <ScrollArea className="min-h-0 flex-1">
         <div className="p-3">
           <p className="mb-2 px-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Resumes
+            {t.dashboard.resumes}
           </p>
 
           {loading ? (
@@ -78,7 +80,7 @@ export function ResumeSidebar({
             </div>
           ) : resumes.length === 0 ? (
             <p className="px-2 py-4 text-center text-xs text-muted-foreground">
-              No resumes yet. Upload one to get started.
+              {t.dashboard.noResumes}
             </p>
           ) : (
             resumes.map((resume) => {
@@ -146,7 +148,7 @@ export function ResumeSidebar({
                                 variant="default"
                                 className="ml-auto px-1.5 py-0 text-[10px]"
                               >
-                                Current
+                                {t.common.current}
                               </Badge>
                             )}
                             {version.parseStatus === "failed" && (
@@ -172,7 +174,7 @@ export function ResumeSidebar({
       <div className="p-3">
         <Button className="w-full" size="sm" onClick={onOpenUpload}>
           <Upload className="size-4" />
-          Upload New Resume
+          {t.dashboard.uploadNewResume}
         </Button>
       </div>
     </aside>

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { Loader2, LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
+import { useTranslation } from "@/lib/i18n/context";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,10 +45,11 @@ export function UserAvatarMenu({
   panelAlign = "center",
   callbackUrl = "/",
 }: UserAvatarMenuProps) {
+  const { t } = useTranslation();
   const [signingOut, setSigningOut] = useState(false);
 
   const displayName =
-    user.name?.trim() || user.email?.split("@")[0] || "Seconda 用户";
+    user.name?.trim() || user.email?.split("@")[0] || t.auth.defaultUser;
   const initials = useMemo(() => getUserInitials(user), [user]);
 
   const handleSignOut = async () => {
@@ -69,7 +71,7 @@ export function UserAvatarMenu({
           <button
             type="button"
             aria-haspopup="true"
-            aria-label={`${displayName} 账号菜单`}
+            aria-label={`${displayName} ${t.auth.accountMenu}`}
             className="rounded-full outline-none ring-offset-background transition-shadow focus-visible:ring-2 focus-visible:ring-ring"
           >
             <Avatar size={avatarSize}>
@@ -82,7 +84,7 @@ export function UserAvatarMenu({
         </HoverCardTrigger>
 
         <HoverCardContent align={align} sideOffset={10} className="w-64 p-3">
-          <p className="text-xs text-muted-foreground">当前账号</p>
+          <p className="text-xs text-muted-foreground">{t.auth.currentAccount}</p>
           <p className="mt-1 truncate text-sm font-medium">{displayName}</p>
           {user.email ? (
             <p className="mt-0.5 truncate text-xs text-muted-foreground">
@@ -102,7 +104,7 @@ export function UserAvatarMenu({
             ) : (
               <LogOut className="size-4" />
             )}
-            退出登录
+            {t.common.signOut}
           </Button>
         </HoverCardContent>
       </HoverCard>

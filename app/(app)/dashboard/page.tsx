@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { FileUp, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/lib/i18n/context";
 import {
   defaultInterviewConfig,
   type InterviewConfig,
@@ -19,6 +20,7 @@ import { UploadResumeDialog } from "@/components/dashboard/upload-resume-dialog"
 
 export default function DashboardPage() {
   const router = useRouter();
+  const { t } = useTranslation();
   const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
     null,
   );
@@ -363,16 +365,16 @@ export default function DashboardPage() {
       error.includes("invalid x-api-key") ||
       error.includes("authentication")
     ) {
-      return "OPENAI_API_KEY 无效，请更新 .env 后重启服务。";
+      return t.dashboard.parseHints.invalidKey;
     }
     if (error.includes("not found")) {
-      return "接口返回 Not Found。请检查 BASE_MODEL 和 BASE_URL 是否正确。";
+      return t.dashboard.parseHints.notFound;
     }
     if (error.includes("rate limit") || error.includes("速率限制")) {
-      return "接口触发限流，请稍后重试上传，或降低并发请求频率。";
+      return t.dashboard.parseHints.rateLimit;
     }
     if (error.includes("text extraction failed")) {
-      return "PDF 文本提取失败，可能是扫描件，请换可复制文本的 PDF。";
+      return t.dashboard.parseHints.textExtraction;
     }
     return "";
   })();
@@ -414,7 +416,7 @@ export default function DashboardPage() {
           <div className="flex flex-1 items-center justify-center">
             <div className="text-center space-y-3">
               <Loader2 className="mx-auto size-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Loading...</p>
+              <p className="text-sm text-muted-foreground">{t.common.loading}</p>
             </div>
           </div>
         ) : (
@@ -422,14 +424,14 @@ export default function DashboardPage() {
             <div className="text-center space-y-4">
               <FileUp className="mx-auto size-12 text-muted-foreground/30" />
               <div>
-                <h2 className="text-lg font-semibold">No resume selected</h2>
+                <h2 className="text-lg font-semibold">{t.dashboard.noResumeSelected}</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Upload a resume to get started
+                  {t.dashboard.uploadToStart}
                 </p>
               </div>
               <Button onClick={() => setUploadOpen(true)}>
                 <Upload className="size-4" />
-                Upload Resume
+                {t.dashboard.uploadResume}
               </Button>
             </div>
           </div>

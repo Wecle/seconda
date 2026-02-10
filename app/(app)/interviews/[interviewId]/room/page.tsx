@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter, useParams } from "next/navigation"
+import { useTranslation } from "@/lib/i18n/context"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
@@ -60,6 +61,7 @@ interface QuestionData {
 export default function InterviewRoomPage() {
   const router = useRouter()
   const { interviewId } = useParams()
+  const { t } = useTranslation()
   const [interview, setInterview] = useState<InterviewData | null>(null)
   const [questions, setQuestions] = useState<QuestionData[]>([])
   const [answerText, setAnswerText] = useState("")
@@ -142,9 +144,9 @@ export default function InterviewRoomPage() {
     return (
       <div className="h-screen flex items-center justify-center">
         <div className="text-center space-y-3">
-          <p className="text-lg font-semibold">All questions answered</p>
+          <p className="text-lg font-semibold">{t.interview.allAnswered}</p>
           <Button onClick={() => router.push(`/interviews/${interviewId}/report`)}>
-            View Report
+            {t.interview.viewReport}
           </Button>
         </div>
       </div>
@@ -163,7 +165,7 @@ export default function InterviewRoomPage() {
             </div>
             <div>
               <h1 className="text-base font-semibold leading-tight">
-                Interview Session
+                {t.interview.session}
               </h1>
               <p className="text-sm text-muted-foreground">
                 {currentQ?.topic || currentQ?.questionType || "Interview"}
@@ -175,10 +177,10 @@ export default function InterviewRoomPage() {
           <div className="hidden md:flex flex-col items-center gap-1.5 min-w-48">
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-semibold tracking-wide">
-                QUESTION {answeredCount + 1} OF {interview?.questionCount}
+                {t.interview.questionOf.replace("{current}", String(answeredCount + 1)).replace("{total}", String(interview?.questionCount))}
               </span>
               <span>•</span>
-              <span>{percentComplete}% COMPLETE</span>
+              <span>{t.interview.percentComplete.replace("{percent}", String(percentComplete))}</span>
             </div>
             <Progress value={percentComplete} className="h-1.5 w-48" />
           </div>
@@ -189,7 +191,7 @@ export default function InterviewRoomPage() {
             <Badge variant="outline">{currentQ?.topic}</Badge>
             <button className="hidden sm:flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-2">
               <FileText className="size-3.5" />
-              Resume Context
+              {t.interview.resumeContext}
             </button>
             <Button variant="ghost" size="icon" onClick={() => router.push("/dashboard")}>
               <LogOut className="size-4" />
@@ -212,8 +214,8 @@ export default function InterviewRoomPage() {
                 <div className="absolute bottom-0.5 right-0.5 size-3.5 rounded-full bg-green-500 border-2 border-background" />
               </div>
               <div className="text-center">
-                <p className="text-sm font-medium">AI Interviewer</p>
-                <p className="text-xs text-muted-foreground">Asking now...</p>
+                <p className="text-sm font-medium">{t.interview.aiInterviewer}</p>
+                <p className="text-xs text-muted-foreground">{t.interview.askingNow}</p>
               </div>
             </div>
 
@@ -233,7 +235,7 @@ export default function InterviewRoomPage() {
                 <Lightbulb className="size-5 text-blue-500 shrink-0 mt-0.5" />
                 <div>
                   <p className="text-sm font-medium text-blue-700 dark:text-blue-400">
-                    Tip
+                    {t.interview.tip}
                   </p>
                   <p className="text-sm text-blue-600 dark:text-blue-300 mt-1">
                     {currentQ.tip}
@@ -263,7 +265,7 @@ export default function InterviewRoomPage() {
               </Button>
             </div>
             <span className="text-xs text-muted-foreground">
-              Markdown Supported
+              {t.interview.markdownSupported}
             </span>
           </div>
 
@@ -273,7 +275,7 @@ export default function InterviewRoomPage() {
               className={cn(
                 "h-full resize-none border-0 shadow-none focus-visible:ring-0 font-mono text-sm p-0"
               )}
-              placeholder={"Type your answer here...\nUse ``` for code blocks."}
+              placeholder={t.interview.answerPlaceholder}
               value={answerText}
               onChange={(e) => setAnswerText(e.target.value)}
             />
@@ -283,19 +285,19 @@ export default function InterviewRoomPage() {
           <div className="border-t px-5 py-3 flex items-center justify-between">
             <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={handleSkip} disabled={submitting}>
               <SkipForward className="size-4" />
-              Skip Question
+              {t.interview.skipQuestion}
             </Button>
             <div className="flex items-center gap-2">
               <Button variant="outline" size="sm">
                 <Mic className="size-4" />
-                Answer with Audio
+                {t.interview.answerWithAudio}
               </Button>
               <Button size="sm" onClick={handleSubmit} disabled={submitting || !answerText.trim()}>
                 {submitting ? (
                   <Loader2 className="size-4 animate-spin" />
                 ) : (
                   <>
-                    Submit Answer
+                    {t.interview.submitAnswer}
                     <ArrowRight className="size-4" />
                   </>
                 )}

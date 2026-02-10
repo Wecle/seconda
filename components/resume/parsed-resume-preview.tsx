@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import type { ParsedResume } from "@/lib/resume/types";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "@/lib/i18n/context";
 
 interface ParsedResumePreviewProps {
   parsed: ParsedResume;
@@ -19,6 +20,7 @@ export function ParsedResumePreview({
   parsed,
   className,
 }: ParsedResumePreviewProps) {
+  const { t } = useTranslation();
   return (
     <div className={cn("w-full max-w-[850px] space-y-6", className)}>
       <div className="rounded-xl border bg-card p-8">
@@ -67,7 +69,7 @@ export function ParsedResumePreview({
 
       {parsed.skills.length > 0 && (
         <div className="rounded-xl border bg-card p-8">
-          <h2 className="mb-4 text-base font-semibold">Skills</h2>
+          <h2 className="mb-4 text-base font-semibold">{t.resume.skills}</h2>
           <div className="flex flex-wrap gap-2">
             {parsed.skills.map((skill) => (
               <span
@@ -83,7 +85,7 @@ export function ParsedResumePreview({
 
       {parsed.experience.length > 0 && (
         <div className="rounded-xl border bg-card p-8">
-          <h2 className="mb-6 text-base font-semibold">Experience</h2>
+          <h2 className="mb-6 text-base font-semibold">{t.resume.experience}</h2>
           <div className="space-y-8">
             {parsed.experience.map((job, i) => (
               <div key={i} className="relative pl-6">
@@ -118,7 +120,7 @@ export function ParsedResumePreview({
 
       {parsed.education && parsed.education.length > 0 && (
         <div className="rounded-xl border bg-card p-8">
-          <h2 className="mb-4 text-base font-semibold">Education</h2>
+          <h2 className="mb-4 text-base font-semibold">{t.resume.education}</h2>
           <div className="space-y-4">
             {parsed.education.map((edu, i) => (
               <div key={i}>
@@ -135,7 +137,7 @@ export function ParsedResumePreview({
 
       {parsed.projects && parsed.projects.length > 0 && (
         <div className="rounded-xl border bg-card p-8">
-          <h2 className="mb-4 text-base font-semibold">Projects</h2>
+          <h2 className="mb-4 text-base font-semibold">{t.resume.projects}</h2>
           <div className="grid grid-cols-2 gap-4">
             {parsed.projects.map((project) => (
               <div

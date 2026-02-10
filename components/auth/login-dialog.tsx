@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { Github, Loader2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,6 +32,7 @@ export function LoginDialog({
   callbackUrl = "/dashboard",
 }: LoginDialogProps) {
   const router = useRouter();
+  const { t } = useTranslation();
   const [mode, setMode] = useState<AuthMode>("signIn");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -41,8 +43,8 @@ export function LoginDialog({
     null,
   );
 
-  const modeTitle = mode === "signIn" ? "邮箱登录" : "邮箱注册";
-  const submitLabel = mode === "signIn" ? "登录" : "注册并登录";
+  const modeTitle = mode === "signIn" ? t.auth.emailLogin : t.auth.emailSignUp;
+  const submitLabel = mode === "signIn" ? t.common.login : t.auth.signUpAndLogin;
 
   const resetError = () => {
     if (error) {
@@ -56,7 +58,7 @@ export function LoginDialog({
       setError(null);
       await signIn(provider, { callbackUrl });
     } catch {
-      setError("第三方登录失败，请稍后重试。");
+      setError(t.auth.oauthError);
       setProviderLoading(null);
     }
   };
@@ -81,8 +83,8 @@ export function LoginDialog({
       if (!result || result.error) {
         setError(
           mode === "signIn"
-            ? "邮箱或密码错误。"
-            : "注册失败，邮箱可能已被使用。",
+            ? t.auth.signInError
+            : t.auth.signUpError,
         );
         return;
       }
@@ -92,7 +94,7 @@ export function LoginDialog({
       router.push(target);
       router.refresh();
     } catch {
-      setError("请求失败，请稍后重试。");
+      setError(t.auth.requestError);
     } finally {
       setSubmitting(false);
     }
@@ -104,9 +106,9 @@ export function LoginDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>登录 Seconda</DialogTitle>
+          <DialogTitle>{t.auth.loginTitle}</DialogTitle>
           <DialogDescription>
-            使用邮箱、GitHub 或 Google 登录，简历与面试记录会自动绑定到账号。
+            {t.auth.loginDescription}
           </DialogDescription>
         </DialogHeader>
 
@@ -120,7 +122,7 @@ export function LoginDialog({
             }}
             disabled={isBusy}
           >
-            登录
+            {t.common.login}
           </Button>
           <Button
             type="button"
@@ -131,7 +133,7 @@ export function LoginDialog({
             }}
             disabled={isBusy}
           >
-            注册
+            {t.common.signUp}
           </Button>
         </div>
 
@@ -140,7 +142,7 @@ export function LoginDialog({
 
           {mode === "signUp" && (
             <div className="space-y-1.5">
-              <Label htmlFor="auth-name">昵称</Label>
+              <Label htmlFor="auth-name">{t.auth.nickname}</Label>
               <Input
                 id="auth-name"
                 value={name}
@@ -148,7 +150,7 @@ export function LoginDialog({
                   setName(event.target.value);
                   resetError();
                 }}
-                placeholder="你的名字"
+                placeholder={t.auth.nicknamePlaceholder}
                 maxLength={80}
                 disabled={isBusy}
                 required
@@ -157,7 +159,7 @@ export function LoginDialog({
           )}
 
           <div className="space-y-1.5">
-            <Label htmlFor="auth-email">邮箱</Label>
+            <Label htmlFor="auth-email">{t.auth.email}</Label>
             <Input
               id="auth-email"
               type="email"
@@ -174,7 +176,7 @@ export function LoginDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="auth-password">密码</Label>
+            <Label htmlFor="auth-password">{t.auth.password}</Label>
             <Input
               id="auth-password"
               type="password"
@@ -183,7 +185,7 @@ export function LoginDialog({
                 setPassword(event.target.value);
                 resetError();
               }}
-              placeholder="至少 8 位"
+              placeholder={t.auth.passwordPlaceholder}
               autoComplete={mode === "signIn" ? "current-password" : "new-password"}
               minLength={8}
               maxLength={128}
@@ -205,7 +207,7 @@ export function LoginDialog({
             <span className="w-full border-t" />
           </div>
           <div className="relative flex justify-center text-xs uppercase">
-            <span className="bg-background px-2 text-muted-foreground">或使用第三方账号</span>
+            <span className="bg-background px-2 text-muted-foreground">{t.auth.orThirdParty}</span>
           </div>
         </div>
 

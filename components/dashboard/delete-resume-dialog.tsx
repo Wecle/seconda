@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,20 +26,21 @@ export function DeleteResumeDialog({
   onOpenChange,
   onConfirm,
 }: DeleteResumeDialogProps) {
+  const { t } = useTranslation();
   return (
     <AlertDialog open={Boolean(pendingDeleteResume)} onOpenChange={onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete Resume?</AlertDialogTitle>
+          <AlertDialogTitle>{t.dashboard.deleteResume}</AlertDialogTitle>
           <AlertDialogDescription>
             {pendingDeleteResume
-              ? `Are you sure you want to delete "${pendingDeleteResume.title}"? This will also delete its versions and related interviews. This action cannot be undone.`
-              : "This action cannot be undone."}
+              ? t.dashboard.deleteResumeConfirm.replace("{title}", pendingDeleteResume.title)
+              : t.dashboard.deleteResumeGeneric}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel disabled={Boolean(deletingResumeId)}>
-            Cancel
+            {t.common.cancel}
           </AlertDialogCancel>
           <AlertDialogAction
             className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
@@ -55,10 +57,10 @@ export function DeleteResumeDialog({
             deletingResumeId === pendingDeleteResume.id ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Deleting...
+                {t.common.deleting}
               </>
             ) : (
-              "Delete"
+              t.common.delete
             )}
           </AlertDialogAction>
         </AlertDialogFooter>

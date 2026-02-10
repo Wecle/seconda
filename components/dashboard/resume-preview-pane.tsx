@@ -9,6 +9,7 @@ import {
   Loader2,
   Settings,
 } from "lucide-react";
+import { useTranslation } from "@/lib/i18n/context";
 import type { ParsedResume } from "@/lib/resume/types";
 import type { InterviewConfig } from "@/lib/interview/settings";
 import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
@@ -65,11 +66,12 @@ export function ResumePreviewPane({
   onOpenSettings,
   onStartInterview,
 }: ResumePreviewPaneProps) {
+  const { t } = useTranslation();
   return (
     <>
       <header className="flex items-center justify-between border-b bg-card px-6 py-3">
         <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Resumes</span>
+          <span className="text-muted-foreground">{t.dashboard.resumes}</span>
           <ChevronRight className="size-3.5 text-muted-foreground" />
           <span className="text-muted-foreground">{selectedResumeTitle}</span>
           <ChevronRight className="size-3.5 text-muted-foreground" />
@@ -82,20 +84,20 @@ export function ResumePreviewPane({
               className="gap-1 bg-emerald-50 text-emerald-700"
             >
               <CheckCircle className="size-3" />
-              Parsed Successfully
+              {t.dashboard.parsedSuccessfully}
             </Badge>
           )}
           {selectedVersion.parseStatus === "failed" && (
             <Badge variant="destructive" className="gap-1">
               <AlertCircle className="size-3" />
-              Parsing Failed
+              {t.dashboard.parsingFailed}
             </Badge>
           )}
           {selectedVersion.parseStatus !== "parsed" &&
             selectedVersion.parseStatus !== "failed" && (
               <Badge variant="secondary" className="gap-1">
                 <Loader2 className="size-3 animate-spin" />
-                Parsing...
+                {t.dashboard.parsing}
               </Badge>
             )}
 
@@ -108,7 +110,7 @@ export function ResumePreviewPane({
               onClick={() => onPreviewModeChange("parsed")}
               disabled={!hasParsedPreview}
             >
-              Parsed
+              {t.dashboard.parsed}
             </Button>
             <Button
               type="button"
@@ -118,7 +120,7 @@ export function ResumePreviewPane({
               onClick={() => onPreviewModeChange("original")}
               disabled={!hasOriginalPreview}
             >
-              Original
+              {t.dashboard.original}
             </Button>
           </div>
         </div>
@@ -133,7 +135,7 @@ export function ResumePreviewPane({
               {selectedVersion.parseStatus === "failed" && (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
                   <p className="text-sm font-medium text-destructive">
-                    Parsing failed. Showing original PDF.
+                    {t.dashboard.parsingFailedShowOriginal}
                   </p>
                   {selectedVersion.parseError && (
                     <p className="mt-1 text-xs leading-relaxed text-foreground">
@@ -156,10 +158,10 @@ export function ResumePreviewPane({
                       {retryingParse ? (
                         <>
                           <Loader2 className="size-4 animate-spin" />
-                          Re-parsing...
+                          {t.dashboard.reParsing}
                         </>
                       ) : (
-                        "Retry Parsing"
+                        t.dashboard.retryParsing
                       )}
                     </Button>
                   </div>
@@ -169,8 +171,7 @@ export function ResumePreviewPane({
               {selectedVersion.parseStatus !== "parsed" &&
                 selectedVersion.parseStatus !== "failed" && (
                   <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                    Resume is being parsed. You can review the original PDF
-                    while waiting.
+                    {t.dashboard.parsingWaiting}
                   </div>
                 )}
 
@@ -185,7 +186,7 @@ export function ResumePreviewPane({
               <div className="space-y-2 text-center">
                 <AlertCircle className="mx-auto size-10 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">
-                  Original file preview is unavailable for this version.
+                  {t.dashboard.originalUnavailable}
                 </p>
               </div>
             </div>
@@ -206,7 +207,7 @@ export function ResumePreviewPane({
         <div className="flex items-center gap-2">
           {selectedInterviewConfig && (
             <Badge variant="secondary" className="h-8">
-              Settings Saved
+              {t.dashboard.settingsSaved}
             </Badge>
           )}
           <Button variant="outline" size="icon-sm" onClick={onOpenSettings}>
@@ -222,12 +223,12 @@ export function ResumePreviewPane({
             onClick={onStartInterview}
           >
             {selectedVersion.parseStatus !== "parsed"
-              ? "Resume Not Ready for Interview"
+              ? t.dashboard.resumeNotReady
               : creatingInterview
-                ? "Starting Interview..."
+                ? t.dashboard.startingInterview
                 : selectedInterviewConfig
-                  ? "Start Interview with this Version"
-                  : "Configure Settings First"}
+                  ? t.dashboard.startInterview
+                  : t.dashboard.configureFirst}
           </Button>
         </div>
       </div>
