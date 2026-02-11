@@ -7,12 +7,14 @@ import {
   ChevronRight,
   FileText,
   Loader2,
+  Pencil,
   Settings,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import type { ParsedResume } from "@/lib/resume/types";
 import type { InterviewConfig } from "@/lib/interview/settings";
 import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
+import { ParsedResumeEditor } from "@/components/resume/parsed-resume-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -48,6 +50,11 @@ interface ResumePreviewPaneProps {
   creatingInterview: boolean;
   onOpenSettings: () => void;
   onStartInterview: () => void;
+  editing: boolean;
+  savingEdit: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: (data: ParsedResume) => Promise<void>;
 }
 
 export function ResumePreviewPane({
@@ -65,6 +72,11 @@ export function ResumePreviewPane({
   creatingInterview,
   onOpenSettings,
   onStartInterview,
+  editing,
+  savingEdit,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
 }: ResumePreviewPaneProps) {
   const { t } = useTranslation();
   return (
@@ -101,6 +113,19 @@ export function ResumePreviewPane({
               </Badge>
             )}
 
+          {hasParsedPreview && !editing && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={onStartEdit}
+            >
+              <Pencil className="size-3" />
+              {t.dashboard.editResume}
+            </Button>
+          )}
+
           <div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
             <Button
               type="button"
@@ -108,7 +133,7 @@ export function ResumePreviewPane({
               variant={activePreviewMode === "parsed" ? "secondary" : "ghost"}
               className="h-7 px-2 text-xs"
               onClick={() => onPreviewModeChange("parsed")}
-              disabled={!hasParsedPreview}
+              disabled={!hasParsedPreview || editing}
             >
               {t.dashboard.parsed}
             </Button>
@@ -118,7 +143,7 @@ export function ResumePreviewPane({
               variant={activePreviewMode === "original" ? "secondary" : "ghost"}
               className="h-7 px-2 text-xs"
               onClick={() => onPreviewModeChange("original")}
-              disabled={!hasOriginalPreview}
+              disabled={!hasOriginalPreview || editing}
             >
               {t.dashboard.original}
             </Button>
@@ -128,7 +153,14 @@ export function ResumePreviewPane({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex justify-center px-8 py-8 pb-24">
-          {activePreviewMode === "parsed" && parsed ? (
+          {editing && parsed ? (
+            <ParsedResumeEditor
+              parsed={parsed}
+              onSave={onSaveEdit}
+              onCancel={onCancelEdit}
+              saving={savingEdit}
+            />
+          ) : activePreviewMode === "parsed" && parsed ? (
             <ParsedResumePreview parsed={parsed} />
           ) : hasOriginalPreview ? (
             <div className="w-full max-w-[1000px] space-y-4">

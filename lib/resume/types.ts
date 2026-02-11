@@ -19,6 +19,7 @@ export const parsedResumeSchema = z.object({
     bullets: z.array(z.string()).describe("Key responsibilities and achievements"),
   })).describe("Work experience entries"),
   education: z.array(z.object({
+    major: z.string().optional(),
     degree: z.string(),
     school: z.string(),
     period: z.string().optional(),

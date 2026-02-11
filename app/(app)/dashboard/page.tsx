@@ -18,6 +18,7 @@ import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
 import type { Resume } from "@/components/dashboard/types";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import { UploadResumeDialog } from "@/components/dashboard/upload-resume-dialog";
+import type { ParsedResume } from "@/lib/resume/types";
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -62,6 +63,8 @@ export default function DashboardPage() {
   const [errorAlertMessage, setErrorAlertMessage] = useState<string | null>(
     null,
   );
+  const [editing, setEditing] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchResumes = useCallback(async () => {
@@ -319,6 +322,34 @@ export default function DashboardPage() {
     }
   };
 
+  const handleSaveEdit = async (data: ParsedResume) => {
+    if (!selectedResumeId || !selectedVersion) return;
+    setSavingEdit(true);
+    try {
+      const res = await fetch(
+        `/api/resumes/${selectedResumeId}/versions/${selectedVersion.id}/edit`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ parsedJson: data }),
+        },
+      );
+      const result = await res.json().catch(() => null);
+      if (!res.ok) {
+        setErrorAlertMessage(result?.error ?? "Failed to save resume changes.");
+        return;
+      }
+      setEditing(false);
+      setSelectedVersionId(result.id);
+      await fetchResumes();
+    } catch (e) {
+      console.error("Failed to save resume edit:", e);
+      setErrorAlertMessage("Failed to save resume changes. Please try again.");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   const toggleFolder = (resumeId: string) => {
     setExpandedFolders((prev) => {
       const next = new Set(prev);
@@ -331,6 +362,7 @@ export default function DashboardPage() {
   const selectVersion = (resumeId: string, versionId: string) => {
     setSelectedResumeId(resumeId);
     setSelectedVersionId(versionId);
+    setEditing(false);
   };
 
   const selectedResume = resumes.find((r) => r.id === selectedResumeId);
@@ -415,6 +447,11 @@ export default function DashboardPage() {
               creatingInterview={creatingInterview}
               onOpenSettings={openSettingsDialog}
               onStartInterview={handleStartInterview}
+              editing={editing}
+              savingEdit={savingEdit}
+              onStartEdit={() => setEditing(true)}
+              onCancelEdit={() => setEditing(false)}
+              onSaveEdit={handleSaveEdit}
             />
           ) : loading ? (
             <div className="flex flex-1 items-center justify-center">
