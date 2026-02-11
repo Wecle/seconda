@@ -193,17 +193,38 @@ export function ParsedResumePreview({
 
       {parsed.education && parsed.education.length > 0 && (
         <div className="rounded-xl border bg-card p-8">
-          <h2 className="mb-4 text-base font-semibold">{t.resume.education}</h2>
-          <div className="space-y-4">
+          <h2 className="mb-6 text-base font-semibold">{t.resume.education}</h2>
+          <div className="space-y-6">
             {parsed.education.map((edu, i) => (
-              <div key={i}>
-                <h3 className="text-sm font-semibold">{renderText(edu.degree)}</h3>
-                <p className="text-sm text-primary">{renderText(edu.school)}</p>
-                {edu.period && (
-                  <p className="text-xs text-muted-foreground">
-                    {renderText(edu.period)}
-                  </p>
+              <div key={i} className="relative pl-6">
+                <div className="absolute left-0 top-1.5 size-2.5 rounded-full bg-primary" />
+                {i < (parsed.education?.length ?? 0) - 1 && (
+                  <div className="absolute left-[4.5px] top-4 h-[calc(100%+8px)] w-px bg-border" />
                 )}
+                <div className="flex items-baseline justify-between">
+                  <div className="flex items-baseline gap-2">
+                    <h3 className="text-sm font-semibold">
+                      {renderText(edu.school)}
+                    </h3>
+                    {(edu.major || edu.degree) && (
+                      <span className="text-sm text-primary">
+                        {[edu.major, edu.degree]
+                          .filter(Boolean)
+                          .map((s) => renderText(s!))
+                          .reduce<React.ReactNode[]>((acc, node, idx) => {
+                            if (idx > 0) acc.push(" · ");
+                            acc.push(node);
+                            return acc;
+                          }, [])}
+                      </span>
+                    )}
+                  </div>
+                  {edu.period && (
+                    <span className="shrink-0 text-xs text-muted-foreground">
+                      {renderText(edu.period)}
+                    </span>
+                  )}
+                </div>
               </div>
             ))}
           </div>
