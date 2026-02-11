@@ -20,7 +20,7 @@ pnpm-debug.log*
 
 # local env files
 .env*
-!/.env.example
+!.env.example
 
 # typescript
 *.tsbuildinfo
