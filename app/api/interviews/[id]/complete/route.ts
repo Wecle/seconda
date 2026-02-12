@@ -53,34 +53,52 @@ export async function POST(
       .where(eq(interviewQuestions.interviewId, id))
       .orderBy(asc(interviewQuestions.questionIndex));
 
-    const questionsWithScores = await Promise.all(
-      questions
-        .filter((q) => q.answeredAt && q.answerText)
-        .map(async (q) => {
+    const scoredQuestions = questions.filter((q) => q.answeredAt && q.answerText?.trim());
+    const maxRetries = 15;
+    let reportQuestions: {
+      question: string;
+      answer: string;
+      scores: {
+        understanding: number;
+        expression: number;
+        logic: number;
+        depth: number;
+        authenticity: number;
+        reflection: number;
+        overall: number;
+      };
+    }[] = [];
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      const questionsWithScores = await Promise.all(
+        scoredQuestions.map(async (q) => {
           const [score] = await db
             .select()
             .from(questionScores)
             .where(eq(questionScores.questionId, q.id));
-
           return { question: q, score };
         })
-    );
+      );
 
-    const reportQuestions = questionsWithScores
-      .filter((qs) => qs.score)
-      .map((qs) => ({
-        question: qs.question.question,
-        answer: qs.question.answerText!,
-        scores: {
-          understanding: qs.score!.understanding,
-          expression: qs.score!.expression,
-          logic: qs.score!.logic,
-          depth: qs.score!.depth,
-          authenticity: qs.score!.authenticity,
-          reflection: qs.score!.reflection,
-          overall: qs.score!.overall,
-        },
-      }));
+      reportQuestions = questionsWithScores
+        .filter((qs) => qs.score)
+        .map((qs) => ({
+          question: qs.question.question,
+          answer: qs.question.answerText!,
+          scores: {
+            understanding: qs.score!.understanding,
+            expression: qs.score!.expression,
+            logic: qs.score!.logic,
+            depth: qs.score!.depth,
+            authenticity: qs.score!.authenticity,
+            reflection: qs.score!.reflection,
+            overall: qs.score!.overall,
+          },
+        }));
+
+      if (reportQuestions.length >= scoredQuestions.length) break;
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
 
     const [resumeVersion] = await db
       .select()

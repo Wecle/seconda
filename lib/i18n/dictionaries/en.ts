@@ -234,6 +234,8 @@ export const en = {
     returnDashboard: "Return to Dashboard",
     completionTip:
       "Tip: Reviewing your report after each session helps you improve faster.",
+    questionLoadFailed: "Failed to generate the next question. Please try again later.",
+    retryLoadQuestion: "Retry Loading Question",
   },
   report: {
     title: "Interview Evaluation",
