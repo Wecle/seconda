@@ -73,6 +73,38 @@ interface NextQuestionApiResponse {
   id?: string;
   questionIndex?: number;
   question?: string;
+  topic?: string | null;
+  tip?: string | null;
+}
+
+type NextQuestionStreamChunk =
+  | {
+      type: "question";
+      questionIndex?: number;
+      question?: string;
+      topic?: string | null;
+      tip?: string | null;
+    }
+  | {
+      type: "done";
+      done?: boolean;
+      id?: string;
+      questionIndex?: number;
+      question?: string;
+      topic?: string | null;
+      tip?: string | null;
+    }
+  | {
+      type: "error";
+      message?: string;
+    };
+
+function parseStreamChunk(line: string): NextQuestionStreamChunk | null {
+  try {
+    return JSON.parse(line) as NextQuestionStreamChunk;
+  } catch {
+    return null;
+  }
 }
 
 export default function InterviewRoomPage() {
@@ -331,60 +363,191 @@ export default function InterviewRoomPage() {
     setOpeningReport(false);
   }
 
-  async function streamNextQuestion() {
+  async function streamNextQuestion(nextQuestionIndex?: number) {
+    const requestId = ++questionRequestRef.current;
+    const optimisticIndex =
+      typeof nextQuestionIndex === "number"
+        ? nextQuestionIndex
+        : answeredCount + 1;
+
     setLoadingQuestion(true);
     setQuestionLoadError(null);
-    const res = await fetch(`/api/interviews/${interviewId}/next-question`, {
-      method: "POST",
-    });
-
-    if (!res.ok) {
-      const errorData = (await res.json().catch(() => null)) as
-        | { message?: string }
-        | null;
-      setLoadingQuestion(false);
-      setQuestionLoadError(
-        errorData?.message || t.interview.questionLoadFailed,
-      );
-      return;
-    }
-
-    const data = (await res.json().catch(() => null)) as
-      | NextQuestionApiResponse
-      | null;
-
-    if (!data) {
-      setLoadingQuestion(false);
-      setQuestionLoadError(t.interview.questionLoadFailed);
-      return;
-    }
-
-    if (data.done) {
-      setCurrentQuestion(null);
-      setQuestionMeta(null);
-      setLoadingQuestion(false);
-      return;
-    }
-
-    if (
-      !data.id ||
-      typeof data.question !== "string" ||
-      typeof data.questionIndex !== "number"
-    ) {
-      setLoadingQuestion(false);
-      setQuestionLoadError(t.interview.questionLoadFailed);
-      return;
-    }
-
-    const requestId = ++questionRequestRef.current;
-    setCurrentQuestion({
-      id: data.id,
-      questionIndex: data.questionIndex,
-      question: data.question,
-    });
     setQuestionMeta(null);
-    setLoadingQuestion(false);
-    void loadQuestionMeta(data.id, requestId);
+    setCurrentQuestion({
+      id: `pending-${requestId}`,
+      questionIndex: optimisticIndex,
+      question: "",
+    });
+
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/next-question`, {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        const errorData = (await res.json().catch(() => null)) as
+          | { message?: string }
+          | null;
+        setCurrentQuestion(null);
+        setQuestionMeta(null);
+        setQuestionLoadError(
+          errorData?.message || t.interview.questionLoadFailed,
+        );
+        return;
+      }
+
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/x-ndjson") || !res.body) {
+        const data = (await res.json().catch(() => null)) as
+          | NextQuestionApiResponse
+          | null;
+
+        if (!data) {
+          setCurrentQuestion(null);
+          setQuestionMeta(null);
+          setQuestionLoadError(t.interview.questionLoadFailed);
+          return;
+        }
+
+        if (data.done) {
+          setCurrentQuestion(null);
+          setQuestionMeta(null);
+          return;
+        }
+
+        if (
+          !data.id ||
+          typeof data.question !== "string" ||
+          typeof data.questionIndex !== "number"
+        ) {
+          setCurrentQuestion(null);
+          setQuestionMeta(null);
+          setQuestionLoadError(t.interview.questionLoadFailed);
+          return;
+        }
+
+        setCurrentQuestion({
+          id: data.id,
+          questionIndex: data.questionIndex,
+          question: data.question,
+        });
+        setQuestionMeta({
+          questionId: data.id,
+          topic: data.topic ?? null,
+          tip: data.tip ?? null,
+        });
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let donePayload: NextQuestionApiResponse | null = null;
+      let streamError: string | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (questionRequestRef.current !== requestId) {
+          await reader.cancel();
+          return;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line) continue;
+
+          const chunk = parseStreamChunk(line);
+          if (!chunk) continue;
+
+          if (chunk.type === "error") {
+            streamError = chunk.message ?? t.interview.questionLoadFailed;
+            continue;
+          }
+
+          if (chunk.type === "question") {
+            setCurrentQuestion((prev) => ({
+              id: prev?.id ?? `pending-${requestId}`,
+              questionIndex:
+                typeof chunk.questionIndex === "number"
+                  ? chunk.questionIndex
+                  : (prev?.questionIndex ?? optimisticIndex),
+              question: typeof chunk.question === "string" ? chunk.question : "",
+            }));
+            setQuestionMeta({
+              questionId: `pending-${requestId}`,
+              topic: chunk.topic ?? null,
+              tip: chunk.tip ?? null,
+            });
+            continue;
+          }
+
+          if (chunk.type === "done") {
+            donePayload = chunk;
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const chunk = parseStreamChunk(buffer.trim());
+        if (chunk?.type === "error") {
+          streamError = chunk.message ?? t.interview.questionLoadFailed;
+        }
+        if (chunk?.type === "done") {
+          donePayload = chunk;
+        }
+      }
+
+      if (streamError) {
+        setCurrentQuestion(null);
+        setQuestionMeta(null);
+        setQuestionLoadError(streamError);
+        return;
+      }
+
+      if (!donePayload) {
+        setCurrentQuestion(null);
+        setQuestionMeta(null);
+        setQuestionLoadError(t.interview.questionLoadFailed);
+        return;
+      }
+
+      if (donePayload.done) {
+        setCurrentQuestion(null);
+        setQuestionMeta(null);
+        return;
+      }
+
+      if (
+        !donePayload.id ||
+        typeof donePayload.question !== "string" ||
+        typeof donePayload.questionIndex !== "number"
+      ) {
+        setCurrentQuestion(null);
+        setQuestionMeta(null);
+        setQuestionLoadError(t.interview.questionLoadFailed);
+        return;
+      }
+
+      setCurrentQuestion({
+        id: donePayload.id,
+        questionIndex: donePayload.questionIndex,
+        question: donePayload.question,
+      });
+      setQuestionMeta({
+        questionId: donePayload.id,
+        topic: donePayload.topic ?? null,
+        tip: donePayload.tip ?? null,
+      });
+    } finally {
+      if (questionRequestRef.current === requestId) {
+        setLoadingQuestion(false);
+      }
+    }
   }
 
   async function submitAnswer(questionId: string, answer: string) {
@@ -411,15 +574,16 @@ export default function InterviewRoomPage() {
         answerData?.progress &&
         answerData.progress.current >= answerData.progress.total;
 
-      setCurrentQuestion(null);
-      setQuestionMeta(null);
-      setLoadingQuestion(true);
-
       if (isLastQuestion) {
+        setLoadingQuestion(true);
         await Promise.all([refreshInterview(), loadCurrentQuestion()]);
         void ensureInterviewCompleted();
       } else {
-        await streamNextQuestion();
+        const nextQuestionIndex =
+          typeof answerData?.progress?.current === "number"
+            ? answerData.progress.current + 1
+            : undefined;
+        await streamNextQuestion(nextQuestionIndex);
       }
     } catch (e) {
       console.error(e);
@@ -454,7 +618,7 @@ export default function InterviewRoomPage() {
     if (currentData.progress.current >= currentData.progress.total) {
       return;
     }
-    await streamNextQuestion();
+    await streamNextQuestion(currentData.progress.current + 1);
   }
 
   if (loading) {
@@ -614,11 +778,11 @@ export default function InterviewRoomPage() {
             {/* Question Bubble */}
             <div className="bg-card rounded-xl rounded-tl-none shadow-sm border p-5">
               <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                {currentQuestion?.question}
-                {loadingQuestion && !currentQuestion && (
-                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
-                )}
+                {currentQuestion.question || (loadingQuestion ? t.interview.askingNow : "")}
               </p>
+              {loadingQuestion && (
+                <Loader2 className="mt-3 size-4 animate-spin text-muted-foreground" />
+              )}
             </div>
 
             {/* Spacer */}

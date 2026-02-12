@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateObject } from "ai";
+import { streamObject } from "ai";
 import { db } from "@/lib/db";
 import {
   interviews,
@@ -13,6 +13,34 @@ import { chatLanguageModel } from "@/lib/ai/chat-provider";
 import { generatedQuestionSchema } from "@/lib/interview/schemas";
 
 export const maxDuration = 60;
+
+type NextQuestionStreamChunk =
+  | {
+      type: "question";
+      questionIndex: number;
+      question: string;
+      topic: string | null;
+      tip: string | null;
+    }
+  | {
+      type: "done";
+      done?: boolean;
+      id?: string;
+      questionIndex?: number;
+      question?: string;
+      topic?: string | null;
+      tip?: string | null;
+    }
+  | {
+      type: "error";
+      message: string;
+    };
+
+const streamEncoder = new TextEncoder();
+
+function encodeChunk(chunk: NextQuestionStreamChunk) {
+  return streamEncoder.encode(`${JSON.stringify(chunk)}\n`);
+}
 
 function getNestedStatusCode(error: unknown): number | null {
   if (!error || typeof error !== "object") return null;
@@ -93,7 +121,7 @@ function isObjectGenerationError(error: unknown): boolean {
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
@@ -134,17 +162,6 @@ export async function POST(
       .orderBy(asc(interviewQuestions.questionIndex))
       .limit(1);
 
-    if (existingNext) {
-      return NextResponse.json({
-        id: existingNext.id,
-        questionIndex: existingNext.questionIndex,
-        questionType: existingNext.questionType,
-        topic: existingNext.topic,
-        question: existingNext.question,
-        tip: existingNext.tip,
-      });
-    }
-
     const answeredQuestions = await db
       .select()
       .from(interviewQuestions)
@@ -155,33 +172,66 @@ export async function POST(
         )
       );
 
-    if (answeredQuestions.length >= interview.questionCount) {
-      return NextResponse.json({ done: true });
-    }
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (chunk: NextQuestionStreamChunk) => {
+          controller.enqueue(encodeChunk(chunk));
+        };
 
-    const [resumeVersion] = await db
-      .select()
-      .from(resumeVersions)
-      .where(eq(resumeVersions.id, interview.resumeVersionId));
+        try {
+          if (existingNext) {
+            send({
+              type: "question",
+              questionIndex: existingNext.questionIndex,
+              question: existingNext.question,
+              topic: existingNext.topic ?? null,
+              tip: existingNext.tip ?? null,
+            });
+            send({
+              type: "done",
+              id: existingNext.id,
+              questionIndex: existingNext.questionIndex,
+              question: existingNext.question,
+              topic: existingNext.topic ?? null,
+              tip: existingNext.tip ?? null,
+            });
+            return;
+          }
 
-    const allQuestions = await db
-      .select()
-      .from(interviewQuestions)
-      .where(eq(interviewQuestions.interviewId, id))
-      .orderBy(asc(interviewQuestions.questionIndex));
+          if (answeredQuestions.length >= interview.questionCount) {
+            send({
+              type: "done",
+              done: true,
+            });
+            return;
+          }
 
-    const recentAnswered = allQuestions
-      .filter((q) => q.answeredAt && q.answerText)
-      .slice(-3)
-      .map((q) => ({ question: q.question, answer: q.answerText! }));
+          const [resumeVersion] = await db
+            .select()
+            .from(resumeVersions)
+            .where(eq(resumeVersions.id, interview.resumeVersionId));
 
-    const truncatedText = (resumeVersion?.extractedText ?? "").slice(0, 8000);
-    const resumeDataStr = JSON.stringify(resumeVersion?.parsedJson).slice(
-      0,
-      8000
-    );
+          const allQuestions = await db
+            .select()
+            .from(interviewQuestions)
+            .where(eq(interviewQuestions.interviewId, id))
+            .orderBy(asc(interviewQuestions.questionIndex));
 
-    let prompt = `候选人简历（结构化数据）：
+          const recentAnswered = allQuestions
+            .filter((q) => q.answeredAt && q.answerText)
+            .slice(-3)
+            .map((q) => ({ question: q.question, answer: q.answerText! }));
+
+          const truncatedText = (resumeVersion?.extractedText ?? "").slice(
+            0,
+            8000
+          );
+          const resumeDataStr = JSON.stringify(resumeVersion?.parsedJson).slice(
+            0,
+            8000
+          );
+
+          let prompt = `候选人简历（结构化数据）：
 ${resumeDataStr}
 
 候选人简历（原文）：
@@ -194,49 +244,136 @@ ${truncatedText}
 - 语言：${interview.language}
 - 生成数量：1`;
 
-    if (recentAnswered.length > 0) {
-      prompt += `\n\n已有问答记录：\n${recentAnswered
-        .map((h, i) => `Q${i + 1}: ${h.question}\nA${i + 1}: ${h.answer}`)
-        .join("\n\n")}`;
-    }
+          if (recentAnswered.length > 0) {
+            prompt += `\n\n已有问答记录：\n${recentAnswered
+              .map((h, i) => `Q${i + 1}: ${h.question}\nA${i + 1}: ${h.answer}`)
+              .join("\n\n")}`;
+          }
 
-    if (interview.language !== "zh") {
-      prompt += `\n\n请用${interview.language}语言生成面试问题。`;
-    }
+          if (interview.language !== "zh") {
+            prompt += `\n\n请用${interview.language}语言生成面试问题。`;
+          }
 
-    const maxIndex = allQuestions.reduce(
-      (max, q) => Math.max(max, q.questionIndex),
-      0
-    );
+          const nextQuestionIndex =
+            allQuestions.reduce((max, q) => Math.max(max, q.questionIndex), 0) +
+            1;
 
-    const { object: generated } = await generateObject({
-      model: chatLanguageModel,
-      schema: generatedQuestionSchema,
-      maxRetries: 2,
-      system:
-        "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。只生成一个问题。输出必须是严格JSON对象，且只能包含 questionType、topic、question、tip 这4个字段。不要使用Markdown，不要输出代码块，不要添加解释文本。",
-      prompt,
+          const generation = streamObject({
+            model: chatLanguageModel,
+            schema: generatedQuestionSchema,
+            maxRetries: 2,
+            abortSignal: request.signal,
+            system:
+              "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。只生成一个问题。输出必须是严格JSON对象，且只能包含 questionType、topic、question、tip 这4个字段。不要使用Markdown，不要输出代码块，不要添加解释文本。",
+            prompt,
+          });
+
+          let streamedQuestion = "";
+          let streamedTopic: string | null = null;
+          let streamedTip: string | null = null;
+
+          for await (const partial of generation.partialObjectStream) {
+            const nextQuestion: string =
+              typeof partial.question === "string"
+                ? partial.question
+                : streamedQuestion;
+            const nextTopic: string | null =
+              typeof partial.topic === "string" ? partial.topic : streamedTopic;
+            const nextTip: string | null =
+              typeof partial.tip === "string" ? partial.tip : streamedTip;
+
+            if (
+              nextQuestion === streamedQuestion &&
+              nextTopic === streamedTopic &&
+              nextTip === streamedTip
+            ) {
+              continue;
+            }
+
+            streamedQuestion = nextQuestion;
+            streamedTopic = nextTopic;
+            streamedTip = nextTip;
+
+            send({
+              type: "question",
+              questionIndex: nextQuestionIndex,
+              question: streamedQuestion,
+              topic: streamedTopic,
+              tip: streamedTip,
+            });
+          }
+
+          const generated = await generation.object;
+          const question = generatedQuestionSchema.parse(generated);
+
+          if (
+            question.question !== streamedQuestion ||
+            question.topic !== streamedTopic ||
+            question.tip !== streamedTip
+          ) {
+            send({
+              type: "question",
+              questionIndex: nextQuestionIndex,
+              question: question.question,
+              topic: question.topic,
+              tip: question.tip,
+            });
+          }
+
+          const [savedQuestion] = await db
+            .insert(interviewQuestions)
+            .values({
+              interviewId: id,
+              questionIndex: nextQuestionIndex,
+              questionType: question.questionType,
+              topic: question.topic,
+              question: question.question,
+              tip: question.tip,
+            })
+            .returning();
+
+          send({
+            type: "done",
+            id: savedQuestion.id,
+            questionIndex: savedQuestion.questionIndex,
+            question: savedQuestion.question,
+            topic: savedQuestion.topic ?? null,
+            tip: savedQuestion.tip ?? null,
+          });
+        } catch (error) {
+          if (isRateLimitError(error)) {
+            send({
+              type: "error",
+              message: "AI 题目生成频率或额度已达上限，请稍后重试。",
+            });
+            return;
+          }
+
+          if (isObjectGenerationError(error)) {
+            send({
+              type: "error",
+              message: "AI 未生成可解析的题目结构，请重试。",
+            });
+            return;
+          }
+
+          console.error("Error streaming next question:", error);
+          send({
+            type: "error",
+            message: "题目生成失败，请稍后重试。",
+          });
+        } finally {
+          controller.close();
+        }
+      },
     });
 
-    const [savedQuestion] = await db
-      .insert(interviewQuestions)
-      .values({
-        interviewId: id,
-        questionIndex: maxIndex + 1,
-        questionType: generated.questionType,
-        topic: generated.topic,
-        question: generated.question,
-        tip: generated.tip,
-      })
-      .returning();
-
-    return NextResponse.json({
-      id: savedQuestion.id,
-      questionIndex: savedQuestion.questionIndex,
-      questionType: savedQuestion.questionType,
-      topic: savedQuestion.topic,
-      question: savedQuestion.question,
-      tip: savedQuestion.tip,
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
     });
   } catch (error) {
     if (isRateLimitError(error)) {
