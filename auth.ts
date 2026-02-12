@@ -13,7 +13,16 @@ const credentialsSchema = z.object({
   mode: z.enum(["signIn", "signUp"]),
   email: z.string().trim().email(),
   password: z.string().min(8).max(128),
-  name: z.string().trim().min(1).max(80).optional(),
+  name: z.preprocess(
+    (value) => {
+      if (typeof value !== "string") {
+        return value;
+      }
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : undefined;
+    },
+    z.string().min(1).max(80).optional(),
+  ),
 });
 
 function normalizeEmail(email: string) {
@@ -67,14 +76,20 @@ async function ensureOAuthUser(params: {
 
     user = createdUser;
   } else {
-    await db
-      .update(users)
-      .set({
-        name: params.name ?? user.name,
-        image: params.image ?? user.image,
-        updatedAt: new Date(),
-      })
-      .where(eq(users.id, user.id));
+    const normalizedName = params.name?.trim() || null;
+    const nextName = user.name ?? normalizedName;
+    const nextImage = user.image ?? params.image ?? null;
+
+    if (nextName !== user.name || nextImage !== user.image) {
+      await db
+        .update(users)
+        .set({
+          name: nextName,
+          image: nextImage,
+          updatedAt: new Date(),
+        })
+        .where(eq(users.id, user.id));
+    }
   }
 
   await db
@@ -120,26 +135,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           const passwordHash = hashPassword(password);
           const existingUser = await findUserByEmail(email);
 
-          if (existingUser?.passwordHash) {
-            return null;
-          }
-
           if (existingUser) {
-            const [updatedUser] = await db
-              .update(users)
-              .set({
-                passwordHash,
-                name: name ?? existingUser.name,
-                updatedAt: new Date(),
-              })
-              .where(eq(users.id, existingUser.id))
-              .returning();
-
-            return {
-              id: updatedUser.id,
-              email: updatedUser.email,
-              name: updatedUser.name,
-            };
+            return null;
           }
 
           const userId = randomUUID();
@@ -157,6 +154,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
             id: createdUser.id,
             email: createdUser.email,
             name: createdUser.name,
+            image: createdUser.image,
           };
         }
 
@@ -174,6 +172,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           id: user.id,
           email: user.email,
           name: user.name,
+          image: user.image,
         };
       },
     }),

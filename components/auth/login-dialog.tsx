@@ -74,10 +74,10 @@ export function LoginDialog({
       const result = await signIn("credentials", {
         redirect: false,
         mode,
-        name: name.trim(),
         email: email.trim().toLowerCase(),
         password,
         callbackUrl,
+        ...(mode === "signUp" ? { name: name.trim() } : {}),
       });
 
       if (!result || result.error) {

@@ -25,9 +25,22 @@ export const scoreResultSchema = z.object({
   improvements: z.array(z.string()),
   advice: z.array(z.string()),
   deepDive: z.object({
-    coreConcepts: z.array(z.object({ title: z.string(), description: z.string() })),
-    commonPitfalls: z.array(z.string()),
-    modelAnswerSteps: z.array(z.object({ step: z.string(), detail: z.string() })),
+    coreConcepts: z.object({
+      title: z.string().optional(),
+      subtitle: z.string().optional(),
+      items: z.array(z.object({
+        name: z.string(),
+        description: z.string(),
+      })),
+    }),
+    pitfalls: z.array(z.string()),
+    modelAnswer: z.object({
+      approach: z.string().optional(),
+      steps: z.array(z.object({
+        title: z.string(),
+        description: z.string(),
+      })),
+    }),
   }),
 });
 
@@ -47,7 +60,35 @@ export const interviewReportSchema = z.object({
   nextSteps: z.array(z.string()),
 });
 
+export const followUpRoundSchema = z.object({
+  comment: z.string(),
+  question: z.string(),
+});
+
+export const coachStartSchema = z.object({
+  explanation: z.string(),
+  commonMistakes: z.array(z.string()),
+  practiceQuestion: z.string(),
+});
+
+export const coachEvaluateSchema = z.object({
+  scores: z.object({
+    understanding: z.number().int().min(0).max(10),
+    expression: z.number().int().min(0).max(10),
+    logic: z.number().int().min(0).max(10),
+    depth: z.number().int().min(0).max(10),
+    authenticity: z.number().int().min(0).max(10),
+    reflection: z.number().int().min(0).max(10),
+    overall: z.number().int().min(0).max(10),
+  }),
+  briefFeedback: z.string(),
+  improvements: z.array(z.string()),
+});
+
 export type GeneratedQuestion = z.infer<typeof generatedQuestionSchema>;
 export type GeneratedQuestions = z.infer<typeof generatedQuestionsSchema>;
 export type ScoreResult = z.infer<typeof scoreResultSchema>;
 export type InterviewReport = z.infer<typeof interviewReportSchema>;
+export type FollowUpRound = z.infer<typeof followUpRoundSchema>;
+export type CoachStart = z.infer<typeof coachStartSchema>;
+export type CoachEvaluate = z.infer<typeof coachEvaluateSchema>;
