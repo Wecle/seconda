@@ -9,6 +9,7 @@ type InterviewAnswerPanelProps = {
   helperText: string;
   answerText: string;
   submitting: boolean;
+  disabled?: boolean;
   resetKey: string | number;
   skipLabel: string;
   audioLabel: string;
@@ -23,6 +24,7 @@ export function InterviewAnswerPanel({
   helperText,
   answerText,
   submitting,
+  disabled = false,
   resetKey,
   skipLabel,
   audioLabel,
@@ -37,7 +39,7 @@ export function InterviewAnswerPanel({
         value={answerText}
         placeholder={placeholder}
         helperText={helperText}
-        disabled={submitting}
+        disabled={submitting || disabled}
         resetKey={resetKey}
         onChange={onAnswerChange}
       />
@@ -48,21 +50,21 @@ export function InterviewAnswerPanel({
           size="sm"
           className="text-muted-foreground"
           onClick={onSkip}
-          disabled={submitting}
+          disabled={submitting || disabled}
         >
           <SkipForward className="size-4" />
           {skipLabel}
         </Button>
 
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" disabled={submitting || disabled}>
             <Mic className="size-4" />
             {audioLabel}
           </Button>
           <Button
             size="sm"
             onClick={onSubmit}
-            disabled={submitting || !answerText.trim()}
+            disabled={submitting || disabled || !answerText.trim()}
           >
             {submitting ? (
               <Loader2 className="size-4 animate-spin" />

@@ -222,6 +222,8 @@ export const zh = {
     viewFullReport: "查看完整评估报告",
     returnDashboard: "返回控制台",
     completionTip: "提示：坚持复盘报告，通常能更快提升下一轮面试表现。",
+    questionLoadFailed: "题目生成失败，请稍后重试。",
+    retryLoadQuestion: "重试加载题目",
   },
   report: {
     title: "面试评估报告",

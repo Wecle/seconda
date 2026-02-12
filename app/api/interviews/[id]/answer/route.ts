@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import {
@@ -8,17 +8,14 @@ import {
   resumes,
   resumeVersions,
 } from "@/lib/db/schema";
-import { eq, and, asc, isNull, isNotNull } from "drizzle-orm";
-import {
-  generateInterviewQuestions,
-  scoreInterviewAnswer,
-} from "@/lib/interview";
+import { eq, and, isNull, isNotNull } from "drizzle-orm";
+import { scoreInterviewAnswer } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { getCurrentUserId } from "@/lib/auth/session";
 
 const answerSchema = z.object({
   questionId: z.string().uuid(),
-  answerText: z.string().min(1),
+  answerText: z.string(),
 });
 
 export async function POST(
@@ -91,49 +88,6 @@ export async function POST(
       .set({ answerText: body.answerText, answeredAt: new Date() })
       .where(eq(interviewQuestions.id, body.questionId));
 
-    const [resumeVersion] = await db
-      .select()
-      .from(resumeVersions)
-      .where(eq(resumeVersions.id, interview.resumeVersionId));
-
-    const resume = resumeVersion?.parsedJson as ParsedResume | null;
-    const resumeContext = resume
-      ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}`
-      : "";
-
-    const scoreResult = await scoreInterviewAnswer({
-      question: question.question,
-      answer: body.answerText,
-      questionType: question.questionType,
-      level: interview.level,
-      persona: interview.persona,
-      language: interview.language,
-      resumeContext,
-    });
-
-    await db.insert(questionScores).values({
-      questionId: body.questionId,
-      understanding: scoreResult.scores.understanding,
-      expression: scoreResult.scores.expression,
-      logic: scoreResult.scores.logic,
-      depth: scoreResult.scores.depth,
-      authenticity: scoreResult.scores.authenticity,
-      reflection: scoreResult.scores.reflection,
-      overall: scoreResult.scores.overall,
-    });
-
-    await db
-      .update(interviewQuestions)
-      .set({
-        feedbackJson: {
-          strengths: scoreResult.strengths,
-          improvements: scoreResult.improvements,
-          advice: scoreResult.advice,
-          deepDive: scoreResult.deepDive,
-        },
-      })
-      .where(eq(interviewQuestions.id, body.questionId));
-
     const answeredQuestions = await db
       .select()
       .from(interviewQuestions)
@@ -145,70 +99,59 @@ export async function POST(
       );
 
     const answeredCount = answeredQuestions.length;
-    const moreNeeded = answeredCount < interview.questionCount;
 
-    const allQuestions = await db
-      .select()
-      .from(interviewQuestions)
-      .where(eq(interviewQuestions.interviewId, id))
-      .orderBy(asc(interviewQuestions.questionIndex));
+    if (body.answerText.trim()) {
+      after(async () => {
+        try {
+          const [resumeVersion] = await db
+            .select()
+            .from(resumeVersions)
+            .where(eq(resumeVersions.id, interview.resumeVersionId));
 
-    const nextExisting = allQuestions.find((q) => !q.answeredAt);
+          const resume = resumeVersion?.parsedJson as ParsedResume | null;
+          const resumeContext = resume
+            ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}`
+            : "";
 
-    if (moreNeeded && !nextExisting) {
-      const recentAnswered = allQuestions
-        .filter((q) => q.answeredAt && q.answerText)
-        .slice(-3)
-        .map((q) => ({ question: q.question, answer: q.answerText! }));
+          const scoreResult = await scoreInterviewAnswer({
+            question: question.question,
+            answer: body.answerText,
+            questionType: question.questionType,
+            level: interview.level,
+            persona: interview.persona,
+            language: interview.language,
+            resumeContext,
+          });
 
-      const newQuestions = await generateInterviewQuestions({
-        resumeData: resumeVersion?.parsedJson,
-        resumeText: resumeVersion?.extractedText ?? "",
-        level: interview.level,
-        type: interview.type,
-        language: interview.language,
-        persona: interview.persona,
-        count: 1,
-        history: recentAnswered,
+          await db.insert(questionScores).values({
+            questionId: body.questionId,
+            understanding: scoreResult.scores.understanding,
+            expression: scoreResult.scores.expression,
+            logic: scoreResult.scores.logic,
+            depth: scoreResult.scores.depth,
+            authenticity: scoreResult.scores.authenticity,
+            reflection: scoreResult.scores.reflection,
+            overall: scoreResult.scores.overall,
+          });
+
+          await db
+            .update(interviewQuestions)
+            .set({
+              feedbackJson: {
+                strengths: scoreResult.strengths,
+                improvements: scoreResult.improvements,
+                advice: scoreResult.advice,
+                deepDive: scoreResult.deepDive,
+              },
+            })
+            .where(eq(interviewQuestions.id, body.questionId));
+        } catch (e) {
+          console.error("Background scoring failed:", e);
+        }
       });
-
-      if (newQuestions.length > 0) {
-        const maxIndex = allQuestions.reduce(
-          (max, q) => Math.max(max, q.questionIndex),
-          0
-        );
-
-        await db.insert(interviewQuestions).values({
-          interviewId: id,
-          questionIndex: maxIndex + 1,
-          questionType: newQuestions[0].questionType,
-          topic: newQuestions[0].topic,
-          question: newQuestions[0].question,
-          tip: newQuestions[0].tip,
-        });
-      }
     }
 
-    const [nextQuestion] = await db
-      .select()
-      .from(interviewQuestions)
-      .where(
-        and(
-          eq(interviewQuestions.interviewId, id),
-          isNull(interviewQuestions.answeredAt)
-        )
-      )
-      .orderBy(asc(interviewQuestions.questionIndex))
-      .limit(1);
-
     return NextResponse.json({
-      score: scoreResult.scores,
-      feedback: {
-        strengths: scoreResult.strengths,
-        improvements: scoreResult.improvements,
-        advice: scoreResult.advice,
-      },
-      nextQuestion: nextQuestion ?? null,
       progress: {
         current: answeredCount,
         total: interview.questionCount,

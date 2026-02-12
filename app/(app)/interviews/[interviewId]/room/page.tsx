@@ -34,28 +34,6 @@ interface InterviewData {
   completedAt: string | null;
 }
 
-interface QuestionData {
-  id: string;
-  interviewId: string;
-  questionIndex: number;
-  questionType: string;
-  topic: string | null;
-  question: string;
-  tip: string | null;
-  answerText: string | null;
-  answeredAt: string | null;
-  score: {
-    understanding: number;
-    expression: number;
-    logic: number;
-    depth: number;
-    authenticity: number;
-    reflection: number;
-    overall: number;
-  } | null;
-  feedback: unknown;
-}
-
 interface ResumeSnapshotData {
   id: string;
   versionNumber: number;
@@ -67,8 +45,34 @@ interface ResumeSnapshotData {
 
 interface InterviewApiResponse {
   interview: InterviewData;
-  questions: QuestionData[];
   resumeSnapshot: ResumeSnapshotData | null;
+}
+
+interface CurrentQuestionData {
+  id: string;
+  questionIndex: number;
+  question: string;
+}
+
+interface CurrentQuestionApiResponse {
+  progress: {
+    current: number;
+    total: number;
+  };
+  question: CurrentQuestionData | null;
+}
+
+interface QuestionMetaData {
+  questionId: string;
+  topic: string | null;
+  tip: string | null;
+}
+
+interface NextQuestionApiResponse {
+  done?: boolean;
+  id?: string;
+  questionIndex?: number;
+  question?: string;
 }
 
 export default function InterviewRoomPage() {
@@ -76,10 +80,16 @@ export default function InterviewRoomPage() {
   const { interviewId } = useParams();
   const { t } = useTranslation();
   const [interview, setInterview] = useState<InterviewData | null>(null);
-  const [questions, setQuestions] = useState<QuestionData[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState<CurrentQuestionData | null>(
+    null,
+  );
+  const [questionMeta, setQuestionMeta] = useState<QuestionMetaData | null>(null);
+  const [answeredCount, setAnsweredCount] = useState(0);
   const [answerText, setAnswerText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingQuestion, setLoadingQuestion] = useState(true);
+  const [questionLoadError, setQuestionLoadError] = useState<string | null>(null);
   const [isTipExpanded, setIsTipExpanded] = useState(false);
   const [resumeContextOpen, setResumeContextOpen] = useState(false);
   const [resumeSnapshot, setResumeSnapshot] = useState<ResumeSnapshotData | null>(
@@ -89,25 +99,115 @@ export default function InterviewRoomPage() {
   const [autoCompletionTriggered, setAutoCompletionTriggered] = useState(false);
   const [openingReport, setOpeningReport] = useState(false);
   const completionTaskRef = useRef<Promise<void> | null>(null);
+  const questionRequestRef = useRef(0);
 
   const refreshInterview = useCallback(async () => {
-    const data = (await fetch(`/api/interviews/${interviewId}`).then((r) =>
-      r.json(),
+    const data = (await fetch(`/api/interviews/${interviewId}`, {
+      cache: "no-store",
+    }).then((r) => r.json(),
     )) as InterviewApiResponse;
     setInterview(data.interview);
-    setQuestions(data.questions);
     setResumeSnapshot(data.resumeSnapshot ?? null);
-    setLoading(false);
   }, [interviewId]);
 
-  useEffect(() => {
-    void refreshInterview();
-  }, [refreshInterview]);
+  const loadQuestionMeta = useCallback(
+    async (questionId: string, requestId: number) => {
+      const res = await fetch(
+        `/api/interviews/${interviewId}/current-question-meta?questionId=${questionId}`,
+        { cache: "no-store" },
+      );
 
-  const currentQ = questions.find((q) => !q.answeredAt);
-  const answeredCount = questions.filter((q) => q.answeredAt).length;
+      if (!res.ok || questionRequestRef.current !== requestId) {
+        return;
+      }
+
+      const data = (await res.json()) as QuestionMetaData;
+      if (questionRequestRef.current !== requestId) {
+        return;
+      }
+
+      setQuestionMeta(data);
+    },
+    [interviewId],
+  );
+
+  const loadCurrentQuestion = useCallback(async () => {
+    const requestId = ++questionRequestRef.current;
+    setLoadingQuestion(true);
+    setQuestionMeta(null);
+
+    try {
+      const res = await fetch(`/api/interviews/${interviewId}/current-question`, {
+        cache: "no-store",
+      });
+      if (!res.ok) {
+        return null;
+      }
+
+      const data = (await res.json()) as CurrentQuestionApiResponse;
+      if (questionRequestRef.current !== requestId) {
+        return data;
+      }
+
+      setAnsweredCount(data.progress.current);
+      setCurrentQuestion(data.question);
+      if (data.question || data.progress.current >= data.progress.total) {
+        setQuestionLoadError(null);
+      }
+      if (data.question) {
+        await loadQuestionMeta(data.question.id, requestId);
+      }
+
+      return data;
+    } finally {
+      if (questionRequestRef.current === requestId) {
+        setLoadingQuestion(false);
+      }
+    }
+  }, [interviewId, loadQuestionMeta]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrate = async () => {
+      setLoading(true);
+      try {
+        const [, currentData] = await Promise.all([
+          refreshInterview(),
+          loadCurrentQuestion(),
+        ]);
+        if (!currentData) {
+          setQuestionLoadError(t.interview.questionLoadFailed);
+          return;
+        }
+        if (!currentData.question && currentData.progress.current < currentData.progress.total) {
+          setQuestionLoadError(t.interview.questionLoadFailed);
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void hydrate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    loadCurrentQuestion,
+    refreshInterview,
+    t.interview.questionLoadFailed,
+  ]);
+
+  const totalQuestions = interview?.questionCount || 1;
   const percentComplete = Math.round(
-    (answeredCount / (interview?.questionCount || 1)) * 100,
+    (answeredCount / totalQuestions) * 100,
+  );
+  const displayQuestionNumber = Math.min(
+    currentQuestion?.questionIndex ?? answeredCount + 1,
+    interview?.questionCount ?? answeredCount + 1,
   );
   const levelLabels: Record<string, string> = {
     junior: t.interview.levels.Junior,
@@ -128,7 +228,7 @@ export default function InterviewRoomPage() {
 
   useEffect(() => {
     setIsTipExpanded(false);
-  }, [currentQ?.id]);
+  }, [currentQuestion?.id]);
 
   const ensureInterviewCompleted = useCallback(async () => {
     if (interview?.status === "completed") {
@@ -149,12 +249,7 @@ export default function InterviewRoomPage() {
         if (!completeRes.ok && completeRes.status !== 400) {
           throw new Error("Failed to complete interview");
         }
-        const refreshData = (await fetch(`/api/interviews/${interviewId}`).then((r) =>
-          r.json(),
-        )) as InterviewApiResponse;
-        setQuestions(refreshData.questions);
-        setInterview(refreshData.interview);
-        setResumeSnapshot(refreshData.resumeSnapshot ?? null);
+        await Promise.all([refreshInterview(), loadCurrentQuestion()]);
       } catch (error) {
         console.error(error);
       } finally {
@@ -165,7 +260,7 @@ export default function InterviewRoomPage() {
 
     completionTaskRef.current = task;
     await task;
-  }, [interview?.status, interviewId]);
+  }, [interview?.status, interviewId, loadCurrentQuestion, refreshInterview]);
 
   const sessionDuration = useMemo(() => {
     if (!interview?.startedAt) return "--";
@@ -203,17 +298,29 @@ export default function InterviewRoomPage() {
   const questionsSummary = `${answeredCount} / ${interview?.questionCount ?? answeredCount}`;
 
   useEffect(() => {
-    if (loading || currentQ || interview?.status === "completed" || autoCompletionTriggered) {
+    if (
+      loading ||
+      loadingQuestion ||
+      currentQuestion ||
+      interview?.status === "completed" ||
+      autoCompletionTriggered
+    ) {
+      return;
+    }
+    if (answeredCount < (interview?.questionCount ?? Infinity)) {
       return;
     }
     setAutoCompletionTriggered(true);
     void ensureInterviewCompleted();
   }, [
+    answeredCount,
     autoCompletionTriggered,
-    currentQ,
+    currentQuestion,
     ensureInterviewCompleted,
     interview?.status,
     loading,
+    loadingQuestion,
+    interview?.questionCount,
   ]);
 
   async function handleViewReport() {
@@ -224,58 +331,130 @@ export default function InterviewRoomPage() {
     setOpeningReport(false);
   }
 
-  async function handleSubmit() {
-    const normalizedAnswer = answerText.trim();
-    if (!currentQ || !normalizedAnswer) return;
+  async function streamNextQuestion() {
+    setLoadingQuestion(true);
+    setQuestionLoadError(null);
+    const res = await fetch(`/api/interviews/${interviewId}/next-question`, {
+      method: "POST",
+    });
+
+    if (!res.ok) {
+      const errorData = (await res.json().catch(() => null)) as
+        | { message?: string }
+        | null;
+      setLoadingQuestion(false);
+      setQuestionLoadError(
+        errorData?.message || t.interview.questionLoadFailed,
+      );
+      return;
+    }
+
+    const data = (await res.json().catch(() => null)) as
+      | NextQuestionApiResponse
+      | null;
+
+    if (!data) {
+      setLoadingQuestion(false);
+      setQuestionLoadError(t.interview.questionLoadFailed);
+      return;
+    }
+
+    if (data.done) {
+      setCurrentQuestion(null);
+      setQuestionMeta(null);
+      setLoadingQuestion(false);
+      return;
+    }
+
+    if (
+      !data.id ||
+      typeof data.question !== "string" ||
+      typeof data.questionIndex !== "number"
+    ) {
+      setLoadingQuestion(false);
+      setQuestionLoadError(t.interview.questionLoadFailed);
+      return;
+    }
+
+    const requestId = ++questionRequestRef.current;
+    setCurrentQuestion({
+      id: data.id,
+      questionIndex: data.questionIndex,
+      question: data.question,
+    });
+    setQuestionMeta(null);
+    setLoadingQuestion(false);
+    void loadQuestionMeta(data.id, requestId);
+  }
+
+  async function submitAnswer(questionId: string, answer: string) {
     setSubmitting(true);
+    setAnswerText("");
+    setQuestionLoadError(null);
+
     try {
-      await fetch(`/api/interviews/${interviewId}/answer`, {
+      const answerRes = await fetch(`/api/interviews/${interviewId}/answer`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionId: currentQ.id,
-          answerText: normalizedAnswer,
-        }),
+        body: JSON.stringify({ questionId, answerText: answer }),
       });
-      const refreshRes = await fetch(`/api/interviews/${interviewId}`);
-      const refreshData = await refreshRes.json();
-      setQuestions(refreshData.questions);
-      setInterview(refreshData.interview);
-      setResumeSnapshot(refreshData.resumeSnapshot ?? null);
-      setAnswerText("");
-      if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
+
+      if (!answerRes.ok) {
+        throw new Error("Failed to submit answer");
+      }
+
+      const answerData = await answerRes.json().catch(() => null);
+      if (answerData?.progress?.current !== undefined) {
+        setAnsweredCount(answerData.progress.current);
+      }
+      const isLastQuestion =
+        answerData?.progress &&
+        answerData.progress.current >= answerData.progress.total;
+
+      setCurrentQuestion(null);
+      setQuestionMeta(null);
+      setLoadingQuestion(true);
+
+      if (isLastQuestion) {
+        await Promise.all([refreshInterview(), loadCurrentQuestion()]);
         void ensureInterviewCompleted();
+      } else {
+        await streamNextQuestion();
       }
     } catch (e) {
       console.error(e);
+      await Promise.all([refreshInterview(), loadCurrentQuestion()]);
     } finally {
       setSubmitting(false);
     }
   }
 
+  async function handleSubmit() {
+    const normalizedAnswer = answerText.trim();
+    if (!currentQuestion || !normalizedAnswer) return;
+    await submitAnswer(currentQuestion.id, normalizedAnswer);
+  }
+
   async function handleSkip() {
-    if (!currentQ) return;
-    setSubmitting(true);
-    try {
-      await fetch(`/api/interviews/${interviewId}/answer`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: currentQ.id, answerText: "" }),
-      });
-      const refreshRes = await fetch(`/api/interviews/${interviewId}`);
-      const refreshData = await refreshRes.json();
-      setQuestions(refreshData.questions);
-      setInterview(refreshData.interview);
-      setResumeSnapshot(refreshData.resumeSnapshot ?? null);
-      setAnswerText("");
-      if (!refreshData.questions.find((q: QuestionData) => !q.answeredAt)) {
-        void ensureInterviewCompleted();
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setSubmitting(false);
+    if (!currentQuestion) return;
+    await submitAnswer(currentQuestion.id, "");
+  }
+
+  async function handleRetryLoadQuestion() {
+    setLoadingQuestion(true);
+    setQuestionLoadError(null);
+    const currentData = await loadCurrentQuestion();
+    if (!currentData) {
+      setQuestionLoadError(t.interview.questionLoadFailed);
+      return;
     }
+    if (currentData.question) {
+      return;
+    }
+    if (currentData.progress.current >= currentData.progress.total) {
+      return;
+    }
+    await streamNextQuestion();
   }
 
   if (loading) {
@@ -286,7 +465,11 @@ export default function InterviewRoomPage() {
     );
   }
 
-  if (!currentQ) {
+  const isInterviewDone =
+    !currentQuestion &&
+    answeredCount >= (interview?.questionCount ?? Infinity);
+
+  if (isInterviewDone && !loadingQuestion) {
     return (
       <InterviewCompletionView
         title={t.interview.completionTitle}
@@ -309,6 +492,32 @@ export default function InterviewRoomPage() {
     );
   }
 
+  if (!currentQuestion) {
+    if (questionLoadError) {
+      return (
+        <div className="h-screen flex items-center justify-center p-6">
+          <div className="w-full max-w-md rounded-xl border bg-card p-6 text-center space-y-4">
+            <p className="text-sm text-muted-foreground">{questionLoadError}</p>
+            <div className="flex items-center justify-center gap-2">
+              <Button onClick={handleRetryLoadQuestion} disabled={loadingQuestion}>
+                {t.interview.retryLoadQuestion}
+              </Button>
+              <Button variant="outline" onClick={() => router.push("/dashboard")}>
+                {t.interview.returnDashboard}
+              </Button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <Loader2 className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
       {/* Header */}
@@ -323,9 +532,7 @@ export default function InterviewRoomPage() {
               <h1 className="text-base font-semibold leading-tight">
                 {t.interview.session}
               </h1>
-              <p className="text-sm text-muted-foreground">
-                {currentQ?.topic || "Interview"}
-              </p>
+              <p className="text-sm text-muted-foreground">{questionMeta?.topic ?? ""}</p>
             </div>
           </div>
 
@@ -334,7 +541,7 @@ export default function InterviewRoomPage() {
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <span className="font-semibold tracking-wide">
                 {t.interview.questionOf
-                  .replace("{current}", String(answeredCount + 1))
+                  .replace("{current}", String(displayQuestionNumber))
                   .replace("{total}", String(interview?.questionCount))}
               </span>
               <span>•</span>
@@ -406,14 +613,19 @@ export default function InterviewRoomPage() {
 
             {/* Question Bubble */}
             <div className="bg-card rounded-xl rounded-tl-none shadow-sm border p-5">
-              <p className="text-sm leading-relaxed">{currentQ?.question}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                {currentQuestion?.question}
+                {loadingQuestion && !currentQuestion && (
+                  <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                )}
+              </p>
             </div>
 
             {/* Spacer */}
             <div className="flex-1" />
 
             {/* Tip Box */}
-            {currentQ?.tip && (
+            {questionMeta?.tip && (
               <div className="overflow-hidden rounded-xl border border-blue-200 bg-blue-50/50 transition-colors hover:bg-blue-50 dark:border-blue-800 dark:bg-blue-950/20 dark:hover:bg-blue-950/30">
                 <button
                   type="button"
@@ -451,7 +663,7 @@ export default function InterviewRoomPage() {
                 >
                   <div className="overflow-hidden">
                     <div className="px-4 pb-4 pt-0 text-sm leading-relaxed text-blue-700 dark:text-blue-300">
-                      <div className="pl-11">{currentQ.tip}</div>
+                      <div className="pl-11">{questionMeta.tip}</div>
                     </div>
                   </div>
                 </div>
@@ -465,7 +677,8 @@ export default function InterviewRoomPage() {
           helperText={t.interview.markdownSupported}
           answerText={answerText}
           submitting={submitting}
-          resetKey={currentQ.id}
+          disabled={loadingQuestion || !currentQuestion}
+          resetKey={currentQuestion?.id ?? "pending"}
           skipLabel={t.interview.skipQuestion}
           audioLabel={t.interview.answerWithAudio}
           submitLabel={t.interview.submitAnswer}
@@ -479,7 +692,7 @@ export default function InterviewRoomPage() {
         open={resumeContextOpen}
         onOpenChange={setResumeContextOpen}
         snapshot={resumeSnapshot}
-        currentQuestion={currentQ.question}
+        currentQuestion={currentQuestion?.question ?? ""}
       />
     </div>
   );
