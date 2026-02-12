@@ -116,3 +116,27 @@ export const questionScores = pgTable("question_scores", {
   overall: integer("overall").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const deepDiveSessions = pgTable("deep_dive_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => interviewQuestions.id, { onDelete: "cascade" }),
+  mode: text("mode").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.questionId, table.mode),
+]);
+
+export const deepDiveMessages = pgTable("deep_dive_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => deepDiveSessions.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  content: text("content"),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

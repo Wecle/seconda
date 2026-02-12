@@ -4,6 +4,7 @@ import { interviews, interviewQuestions, questionScores, resumes, resumeVersions
 import { and, eq, asc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
+import { normalizeDeepDive } from "@/lib/interview/normalize";
 
 export async function GET(
   _request: NextRequest,
@@ -47,10 +48,16 @@ export async function GET(
           .from(questionScores)
           .where(eq(questionScores.questionId, q.id));
 
+        const feedback = q.feedbackJson as Record<string, unknown> | null;
         return {
           ...q,
           score: score ?? null,
-          feedback: q.feedbackJson ?? null,
+          feedback: feedback
+            ? {
+                ...feedback,
+                deepDive: normalizeDeepDive(feedback?.deepDive),
+              }
+            : null,
         };
       })
     );

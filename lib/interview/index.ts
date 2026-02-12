@@ -4,9 +4,15 @@ import {
   generatedQuestionsSchema,
   scoreResultSchema,
   interviewReportSchema,
+  followUpRoundSchema,
+  coachStartSchema,
+  coachEvaluateSchema,
   type GeneratedQuestion,
   type ScoreResult,
   type InterviewReport,
+  type FollowUpRound,
+  type CoachStart,
+  type CoachEvaluate,
 } from "./schemas";
 
 export async function generateInterviewQuestions(params: {
@@ -124,6 +130,94 @@ ${questionsDetail}
     model: chatLanguageModel,
     schema: interviewReportSchema,
     system: "你是专业的面试教练。请基于候选人的所有面试回答和评分，生成一份全面的面试评估报告。报告应包含总分（0-100）、六维能力平均分、核心优势、需要改进的关键领域、总结和下一步建议。",
+    prompt,
+  });
+
+  return object;
+}
+
+export async function generateFollowUp(params: {
+  question: string;
+  originalAnswer: string;
+  improvements: string[];
+  history: { role: "assistant" | "user"; content: string }[];
+  language: string;
+}): Promise<FollowUpRound> {
+  let prompt = `原始面试问题：${params.question}
+候选人原始回答：${params.originalAnswer}
+
+初始反馈中指出的不足：
+${params.improvements.map((imp, i) => `${i + 1}. ${imp}`).join("\n")}`;
+
+  if (params.history.length > 0) {
+    prompt += `\n\n追问对话记录：\n${params.history.map((h) => `${h.role === "assistant" ? "面试官" : "候选人"}：${h.content}`).join("\n")}`;
+  }
+
+  prompt += `\n\n基于候选人回答中的不足，提出1个具体追问。不要一次问多个问题。给出简短点评（1-2句）。`;
+
+  if (params.language !== "zh") {
+    prompt += `\n\n请用${params.language}语言回复。`;
+  }
+
+  const { object } = await generateObject({
+    model: chatLanguageModel,
+    schema: followUpRoundSchema,
+    system: "你正在通过追问验证候选人的真实理解深度。",
+    prompt,
+  });
+
+  return object;
+}
+
+export async function generateCoachContent(params: {
+  question: string;
+  originalAnswer: string;
+  feedback: { strengths: string[]; improvements: string[] };
+  language: string;
+}): Promise<CoachStart> {
+  let prompt = `原始面试问题：${params.question}
+候选人原始回答：${params.originalAnswer}
+
+初始反馈：
+- 优点：${params.feedback.strengths.join("；")}
+- 改进建议：${params.feedback.improvements.join("；")}
+
+输出顺序：1. 知识点讲解 2. 常见误区 3. 一个练习问题。等待用户回答后再评分。`;
+
+  if (params.language !== "zh") {
+    prompt += `\n\n请用${params.language}语言回复。`;
+  }
+
+  const { object } = await generateObject({
+    model: chatLanguageModel,
+    schema: coachStartSchema,
+    system: "你是面试教练，而非面试官。",
+    prompt,
+  });
+
+  return object;
+}
+
+export async function evaluateCoachAnswer(params: {
+  originalQuestion: string;
+  practiceQuestion: string;
+  answer: string;
+  language: string;
+}): Promise<CoachEvaluate> {
+  let prompt = `原始面试问题（提供上下文）：${params.originalQuestion}
+练习问题：${params.practiceQuestion}
+候选人回答：${params.answer}
+
+请根据六个维度评分（0-10分），给出简短反馈和改进建议。`;
+
+  if (params.language !== "zh") {
+    prompt += `\n\n请用${params.language}语言回复。`;
+  }
+
+  const { object } = await generateObject({
+    model: chatLanguageModel,
+    schema: coachEvaluateSchema,
+    system: "你是面试教练。请对候选人的练习回答进行评分和点评。",
     prompt,
   });
 
