@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface InterviewHistoryPanelProps {
-  selectedResumeTitle?: string;
   selectedVersion: ResumeVersion | null;
 }
 
@@ -52,7 +51,6 @@ function formatDurationLabel(
 }
 
 export function InterviewHistoryPanel({
-  selectedResumeTitle,
   selectedVersion,
 }: InterviewHistoryPanelProps) {
   const { locale, t } = useTranslation();

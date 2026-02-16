@@ -25,6 +25,10 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import {
+  UserAvatarMenu,
+  type UserAvatarMenuUser,
+} from "@/components/auth/user-avatar-menu"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { Markdown } from "@/components/ui/markdown"
@@ -110,6 +114,7 @@ export default function QuestionDeepDivePage() {
   )
   const [activeTab, setActiveTab] = useState<"followup" | "coach">("followup")
   const [data, setData] = useState<InterviewApiResponse | null>(null)
+  const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(null)
   const [loading, setLoading] = useState(true)
 
   const [messages, setMessages] = useState<DeepDiveMessage[]>([])
@@ -127,6 +132,20 @@ export default function QuestionDeepDivePage() {
         setLoading(false)
       })
   }, [interviewId])
+
+  useEffect(() => {
+    let mounted = true
+    fetch("/api/auth/session")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((session) => {
+        if (!mounted || !session) return
+        setCurrentUser(session.user ?? null)
+      })
+      .catch(() => {
+        if (mounted) setCurrentUser(null)
+      })
+    return () => { mounted = false }
+  }, [])
 
   const questions = data?.questions || []
   const questionIndex = parseInt(questionIdParam as string)
@@ -255,12 +274,26 @@ export default function QuestionDeepDivePage() {
           </nav>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon-sm">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => router.push("/dashboard")}
+            aria-label={t.common.settings}
+          >
             <Settings className="size-4" />
           </Button>
-          <Avatar size="sm">
-            <AvatarFallback>JD</AvatarFallback>
-          </Avatar>
+          {currentUser ? (
+            <UserAvatarMenu
+              user={currentUser}
+              avatarSize="sm"
+              panelAlign="right"
+              callbackUrl="/"
+            />
+          ) : (
+            <Avatar size="sm">
+              <AvatarFallback>U</AvatarFallback>
+            </Avatar>
+          )}
         </div>
       </header>
 
@@ -302,7 +335,9 @@ export default function QuestionDeepDivePage() {
               <div className="absolute left-[11px] top-7 bottom-0 w-px bg-border" />
               <div className="relative flex items-center gap-2">
                 <Avatar size="sm">
-                  <AvatarFallback className="text-[10px]">JD</AvatarFallback>
+                  <AvatarFallback className="text-[10px]">
+                    {currentUser?.name?.charAt(0)?.toUpperCase() ?? "U"}
+                  </AvatarFallback>
                 </Avatar>
                 <span className="text-xs font-medium">{t.deepDive.yourAnswer}</span>
                 <div className="ml-auto flex items-center gap-1 text-muted-foreground">

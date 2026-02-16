@@ -485,7 +485,6 @@ export default function DashboardPage() {
 
         {showInterviewHistoryPanel ? (
           <InterviewHistoryPanel
-            selectedResumeTitle={selectedResume?.title}
             selectedVersion={selectedVersion ?? null}
           />
         ) : null}
