@@ -1,4 +1,4 @@
-import { generateObject } from "ai";
+import { generateText, Output } from "ai";
 import { chatLanguageModel } from "@/lib/ai/chat-provider";
 import {
   generatedQuestionsSchema,
@@ -49,14 +49,14 @@ ${truncatedText}
     prompt += `\n\n请用${params.language}语言生成面试问题。`;
   }
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: generatedQuestionsSchema,
+    output: Output.object({ schema: generatedQuestionsSchema }),
     system: "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。",
     prompt,
   });
 
-  return object.questions;
+  return output!.questions;
 }
 
 export async function scoreInterviewAnswer(params: {
@@ -77,14 +77,14 @@ export async function scoreInterviewAnswer(params: {
 语言：${params.language}
 简历摘要：${params.resumeContext}`;
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: scoreResultSchema,
+    output: Output.object({ schema: scoreResultSchema }),
     system: "你是专业的面试评估专家。请根据以下六个维度对候选人的回答进行评分（0-10分）：理解力(Understanding)、表达力(Expression)、逻辑性(Logic)、深度(Depth)、真实性(Authenticity)、反思力(Reflection)。同时提供优点、改进建议和深度分析。评分必须客观公正，基于回答内容本身。",
     prompt,
   });
 
-  return object;
+  return output!;
 }
 
 export async function generateInterviewReport(params: {
@@ -126,14 +126,14 @@ ${questionsDetail}
 
 候选人简历摘要：${params.resumeSummary}`;
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: interviewReportSchema,
+    output: Output.object({ schema: interviewReportSchema }),
     system: "你是专业的面试教练。请基于候选人的所有面试回答和评分，生成一份全面的面试评估报告。报告应包含总分（0-100）、六维能力平均分、核心优势、需要改进的关键领域、总结和下一步建议。",
     prompt,
   });
 
-  return object;
+  return output!;
 }
 
 export async function generateFollowUp(params: {
@@ -159,14 +159,14 @@ ${params.improvements.map((imp, i) => `${i + 1}. ${imp}`).join("\n")}`;
     prompt += `\n\n请用${params.language}语言回复。`;
   }
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: followUpRoundSchema,
+    output: Output.object({ schema: followUpRoundSchema }),
     system: "你正在通过追问验证候选人的真实理解深度。",
     prompt,
   });
 
-  return object;
+  return output!;
 }
 
 export async function generateCoachContent(params: {
@@ -188,14 +188,14 @@ export async function generateCoachContent(params: {
     prompt += `\n\n请用${params.language}语言回复。`;
   }
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: coachStartSchema,
+    output: Output.object({ schema: coachStartSchema }),
     system: "你是面试教练，而非面试官。",
     prompt,
   });
 
-  return object;
+  return output!;
 }
 
 export async function evaluateCoachAnswer(params: {
@@ -214,12 +214,12 @@ export async function evaluateCoachAnswer(params: {
     prompt += `\n\n请用${params.language}语言回复。`;
   }
 
-  const { object } = await generateObject({
+  const { output } = await generateText({
     model: chatLanguageModel,
-    schema: coachEvaluateSchema,
+    output: Output.object({ schema: coachEvaluateSchema }),
     system: "你是面试教练。请对候选人的练习回答进行评分和点评。",
     prompt,
   });
 
-  return object;
+  return output!;
 }

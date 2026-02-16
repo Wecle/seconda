@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { streamObject } from "ai";
+import { streamText, Output } from "ai";
 import { db } from "@/lib/db";
 import {
   interviews,
@@ -258,21 +258,21 @@ ${truncatedText}
             allQuestions.reduce((max, q) => Math.max(max, q.questionIndex), 0) +
             1;
 
-          const generation = streamObject({
+          const generation = streamText({
             model: chatLanguageModel,
-            schema: generatedQuestionSchema,
             maxRetries: 2,
             abortSignal: request.signal,
             system:
               "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。只生成一个问题。输出必须是严格JSON对象，且只能包含 questionType、topic、question、tip 这4个字段。不要使用Markdown，不要输出代码块，不要添加解释文本。",
             prompt,
+            output: Output.object({ schema: generatedQuestionSchema }),
           });
 
           let streamedQuestion = "";
           let streamedTopic: string | null = null;
           let streamedTip: string | null = null;
 
-          for await (const partial of generation.partialObjectStream) {
+          for await (const partial of generation.partialOutputStream) {
             const nextQuestion: string =
               typeof partial.question === "string"
                 ? partial.question
@@ -303,8 +303,8 @@ ${truncatedText}
             });
           }
 
-          const generated = await generation.object;
-          const question = generatedQuestionSchema.parse(generated);
+          const generated = await generation.output;
+          const question = generatedQuestionSchema.parse(generated!);
 
           if (
             question.question !== streamedQuestion ||

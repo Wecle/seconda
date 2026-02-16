@@ -35,32 +35,26 @@ export async function GET(
       );
     }
 
-    const questions = await db
-      .select()
+    const rows = await db
+      .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
+      .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
       .where(eq(interviewQuestions.interviewId, id))
       .orderBy(asc(interviewQuestions.questionIndex));
 
-    const questionsWithScores = await Promise.all(
-      questions.map(async (q) => {
-        const [score] = await db
-          .select()
-          .from(questionScores)
-          .where(eq(questionScores.questionId, q.id));
-
-        const feedback = q.feedbackJson as Record<string, unknown> | null;
-        return {
-          ...q,
-          score: score ?? null,
-          feedback: feedback
-            ? {
-                ...feedback,
-                deepDive: normalizeDeepDive(feedback?.deepDive),
-              }
-            : null,
-        };
-      })
-    );
+    const questionsWithScores = rows.map(({ question, score }) => {
+      const feedback = question.feedbackJson as Record<string, unknown> | null;
+      return {
+        ...question,
+        score: score ?? null,
+        feedback: feedback
+          ? {
+              ...feedback,
+              deepDive: normalizeDeepDive(feedback?.deepDive),
+            }
+          : null,
+      };
+    });
 
     return NextResponse.json({
       interview,

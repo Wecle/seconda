@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resumes, resumeVersions, interviews } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, inArray } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeInterviewConfig } from "@/lib/interview/settings";
 import { getCurrentUserId } from "@/lib/auth/session";
@@ -19,52 +19,67 @@ export async function GET() {
       .where(eq(resumes.userId, userId))
       .orderBy(desc(resumes.createdAt));
 
-    const result = await Promise.all(
-      allResumes.map(async (resume) => {
-        const versions = await db
+    const resumeIds = allResumes.map((r) => r.id);
+    if (resumeIds.length === 0) return NextResponse.json([]);
+
+    const allVersions = await db
+      .select()
+      .from(resumeVersions)
+      .where(inArray(resumeVersions.resumeId, resumeIds))
+      .orderBy(desc(resumeVersions.versionNumber));
+
+    const versionIds = allVersions.map((v) => v.id);
+
+    const allInterviews = versionIds.length
+      ? await db
           .select()
-          .from(resumeVersions)
-          .where(eq(resumeVersions.resumeId, resume.id))
-          .orderBy(desc(resumeVersions.versionNumber));
+          .from(interviews)
+          .where(inArray(interviews.resumeVersionId, versionIds))
+          .orderBy(desc(interviews.createdAt))
+      : [];
 
-        const versionsWithInterviews = await Promise.all(
-          versions.map(async (v) => {
-            const versionInterviews = await db
-              .select()
-              .from(interviews)
-              .where(eq(interviews.resumeVersionId, v.id))
-              .orderBy(desc(interviews.createdAt));
+    const interviewsByVersionId = new Map<string, typeof allInterviews>();
+    for (const i of allInterviews) {
+      const arr = interviewsByVersionId.get(i.resumeVersionId) ?? [];
+      arr.push(i);
+      interviewsByVersionId.set(i.resumeVersionId, arr);
+    }
 
-            return {
-              id: v.id,
-              versionNumber: v.versionNumber,
-              originalFilename: v.originalFilename,
-              originalFileUrl: v.storedPath,
-              parseStatus: v.parseStatus,
-              parseError: v.parseError,
-              parsedData: (v.parsedJson as ParsedResume) ?? null,
-              createdAt: v.createdAt,
-              interviews: versionInterviews.map((i) => ({
-                id: i.id,
-                status: i.status,
-                type: i.type,
-                level: i.level,
-                overallScore: i.overallScore,
-                questionCount: i.questionCount,
-                createdAt: i.createdAt,
-                completedAt: i.completedAt,
-              })),
-            };
-          })
-        );
+    const versionsByResumeId = new Map<string, typeof allVersions>();
+    for (const v of allVersions) {
+      const arr = versionsByResumeId.get(v.resumeId) ?? [];
+      arr.push(v);
+      versionsByResumeId.set(v.resumeId, arr);
+    }
 
-        return {
-          ...resume,
-          interviewSettings: normalizeInterviewConfig(resume.interviewSettings),
-          versions: versionsWithInterviews,
-        };
-      })
-    );
+    const result = allResumes.map((resume) => {
+      const versions = (versionsByResumeId.get(resume.id) ?? []).map((v) => ({
+        id: v.id,
+        versionNumber: v.versionNumber,
+        originalFilename: v.originalFilename,
+        originalFileUrl: v.storedPath,
+        parseStatus: v.parseStatus,
+        parseError: v.parseError,
+        parsedData: (v.parsedJson as ParsedResume) ?? null,
+        createdAt: v.createdAt,
+        interviews: (interviewsByVersionId.get(v.id) ?? []).map((i) => ({
+          id: i.id,
+          status: i.status,
+          type: i.type,
+          level: i.level,
+          overallScore: i.overallScore,
+          questionCount: i.questionCount,
+          createdAt: i.createdAt,
+          completedAt: i.completedAt,
+        })),
+      }));
+
+      return {
+        ...resume,
+        interviewSettings: normalizeInterviewConfig(resume.interviewSettings),
+        versions,
+      };
+    });
 
     return NextResponse.json(result);
   } catch (error) {
