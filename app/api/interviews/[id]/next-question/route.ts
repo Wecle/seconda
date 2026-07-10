@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { streamText, Output } from "ai";
 import { db } from "@/lib/db";
 import {
   interviews,
@@ -9,7 +8,12 @@ import {
 } from "@/lib/db/schema";
 import { and, eq, asc, isNull, isNotNull } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { chatLanguageModel } from "@/lib/ai/chat-provider";
+import { streamStructured } from "@/lib/ai/generate-structured";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
+import {
+  isUsableQuestionPartial,
+  validateGeneratedQuestion,
+} from "@/lib/ai/next-question-contract";
 import { generatedQuestionSchema } from "@/lib/interview/schemas";
 
 export const maxDuration = 60;
@@ -42,82 +46,12 @@ function encodeChunk(chunk: NextQuestionStreamChunk) {
   return streamEncoder.encode(`${JSON.stringify(chunk)}\n`);
 }
 
-function getNestedStatusCode(error: unknown): number | null {
-  if (!error || typeof error !== "object") return null;
-
-  const maybeError = error as {
-    statusCode?: unknown;
-    lastError?: unknown;
-    cause?: unknown;
-  };
-
-  if (typeof maybeError.statusCode === "number") {
-    return maybeError.statusCode;
-  }
-
-  return (
-    getNestedStatusCode(maybeError.lastError) ??
-    getNestedStatusCode(maybeError.cause)
-  );
-}
-
-function getNestedMessage(error: unknown): string {
-  if (!error || typeof error !== "object") return "";
-
-  const maybeError = error as {
-    message?: unknown;
-    responseBody?: unknown;
-    lastError?: unknown;
-    cause?: unknown;
-  };
-
-  if (typeof maybeError.responseBody === "string") {
-    try {
-      const parsed = JSON.parse(maybeError.responseBody) as {
-        errors?: { message?: string };
-      };
-      if (typeof parsed.errors?.message === "string") {
-        return parsed.errors.message;
-      }
-    } catch {}
-  }
-
-  if (typeof maybeError.message === "string") {
-    return maybeError.message;
-  }
-
-  return (
-    getNestedMessage(maybeError.lastError) ||
-    getNestedMessage(maybeError.cause) ||
-    ""
-  );
-}
-
 function isRateLimitError(error: unknown): boolean {
-  if (getNestedStatusCode(error) === 429) {
-    return true;
-  }
-
-  const message = getNestedMessage(error).toLowerCase();
-  return (
-    message.includes("too many requests") ||
-    message.includes("quota") ||
-    message.includes("rate limit") ||
-    message.includes("exceeded")
-  );
+  return sanitizeAIError(error).status === 429;
 }
 
 function isObjectGenerationError(error: unknown): boolean {
-  const message = getNestedMessage(error).toLowerCase();
-
-  return (
-    message.includes("no object generated") ||
-    message.includes("ai_noobjectgeneratederror") ||
-    message.includes("no output generated") ||
-    message.includes("ai_nooutputgeneratederror") ||
-    message.includes("json parsing failed") ||
-    message.includes("could not parse the response")
-  );
+  return sanitizeAIError(error).category === "structured-output";
 }
 
 export async function POST(
@@ -258,19 +192,24 @@ ${truncatedText}
             allQuestions.reduce((max, q) => Math.max(max, q.questionIndex), 0) +
             1;
 
-          const generation = streamText({
-            model: chatLanguageModel,
-            maxRetries: 2,
+          let streamedQuestion = "";
+          let streamedTopic: string | null = null;
+          let streamedTip: string | null = null;
+
+          const generation = streamStructured({
+            task: "question.generate",
+            schema: generatedQuestionSchema,
             abortSignal: request.signal,
             system:
               "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。只生成一个问题。输出必须是严格JSON对象，且只能包含 questionType、topic、question、tip 这4个字段。不要使用Markdown，不要输出代码块，不要添加解释文本。",
             prompt,
-            output: Output.object({ schema: generatedQuestionSchema }),
+            isUsablePartial: (partial) =>
+              isUsableQuestionPartial(
+                { question: streamedQuestion, topic: streamedTopic ?? undefined, tip: streamedTip ?? undefined },
+                partial,
+              ),
+            validateFinal: validateGeneratedQuestion,
           });
-
-          let streamedQuestion = "";
-          let streamedTopic: string | null = null;
-          let streamedTip: string | null = null;
 
           for await (const partial of generation.partialOutputStream) {
             const nextQuestion: string =
@@ -357,7 +296,7 @@ ${truncatedText}
             return;
           }
 
-          console.error("Error streaming next question:", error);
+          console.error("Error streaming next question:", sanitizeAIError(error));
           send({
             type: "error",
             message: "题目生成失败，请稍后重试。",
@@ -397,7 +336,7 @@ ${truncatedText}
       );
     }
 
-    console.error("Error streaming next question:", error);
+    console.error("Error streaming next question:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Failed to stream next question" },
       { status: 500 }

@@ -12,6 +12,7 @@ import { eq, and, isNull, isNotNull } from "drizzle-orm";
 import { scoreInterviewAnswer } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 const answerSchema = z.object({
   questionId: z.string().uuid(),
@@ -146,7 +147,7 @@ export async function POST(
             })
             .where(eq(interviewQuestions.id, body.questionId));
         } catch (e) {
-          console.error("Background scoring failed:", e);
+          console.error("Background scoring failed:", sanitizeAIError(e));
         }
       });
     }

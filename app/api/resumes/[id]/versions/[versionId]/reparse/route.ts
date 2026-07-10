@@ -5,6 +5,7 @@ import { resumes, resumeVersions } from "@/lib/db/schema";
 import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -128,7 +129,7 @@ export async function POST(
         .update(resumeVersions)
         .set({
           parseStatus: "failed",
-          parseError: `AI parsing failed: ${formatError(aiError)}`,
+          parseError: JSON.stringify(sanitizeAIError(aiError)),
         })
         .where(eq(resumeVersions.id, versionId));
 
@@ -141,7 +142,7 @@ export async function POST(
       );
     }
   } catch (error) {
-    console.error("Error re-parsing resume:", error);
+    console.error("Error re-parsing resume:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Failed to re-parse resume" },
       { status: 500 },

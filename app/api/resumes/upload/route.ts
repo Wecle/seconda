@@ -7,6 +7,7 @@ import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { randomUUID } from "crypto";
 import { put } from "@vercel/blob";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 export async function POST(request: NextRequest) {
   try {
@@ -130,7 +131,7 @@ export async function POST(request: NextRequest) {
         .update(resumeVersions)
         .set({
           parseStatus: "failed",
-          parseError: `AI parsing failed: ${aiError instanceof Error ? aiError.message : String(aiError)}`,
+          parseError: JSON.stringify(sanitizeAIError(aiError)),
         })
         .where(eq(resumeVersions.id, versionId));
 
@@ -143,7 +144,7 @@ export async function POST(request: NextRequest) {
       });
     }
   } catch (error) {
-    console.error("Upload error:", error);
+    console.error("Upload error:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
