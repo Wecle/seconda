@@ -150,9 +150,9 @@ export const en = {
     pleaseTryAgain: "Please try again.",
     parseHints: {
       invalidKey:
-        "OPENAI_API_KEY is invalid. Please update .env and restart the service.",
+        "AI Gateway authentication failed. Please update AI_GATEWAY_API_KEY and restart the service.",
       notFound:
-        "API returned Not Found. Please check BASE_MODEL and BASE_URL.",
+        "Configured AI model is unavailable. Please check the AI_MODEL settings and approved model registry.",
       rateLimit:
         "API rate limit triggered. Please retry later or reduce request frequency.",
       textExtraction:
