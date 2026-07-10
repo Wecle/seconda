@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/ai/*.test.ts",
-    "test:ai:contract": "tsx scripts/ai-live-contract.ts",
+    "test:ai:contract": "tsx --env-file=.env scripts/ai-live-contract.ts",
     "db:migrate": "tsx --env-file=.env lib/db/migrate.ts"
   },
   "dependencies": {
