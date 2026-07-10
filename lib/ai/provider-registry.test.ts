@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { generateText, Output } from "ai";
 import { z } from "zod";
-import { createProviderModel } from "./provider-registry";
+import {
+  applyStructuredOutputInstructions,
+  createProviderModel,
+} from "./provider-registry";
 
 const schema = z.object({ value: z.string() });
 
@@ -85,4 +88,24 @@ test("rejects unsupported provider models before any request", () => {
     () => createProviderModel({ model: "unknown/model", credentialTier: "fast", apiKey: "key" }),
     /supported provider prefix/,
   );
+});
+
+test("adds a static JSON Schema instruction only for the DeepSeek JSON Object adapter", () => {
+  const deepseek = createProviderModel({
+    model: "deepseek/deepseek-v4-flash",
+    credentialTier: "fast",
+    apiKey: "fixture",
+  });
+  const openai = createProviderModel({
+    model: "openai/gpt-5-mini",
+    credentialTier: "fast",
+    apiKey: "fixture",
+  });
+  const system = "Business system instruction";
+
+  const deepseekSystem = applyStructuredOutputInstructions(system, schema, deepseek.metadata);
+  assert.match(deepseekSystem, /Business system instruction/);
+  assert.match(deepseekSystem, /JSON Schema/);
+  assert.match(deepseekSystem, /"value"/);
+  assert.equal(applyStructuredOutputInstructions(system, schema, openai.metadata), system);
 });

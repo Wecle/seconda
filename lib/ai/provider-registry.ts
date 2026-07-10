@@ -1,6 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
+import { z } from "zod";
 import {
   parseModelIdentifier,
   type AIModelTier,
@@ -29,6 +30,16 @@ type ProviderRegistryInput = {
 };
 
 const DEEPSEEK_JSON_INSTRUCTION = "请只返回合法 JSON 对象。";
+
+export function applyStructuredOutputInstructions<TSchema extends z.ZodType>(
+  system: string,
+  schema: TSchema,
+  metadata: ProviderAdapterMetadata,
+) {
+  if (!metadata.jsonInstruction) return system;
+
+  return `${system}\n\n${metadata.jsonInstruction} 输出必须严格符合以下 JSON Schema；填充所有必填字段，不要添加 Schema 以外的字段：\n${JSON.stringify(z.toJSONSchema(schema))}`;
+}
 
 function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" | "zhipu") {
   const { modelId } = parseModelIdentifier(input.model);
