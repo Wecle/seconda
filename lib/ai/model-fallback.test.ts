@@ -90,6 +90,19 @@ test("retries a transient failure once on the same model", async () => {
   ]);
 });
 
+test("preserves repair context when a repair request has a transient failure", async () => {
+  const runner = createRunner({
+    results: [new Error("invalid"), new Error("temporary"), "fixed"],
+    classify: { invalid: "repair", temporary: "transient" },
+  });
+  assert.equal(await runner.run(), "fixed");
+  assert.deepEqual(runner.attempts, [
+    { model: "first/model", repair: false },
+    { model: "first/model", repair: true },
+    { model: "first/model", repair: true },
+  ]);
+});
+
 test("advances after a second transient failure", async () => {
   const runner = createRunner({
     results: [new Error("temporary"), new Error("temporary"), "ok"],
