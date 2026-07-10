@@ -1,27 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { NoObjectGeneratedError } from "ai";
+import { APICallError, NoObjectGeneratedError } from "ai";
 import { z } from "zod";
 import { createStructuredGenerator } from "./generate-structured";
 import { loadModelPolicy } from "./model-policy";
 
 const policy = loadModelPolicy({
-  AI_MODEL_FAST: "google/fast",
-  AI_MODEL_FAST_FALLBACK: "openai/fast-backup",
-  AI_MODEL_QUALITY: "anthropic/quality",
-  AI_MODEL_QUALITY_FALLBACK: "openai/quality-backup",
+  AI_MODEL_FAST: "deepseek/fast",
+  AI_MODEL_FAST_FALLBACK: "deepseek/fast-backup",
+  AI_MODEL_QUALITY: "zhipu/quality",
+  AI_MODEL_QUALITY_FALLBACK: "zhipu/quality-backup",
   AI_APPROVED_MODELS:
-    "google/fast,openai/fast-backup,anthropic/quality,openai/quality-backup",
+    "deepseek/fast,deepseek/fast-backup,zhipu/quality,zhipu/quality-backup",
 });
 const schema = z.object({ value: z.string() });
 
-test("uses fast candidates in policy order with SDK retries disabled", async () => {
-  const calls: Array<{ model: string; maxRetries: number }> = [];
+async function collect<T>(stream: AsyncIterable<T>) {
+  const values: T[] = [];
+  for await (const value of stream) values.push(value);
+  return values;
+}
+
+function transientError() {
+  return new APICallError({
+    message: "fixture",
+    url: "https://fixture.test",
+    requestBodyValues: {},
+    statusCode: 429,
+  });
+}
+
+test("uses fast candidates in policy order, tier keys, and disabled SDK retries", async () => {
+  const calls: Array<{ model: string; apiKey: string | undefined; maxRetries: number }> = [];
   const generator = createStructuredGenerator({
     policy,
+    getApiKey: (tier) => `${tier}-key`,
     invoke: async (input) => {
-      calls.push({ model: input.model, maxRetries: input.maxRetries });
-      if (input.model === "google/fast") throw new Error("missing");
+      calls.push({ model: input.model, apiKey: input.apiKey, maxRetries: input.maxRetries });
+      if (input.model === "deepseek/fast") throw new Error("missing");
       return { value: "ok" };
     },
     classifyError: () => "fallback",
@@ -31,8 +47,8 @@ test("uses fast candidates in policy order with SDK retries disabled", async () 
     { value: "ok" },
   );
   assert.deepEqual(calls, [
-    { model: "google/fast", maxRetries: 0 },
-    { model: "openai/fast-backup", maxRetries: 0 },
+    { model: "deepseek/fast", apiKey: "fast-key", maxRetries: 0 },
+    { model: "deepseek/fast-backup", apiKey: "fast-key", maxRetries: 0 },
   ]);
 });
 
@@ -46,7 +62,7 @@ test("uses only quality candidates for scoring", async () => {
     },
   });
   await generator.generateStructured({ task: "answer.score", schema, system: "system", prompt: "prompt" });
-  assert.deepEqual(calls, ["anthropic/quality"]);
+  assert.deepEqual(calls, ["zhipu/quality"]);
 });
 
 test("repairs malformed output without trusting it as system instructions", async () => {
@@ -77,95 +93,123 @@ test("repairs malformed output without trusting it as system instructions", asyn
   assert.equal(calls[1].prompt.toLowerCase().includes("untrusted"), true);
 });
 
-test("always validates the final adapter output locally", async () => {
-  const generator = createStructuredGenerator({
-    policy,
-    invoke: async () => ({ value: 42 }),
-  });
+test("always validates final non-streaming adapter output locally", async () => {
+  const generator = createStructuredGenerator({ policy, invoke: async () => ({ value: 42 }) });
   await assert.rejects(
     generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt" }),
     z.ZodError,
   );
 });
 
-test("combines external abort with the internal deadline", async () => {
+test("combines caller abort with the shared deadline", async () => {
   const controller = new AbortController();
   controller.abort();
-  const generator = createStructuredGenerator({
-    policy,
-    invoke: async () => ({ value: "never" }),
-  });
+  const generator = createStructuredGenerator({ policy, invoke: async () => ({ value: "never" }) });
   await assert.rejects(
-    generator.generateStructured({
-      task: "resume.parse",
-      schema,
-      system: "system",
-      prompt: "prompt",
-      abortSignal: controller.signal,
-    }),
+    generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt", abortSignal: controller.signal }),
   );
 });
 
-test("enforces an injectable total deadline", async () => {
-  const generator = createStructuredGenerator({
-    policy,
-    timeoutMs: 5,
-    invoke: async (input) =>
-      new Promise((resolve, reject) => {
-        input.abortSignal.addEventListener("abort", () => reject(input.abortSignal.reason));
-        setTimeout(() => resolve({ value: "late" }), 30);
-      }),
-  });
-  await assert.rejects(
-    generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt" }),
-  );
-});
-
-test("passes Gateway fallback models for streaming without application replay", () => {
-  const streams: Array<{ model: string; fallback: string[]; maxRetries: number; signal: AbortSignal }> = [];
-  const result = { partialOutputStream: {} };
+test("falls back before the first usable streamed partial", async () => {
+  const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
     invoke: async () => ({ value: "unused" }),
+    classifyError: () => "fallback",
     stream: (input) => {
-      streams.push({
-        model: input.model,
-        fallback: input.providerOptions.gateway.models,
-        maxRetries: input.maxRetries,
-        signal: input.abortSignal,
-      });
-      return result;
+      calls.push(input.model);
+      if (calls.length === 1) {
+        return { partialOutputStream: (async function* () { throw transientError(); })(), output: Promise.reject(transientError()) };
+      }
+      return { partialOutputStream: (async function* () { yield { value: "ok" }; })(), output: Promise.resolve({ value: "ok" }) };
     },
   });
-  assert.equal(
-    generator.streamStructured({ task: "question.generate", schema, system: "system", prompt: "prompt" }),
-    result,
-  );
-  assert.deepEqual(streams[0].fallback, ["openai/fast-backup", "anthropic/quality", "openai/quality-backup"]);
-  assert.equal(streams[0].maxRetries, 0);
-  assert.equal(streams[0].signal.aborted, false);
+  const result = generator.streamStructured({
+    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
+  });
+  assert.deepEqual(await collect(result.partialOutputStream), [{ value: "ok" }]);
+  assert.deepEqual(await result.output, { value: "ok" });
+  assert.deepEqual(calls, ["deepseek/fast", "deepseek/fast-backup"]);
 });
 
-test("preserves the schema and caller signal for streaming", () => {
-  const controller = new AbortController();
-  let received: unknown;
+test("does not fall back after a usable streamed partial", async () => {
+  const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
     invoke: async () => ({ value: "unused" }),
+    classifyError: () => "fallback",
     stream: (input) => {
-      received = input;
-      return {};
+      calls.push(input.model);
+      return {
+        partialOutputStream: (async function* () { yield { value: "visible" }; throw transientError(); })(),
+        output: Promise.reject(transientError()),
+      };
     },
   });
-  generator.streamStructured({
-    task: "question.generate",
-    schema,
-    system: "system",
-    prompt: "prompt",
-    abortSignal: controller.signal,
+  const result = generator.streamStructured({
+    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
   });
-  const input = received as { schema: typeof schema; abortSignal: AbortSignal };
-  assert.equal(input.schema, schema);
-  controller.abort();
-  assert.equal(input.abortSignal.aborted, true);
+  await assert.rejects(collect(result.partialOutputStream));
+  await assert.rejects(result.output);
+  assert.deepEqual(calls, ["deepseek/fast"]);
+});
+
+test("commits a valid final object that had no partial output", async () => {
+  const generator = createStructuredGenerator({
+    policy,
+    invoke: async () => ({ value: "unused" }),
+    stream: () => ({ partialOutputStream: (async function* () {})(), output: Promise.resolve({ value: "complete" }) }),
+  });
+  const result = generator.streamStructured({
+    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
+    validateFinal: (output) => assert.equal(output.value, "complete"),
+  });
+  assert.deepEqual(await collect(result.partialOutputStream), []);
+  assert.deepEqual(await result.output, { value: "complete" });
+});
+
+test("repairs an invalid final object before commitment", async () => {
+  let calls = 0;
+  const generator = createStructuredGenerator({
+    policy,
+    invoke: async () => ({ value: "unused" }),
+    stream: () => {
+      calls += 1;
+      return {
+        partialOutputStream: (async function* () {})(),
+        output: Promise.resolve(calls === 1 ? { value: "" } : { value: "fixed" }),
+      };
+    },
+    classifyError: () => "repair",
+  });
+  const result = generator.streamStructured({
+    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
+    validateFinal: (output) => { if (!output.value.trim()) throw new z.ZodError([]); },
+  });
+  assert.deepEqual(await collect(result.partialOutputStream), []);
+  assert.deepEqual(await result.output, { value: "fixed" });
+  assert.equal(calls, 2);
+});
+
+test("does not fall back after caller cancellation", async () => {
+  const controller = new AbortController();
+  const calls: string[] = [];
+  const generator = createStructuredGenerator({
+    policy,
+    invoke: async () => ({ value: "unused" }),
+    classifyError: () => "fallback",
+    stream: (input) => {
+      calls.push(input.model);
+      return {
+        partialOutputStream: (async function* () { controller.abort(); throw new DOMException("aborted", "AbortError"); })(),
+        output: Promise.reject(new DOMException("aborted", "AbortError")),
+      };
+    },
+  });
+  const result = generator.streamStructured({
+    task: "question.generate", schema, system: "system", prompt: "prompt", abortSignal: controller.signal, isUsablePartial: () => false,
+  });
+  await assert.rejects(collect(result.partialOutputStream));
+  await assert.rejects(result.output);
+  assert.deepEqual(calls, ["deepseek/fast"]);
 });

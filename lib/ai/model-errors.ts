@@ -4,14 +4,6 @@ import {
   NoOutputGeneratedError,
   RetryError,
 } from "ai";
-import {
-  GatewayAuthenticationError,
-  GatewayInternalServerError,
-  GatewayInvalidRequestError,
-  GatewayModelNotFoundError,
-  GatewayRateLimitError,
-  GatewayResponseError,
-} from "@ai-sdk/gateway";
 import { z } from "zod";
 import type { ModelErrorAction } from "./model-fallback";
 
@@ -52,28 +44,12 @@ export function classifyModelError(error: unknown): ModelErrorAction {
     return "repair";
   }
 
-  if (
-    GatewayRateLimitError.isInstance(unwrapped) ||
-    GatewayInternalServerError.isInstance(unwrapped)
-  ) {
-    return "transient";
-  }
-
-  if (GatewayResponseError.isInstance(unwrapped)) {
-    return isTransientStatus(unwrapped.statusCode) ? "transient" : "fatal";
-  }
-
-  if (GatewayModelNotFoundError.isInstance(unwrapped)) return "fallback";
-
-  if (
-    GatewayAuthenticationError.isInstance(unwrapped) ||
-    GatewayInvalidRequestError.isInstance(unwrapped)
-  ) {
-    return "fatal";
-  }
-
   if (APICallError.isInstance(unwrapped)) {
-    return isTransientStatus(unwrapped.statusCode) ? "transient" : "fatal";
+    const retryable = (unwrapped as { isRetryable?: unknown }).isRetryable;
+    return isTransientStatus(unwrapped.statusCode) ||
+      (unwrapped.statusCode === undefined && retryable === true)
+      ? "transient"
+      : "fatal";
   }
 
   return isNetworkTypeError(unwrapped) ? "transient" : "fatal";

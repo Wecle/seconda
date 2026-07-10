@@ -9,25 +9,26 @@ function throwIfAborted(signal: AbortSignal) {
   throw signal.reason ?? new DOMException("The operation was aborted", "AbortError");
 }
 
-export async function runModelCandidates<T>(options: {
-  models: readonly string[];
+export async function runModelCandidates<T, TCandidate extends { model: string }>(options: {
+  candidates: readonly TCandidate[];
   signal: AbortSignal;
   classifyError: (error: unknown) => ModelErrorAction;
   sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   random?: () => number;
   attempt: (input: {
+    candidate: TCandidate;
     model: string;
     repair: boolean;
     previousError?: unknown;
     signal: AbortSignal;
   }) => Promise<T>;
 }): Promise<T> {
-  const { models, signal, classifyError, sleep, attempt } = options;
+  const { candidates, signal, classifyError, sleep, attempt } = options;
   const random = options.random ?? Math.random;
   let repairUsed = false;
   let finalError: unknown = new Error("No model candidates were configured");
 
-  for (const model of models) {
+  for (const candidate of candidates) {
     let transientRetries = 0;
     let repair = false;
     let previousError: unknown;
@@ -36,7 +37,7 @@ export async function runModelCandidates<T>(options: {
       throwIfAborted(signal);
 
       try {
-        return await attempt({ model, repair, previousError, signal });
+        return await attempt({ candidate, model: candidate.model, repair, previousError, signal });
       } catch (error) {
         throwIfAborted(signal);
         finalError = error;
