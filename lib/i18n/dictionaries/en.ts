@@ -150,7 +150,7 @@ export const en = {
     pleaseTryAgain: "Please try again.",
     parseHints: {
       invalidKey:
-        "AI Gateway authentication failed. Please update AI_GATEWAY_API_KEY and restart the service.",
+        "AI service authentication failed. Please update the API key for the affected model tier and restart the service.",
       notFound:
         "Configured AI model is unavailable. Please check the AI_MODEL settings and approved model registry.",
       rateLimit:

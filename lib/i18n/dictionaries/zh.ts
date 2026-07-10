@@ -142,7 +142,7 @@ export const zh = {
     actionFailed: "操作失败",
     pleaseTryAgain: "请稍后重试。",
     parseHints: {
-      invalidKey: "AI Gateway 鉴权失败，请更新 AI_GATEWAY_API_KEY 后重启服务。",
+      invalidKey: "AI 服务鉴权失败，请更新对应模型层级的 API Key 后重启服务。",
       notFound:
         "配置的 AI 模型不可用，请检查 AI_MODEL 配置和已批准模型列表。",
       rateLimit:
