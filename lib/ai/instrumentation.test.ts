@@ -14,7 +14,8 @@ test("accepts a valid Node.js Gateway configuration", () => {
 });
 
 test("requires a Gateway key in Node.js", () => {
-  const { AI_GATEWAY_API_KEY: _key, ...withoutKey } = validEnv;
+  const withoutKey: Partial<typeof validEnv> = { ...validEnv };
+  delete withoutKey.AI_GATEWAY_API_KEY;
   assert.throws(() => register(withoutKey), /AI_GATEWAY_API_KEY/);
 });
 
