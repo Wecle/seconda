@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { APICallError, NoObjectGeneratedError } from "ai";
+import { APICallError, NoObjectGeneratedError, Output, streamText } from "ai";
 import { z } from "zod";
 import { createStructuredGenerator } from "./generate-structured";
 import { loadModelPolicy } from "./model-policy";
+import { createProviderModel } from "./provider-registry";
 
 const policy = loadModelPolicy({
   AI_MODEL_FAST: "deepseek/fast",
@@ -27,6 +28,12 @@ function transientError() {
     url: "https://fixture.test",
     requestBodyValues: {},
     statusCode: 429,
+  });
+}
+
+function sseResponse(...events: string[]) {
+  return new Response(events.join(""), {
+    headers: { "content-type": "text/event-stream" },
   });
 }
 
@@ -112,12 +119,14 @@ test("combines caller abort with the shared deadline", async () => {
 
 test("falls back before the first usable streamed partial", async () => {
   const calls: string[] = [];
+  const signals: AbortSignal[] = [];
   const generator = createStructuredGenerator({
     policy,
     invoke: async () => ({ value: "unused" }),
     classifyError: () => "fallback",
     stream: (input) => {
       calls.push(input.model);
+      signals.push(input.abortSignal);
       if (calls.length === 1) {
         return { partialOutputStream: (async function* () { throw transientError(); })(), output: Promise.reject(transientError()) };
       }
@@ -130,6 +139,179 @@ test("falls back before the first usable streamed partial", async () => {
   assert.deepEqual(await collect(result.partialOutputStream), [{ value: "ok" }]);
   assert.deepEqual(await result.output, { value: "ok" });
   assert.deepEqual(calls, ["deepseek/fast", "deepseek/fast-backup"]);
+  assert.equal(signals[0].aborted, true);
+});
+
+test("does not replay after a real AI SDK OpenAI-compatible SSE error event without recoverability metadata", async () => {
+  let calls = 0;
+  const providerErrors: Error[] = [];
+  const generator = createStructuredGenerator({
+    policy,
+    invoke: async () => ({ value: "unused" }),
+    sleep: async () => {},
+    stream: (input) => {
+      calls += 1;
+      if (calls === 1) {
+        const provider = createProviderModel({
+          model: "deepseek/deepseek-v4-flash",
+          credentialTier: "fast",
+          apiKey: "fixture",
+          fetch: async () => sseResponse(
+            'data: {"error":{"message":"fixture stream failure"}}\n\n',
+            "data: [DONE]\n\n",
+          ),
+        });
+        return streamText({
+          model: provider.model,
+          system: "Return JSON.",
+          prompt: "fixture",
+          maxRetries: 0,
+          output: Output.object({ schema: input.schema }),
+          onError: ({ error }) => {
+            const captured = error instanceof Error ? error : new Error("fixture stream failure");
+            providerErrors.push(captured);
+            input.onError(captured);
+          },
+        });
+      }
+      throw new Error("Unexpected fallback after an unclassified SSE error");
+    },
+  });
+  const result = generator.streamStructured({
+    task: "question.generate",
+    schema,
+    system: "system",
+    prompt: "prompt",
+    isUsablePartial: () => false,
+  });
+  await assert.rejects(collect(result.partialOutputStream), /fixture stream failure/);
+  await assert.rejects(result.output, /fixture stream failure/);
+  assert.equal(calls, 1);
+  assert.equal(providerErrors.length, 1);
+});
+
+test("retries after real AI SDK pre-output 429 and 5xx stream failures", async () => {
+  for (const statusCode of [429, 503]) {
+    let calls = 0;
+    const capturedErrors: Error[] = [];
+    const generator = createStructuredGenerator({
+      policy,
+      invoke: async () => ({ value: "unused" }),
+      sleep: async () => {},
+      stream: (input) => {
+        calls += 1;
+        if (calls === 1) {
+          const provider = createProviderModel({
+            model: "deepseek/deepseek-v4-flash",
+            credentialTier: "fast",
+            apiKey: "fixture",
+            fetch: async () => new Response(
+              JSON.stringify({ error: { message: "fixture provider failure" } }),
+              { status: statusCode, headers: { "content-type": "application/json" } },
+            ),
+          });
+          return streamText({
+            model: provider.model,
+            system: "Return JSON.",
+            prompt: "fixture",
+            maxRetries: 0,
+            output: Output.object({ schema: input.schema }),
+            onError: ({ error }) => {
+              const captured = error instanceof Error ? error : new Error("fixture provider failure");
+              capturedErrors.push(captured);
+              input.onError(captured);
+            },
+          });
+        }
+        return {
+          partialOutputStream: (async function* () {})(),
+          output: Promise.resolve({ value: "recovered" }),
+        };
+      },
+    });
+    const result = generator.streamStructured({
+      task: "question.generate",
+      schema,
+      system: "system",
+      prompt: "prompt",
+      isUsablePartial: () => false,
+    });
+    assert.deepEqual(await collect(result.partialOutputStream), []);
+    assert.deepEqual(await result.output, { value: "recovered" });
+    assert.equal(calls, 2);
+    assert.equal(capturedErrors.length, 1);
+    assert.equal(APICallError.isInstance(capturedErrors[0]), true);
+  }
+});
+
+test("retries a statusless retryable provider error captured before stream output", async () => {
+  let calls = 0;
+  const generator = createStructuredGenerator({
+    policy,
+    invoke: async () => ({ value: "unused" }),
+    sleep: async () => {},
+    stream: (input) => {
+      calls += 1;
+      if (calls === 1) {
+        input.onError(Object.assign(new APICallError({
+          message: "fixture network failure",
+          url: "https://fixture.test",
+          requestBodyValues: {},
+        }), { isRetryable: true }));
+        return {
+          partialOutputStream: (async function* () { throw new NoObjectGeneratedError({ response: {} as never, usage: {} as never, finishReason: "error" }); })(),
+          output: Promise.reject(new NoObjectGeneratedError({ response: {} as never, usage: {} as never, finishReason: "error" })),
+        };
+      }
+      return {
+        partialOutputStream: (async function* () {})(),
+        output: Promise.resolve({ value: "recovered" }),
+      };
+    },
+  });
+  const result = generator.streamStructured({
+    task: "question.generate",
+    schema,
+    system: "system",
+    prompt: "prompt",
+    isUsablePartial: () => false,
+  });
+  assert.deepEqual(await collect(result.partialOutputStream), []);
+  assert.deepEqual(await result.output, { value: "recovered" });
+  assert.equal(calls, 2);
+});
+
+test("does not retry after the shared streaming deadline expires", async () => {
+  let calls = 0;
+  const generator = createStructuredGenerator({
+    policy,
+    timeoutMs: 5,
+    invoke: async () => ({ value: "unused" }),
+    stream: (input) => {
+      calls += 1;
+      const pending = new Promise<never>((_resolve, reject) => {
+        input.abortSignal.addEventListener("abort", () => reject(input.abortSignal.reason), { once: true });
+      });
+      return {
+        partialOutputStream: (async function* () { await pending; })(),
+        output: pending,
+      };
+    },
+  });
+  const result = generator.streamStructured({
+    task: "question.generate",
+    schema,
+    system: "system",
+    prompt: "prompt",
+    isUsablePartial: () => false,
+  });
+  const partials = collect(result.partialOutputStream);
+  void partials.catch(() => {});
+  void result.output.catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  await assert.rejects(partials);
+  await assert.rejects(result.output);
+  assert.equal(calls, 1);
 });
 
 test("does not fall back after a usable streamed partial", async () => {
