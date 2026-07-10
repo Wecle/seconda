@@ -1,6 +1,6 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
-import type { LanguageModel } from "ai";
+import { Output, type LanguageModel } from "ai";
 import { z } from "zod";
 import {
   parseModelIdentifier,
@@ -12,7 +12,7 @@ export type ProviderAdapterMetadata = {
   provider: ModelProvider;
   model: string;
   modelId: string;
-  structuredOutput: "json-object" | "sdk-json";
+  structuredOutput: "json-object" | "json-schema";
   thinking: "disabled" | "not-configured";
   jsonInstruction?: string;
 };
@@ -39,6 +39,15 @@ export function applyStructuredOutputInstructions<TSchema extends z.ZodType>(
   if (!metadata.jsonInstruction) return system;
 
   return `${system}\n\n${metadata.jsonInstruction} 输出必须严格符合以下 JSON Schema；填充所有必填字段，不要添加 Schema 以外的字段：\n${JSON.stringify(z.toJSONSchema(schema))}`;
+}
+
+export function createProviderOutput<TSchema extends z.ZodType>(
+  schema: TSchema,
+  metadata: ProviderAdapterMetadata,
+) {
+  return metadata.structuredOutput === "json-object"
+    ? Output.json()
+    : Output.object({ schema });
 }
 
 function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" | "zhipu") {
@@ -71,7 +80,7 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
       provider,
       model: input.model,
       modelId,
-      structuredOutput: isDeepSeek ? "json-object" : "sdk-json",
+      structuredOutput: "json-object",
       thinking: isDeepSeek ? "disabled" : "not-configured",
       ...(isDeepSeek ? { jsonInstruction: DEEPSEEK_JSON_INSTRUCTION } : {}),
     },
@@ -92,7 +101,7 @@ export function createProviderModel(input: ProviderRegistryInput): ProviderModel
       provider,
       model: input.model,
       modelId,
-      structuredOutput: "sdk-json",
+      structuredOutput: "json-schema",
       thinking: "not-configured",
     },
   };

@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { APICallError, NoObjectGeneratedError, Output, streamText } from "ai";
+import { APICallError, NoObjectGeneratedError, streamText } from "ai";
 import { z } from "zod";
 import { createStructuredGenerator } from "./generate-structured";
 import { loadModelPolicy } from "./model-policy";
-import { createProviderModel } from "./provider-registry";
+import { createProviderModel, createProviderOutput } from "./provider-registry";
 
 const policy = loadModelPolicy({
   AI_MODEL_FAST: "deepseek/fast",
@@ -166,7 +166,7 @@ test("does not replay after a real AI SDK OpenAI-compatible SSE error event with
           system: "Return JSON.",
           prompt: "fixture",
           maxRetries: 0,
-          output: Output.object({ schema: input.schema }),
+          output: createProviderOutput(input.schema, provider.metadata),
           onError: ({ error }) => {
             const captured = error instanceof Error ? error : new Error("fixture stream failure");
             providerErrors.push(captured);
@@ -215,7 +215,7 @@ test("retries after real AI SDK pre-output 429 and 5xx stream failures", async (
             system: "Return JSON.",
             prompt: "fixture",
             maxRetries: 0,
-            output: Output.object({ schema: input.schema }),
+            output: createProviderOutput(input.schema, provider.metadata),
             onError: ({ error }) => {
               const captured = error instanceof Error ? error : new Error("fixture provider failure");
               capturedErrors.push(captured);
