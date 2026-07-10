@@ -83,10 +83,16 @@ cp .env.example .env
 请按需填写以下关键变量：
 
 - `DATABASE_URL`
-- `OPENAI_API_KEY`
-- `BASE_URL`
-- `BASE_MODEL`
+- `FAST_MODEL_API_KEY`
+- `QUALITY_MODEL_API_KEY`
+- `AI_MODEL_FAST`
+- `AI_MODEL_FAST_FALLBACK`
+- `AI_MODEL_QUALITY`
+- `AI_MODEL_QUALITY_FALLBACK`
+- `AI_APPROVED_MODELS`
 - `AUTH_SECRET`
+
+AI 调用直接使用厂商 API，模型标识仅支持 `deepseek/*`、`openai/*` 和 `zhipu/*`。每层使用自己的 Key：fast 候选使用 `FAST_MODEL_API_KEY`，quality 候选使用 `QUALITY_MODEL_API_KEY`；同一层的主/备用候选必须属于同一厂商。fast 任务会依次尝试 fast 主模型、fast 备用模型，再升级到 quality 模型；quality 任务只会在 quality 主/备用模型之间切换，绝不降级到 fast。`AI_APPROVED_MODELS` 只能包含已通过结构化输出和评分一致性审核的模型。智谱仅使用中国区开放平台：`https://open.bigmodel.cn/api/paas/v4/`；示例模型 ID 部署前须以中国区当前模型列表和候选级契约测试确认。
 
 ### 3) 执行数据库迁移
 

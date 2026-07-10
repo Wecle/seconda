@@ -1,608 +1,196 @@
-# Multi-Model Task Routing Implementation Plan
+# Direct-Provider Multi-Model Task Routing Implementation Plan
 
-> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** Execute this plan in an isolated branch and stop if unrelated work overlaps a target file. Run the stated verification after each chunk. Do not change the PRD scoring model, business prompts, database schema, or interview state machine.
 
-**Goal:** Route simple Seconda AI tasks to fast models and quality-sensitive tasks to larger models through Vercel AI Gateway without exposing provider details to business code.
+**Goal:** Replace Vercel AI Gateway with direct DeepSeek, OpenAI, and 智谱 AI 中国区 calls while preserving fixed fast/quality routing, bounded structured generation, and safe fallback behavior.
 
-**Architecture:** A pure policy module maps each AI task to an ordered model candidate list. A shared structured-generation layer owns deadlines, one repair attempt for malformed structured output, and application-level model fallback; Vercel AI Gateway continues to route each requested model across available providers.
+**Architecture:** `model-policy` resolves ordered candidates together with their credential tier. A Provider Registry maps each provider prefix to an AI SDK Language Model. `generateStructured` owns deadline, repair, and non-stream fallback. `streamStructured` may switch candidates only before it emits the first usable partial result.
 
-**Tech Stack:** TypeScript 5, Node 20 test runner through `tsx`, Next.js 16 Route Handlers, AI SDK 6, Zod 4, Vercel AI Gateway
+**Tech Stack:** TypeScript, Next.js Route Handlers, the latest mutually compatible stable AI SDK/provider package family available at implementation time, Zod, and the existing Node test runner through `tsx`.
 
 **Design reference:** `docs/plans/2026-07-10-multi-model-routing-design.md`
 
----
-
 ## Scope
 
-This plan implements the first independently releasable slice: fixed task tiers, startup configuration validation, ordered model candidates, non-streaming repair and fallback, bounded execution time, streaming Gateway fallback, and migration of every current AI call.
+This plan preserves the seven fixed tasks and existing fast/quality policy. It adds direct provider construction for `deepseek/*`, `openai/*`, and `zhipu/*`, replaces Gateway-only configuration, and retains first-usable-partial stream fallback.
 
-The following are separate projects because they change independent subsystems and require additional product decisions: interview-level model and Prompt snapshots, `creating`/`failed` lifecycle and idempotency, deterministic report aggregation, persistent AI call auditing, and automated golden-dataset evaluation.
+Out of scope: seven independent per-task models, cross-provider fallback inside the same tier, LiteLLM deployment, consumer-subscription credentials, model snapshots, lifecycle/idempotency, report aggregation, persistent AI auditing, and golden-dataset automation.
+
+## Configuration Contract
+
+```env
+FAST_MODEL_API_KEY=fast-tier-provider-api-key
+QUALITY_MODEL_API_KEY=quality-tier-provider-api-key
+AI_MODEL_FAST=deepseek/deepseek-chat
+AI_MODEL_QUALITY=zhipu/glm-5.1
+AI_MODEL_QUALITY_FALLBACK=zhipu/glm-4.7
+AI_APPROVED_MODELS=deepseek/deepseek-chat,zhipu/glm-5.1,zhipu/glm-4.7
+```
+
+These model IDs demonstrate the configuration shape; confirm current China-region model IDs before deployment. Fast primary/fallback must share a provider prefix, as must quality primary/fallback. Fast candidates use `FAST_MODEL_API_KEY`; quality candidates use `QUALITY_MODEL_API_KEY`. Fast may escalate to quality, which then uses the quality Key.
 
 ## File Map
 
-- Create `lib/ai/model-policy.ts`: task names, tier mapping, validated environment configuration, and ordered candidates.
-- Create `lib/ai/model-policy.test.ts`: policy validation, task mapping, and fallback-order tests.
-- Create `lib/ai/model-fallback.ts`: provider-independent candidate execution and repair/fallback control flow.
-- Create `lib/ai/model-fallback.test.ts`: repair, fallback, fatal-error, and abort tests.
-- Create `lib/ai/model-errors.ts`: AI SDK and Gateway error classification without environment access.
-- Create `lib/ai/generate-structured.ts`: AI SDK adapters, total deadline, structured generation, and streaming.
-- Create `lib/ai/generate-structured.test.ts`: injected adapter tests for candidate order, repair, deadline, validation, and streaming settings.
-- Create `lib/ai/task-usage.test.ts`: source-level contract tests for every current business task mapping.
-- Create `instrumentation.ts`: added with final configuration in Chunk 4 to validate the approved policy at Node.js startup.
-- Modify `lib/resume/parse-resume.ts`: use `resume.parse`.
-- Modify `lib/interview/index.ts`: use the six interview task identifiers.
-- Modify `app/api/interviews/[id]/next-question/route.ts`: use streamed `question.generate`.
-- Delete `lib/ai/chat-provider.ts`: remove OpenAI-specific provider construction.
-- Modify `.env.example`, `README.md`, `package.json`, and `pnpm-lock.yaml`: Gateway configuration, test command, and dependency cleanup.
+- Create `lib/ai/provider-registry.ts` and `lib/ai/provider-registry.test.ts`.
+- Create a provider-neutral AI error sanitizer and tests under `lib/ai/`.
+- Modify `lib/ai/model-policy.ts` and tests to retain candidate credential tiers and validate same-tier provider prefixes.
+- Modify `lib/ai/model-errors.ts` and tests to remove Gateway-only guards and classify direct-provider failures.
+- Modify `lib/ai/generate-structured.ts` and tests to use the registry and direct streaming fallback.
+- Modify `app/api/interviews/[id]/next-question/route.ts` and `lib/ai/task-usage.test.ts` to define first usable output and reject empty final questions.
+- Modify all AI Route Handlers that log provider errors to use the sanitizer.
+- Modify `instrumentation.ts` and `lib/ai/instrumentation.test.ts` for layer-key startup validation.
+- Modify `.env.example`, `README.md`, `package.json`, `pnpm-lock.yaml`, and related provider-neutral i18n copy.
+- Delete Gateway-specific configuration and dependency use after production adapters have migrated.
 
-## Chunk 1: Routing Foundation
+## Chunk 0: Workspace Guard
 
-### Task 1: Add a discoverable test command and validated task policy
+### Task 0: Inspect and protect the current worktree
 
-**Files:**
-- Modify: `package.json`
-- Create: `lib/ai/model-policy.test.ts`
-- Create: `lib/ai/model-policy.ts`
+- [ ] Read `AGENTS.md`, the full PRD, the design document, and this implementation plan before changing code.
+- [ ] Run `git status --short`, `git diff`, and `git diff --cached`; record pre-existing changes.
+- [ ] Do not edit, stage, revert, format, or commit unrelated files. If a target file already contains unrelated edits, preserve them and stop for user direction only if the changes cannot be safely separated.
+- [ ] Create or switch to the implementation branch without resetting the worktree.
 
-- [ ] **Step 1: Add an explicit test glob**
+## Chunk 1: Compatible Dependencies, Policy, and Registry
 
-Add this script to `package.json` so Node 20 cannot return a false-green zero-test run:
+### Task 1: Resolve the latest suitable AI SDK dependency family
 
-```json
-"test": "tsx --test lib/ai/*.test.ts"
-```
+- [ ] Inspect current `package.json`, lockfile, Node/Next constraints, and the latest stable releases and peer dependency ranges for `ai`, the existing Gateway package, `@ai-sdk/openai`, and `@ai-sdk/openai-compatible`.
+- [ ] Select the newest mutually compatible stable combination suitable for the repository. Do not copy fixed major/minor versions from this plan. If any package's `latest` tag is incompatible, use the newest compatible stable release and record the constraint in the handoff.
+- [ ] Update the AI SDK core and provider dependencies as one coordinated change before importing new providers in production code. Keep Gateway temporarily only if existing code needs it to remain green during migration.
+- [ ] Do not use `--save-exact`; preserve the repository's normal semver range style in `package.json`, let `pnpm-lock.yaml` record the reproducible resolved versions, and report those versions at completion.
+- [ ] Add a minimal provider type/protocol smoke test and run `pnpm install --frozen-lockfile`, `pnpm test`, and `npx tsc --noEmit`.
 
-- [ ] **Step 2: Write the failing policy tests**
+### Task 2: Extend resolved candidates with credential tier
 
-Create `lib/ai/model-policy.test.ts` with tests for:
+- [ ] Add failing tests proving fast candidates are returned as `{ model, credentialTier: "fast" }` followed by quality-tier candidates, while quality tasks include only quality-tier candidates.
+- [ ] Add prefix parsing for `deepseek`, `openai`, and `zhipu`; reject unknown prefixes.
+- [ ] Validate that configured fast primary/fallback use the same prefix, and likewise for quality primary/fallback.
+- [ ] Preserve required primary models, approved registry, trimming, and duplicate model ID validation.
+- [ ] Update every existing test fixture that uses old/unknown prefixes in the same change so the full suite remains coherent.
+- [ ] Run `pnpm test` and `npx tsc --noEmit`.
 
-```ts
-import assert from "node:assert/strict";
-import test from "node:test";
-import {
-  getTaskTier,
-  loadModelPolicy,
-  resolveModelCandidates,
-  type AITask,
-  type AIModelTier,
-} from "./model-policy";
+### Task 3: Create the direct Provider Registry
 
-const validEnv = {
-  AI_MODEL_FAST: "google/fast",
-  AI_MODEL_FAST_FALLBACK: "openai/fast-backup",
-  AI_MODEL_QUALITY: "anthropic/quality",
-  AI_MODEL_QUALITY_FALLBACK: "openai/quality-backup",
-  AI_APPROVED_MODELS:
-    "google/fast,openai/fast-backup,anthropic/quality,openai/quality-backup",
-};
+- [ ] Add a small registry that accepts `{ model, credentialTier, apiKey }` and returns an AI SDK Language Model plus only the adapter metadata needed for safe logs/tests.
+- [ ] Split `provider/model` before construction; pass only the vendor model ID to the provider.
+- [ ] Construct `deepseek/*` through `createOpenAICompatible` with `https://api.deepseek.com` and verify the final URL is `https://api.deepseek.com/chat/completions`.
+- [ ] Construct `openai/*` through `createOpenAI({ apiKey: selectedTierKey })`; never use the default singleton or ambient `OPENAI_API_KEY`.
+- [ ] Construct `zhipu/*` through `createOpenAICompatible` with `https://open.bigmodel.cn/api/paas/v4/` and verify the final URL is `https://open.bigmodel.cn/api/paas/v4/chat/completions`.
+- [ ] Configure provider capabilities explicitly: DeepSeek JSON Object mode unless JSON Schema is proven, adapter-level JSON instruction, fast-tier thinking disabled, and an explicit quality thinking policy. Do not pass unsupported options.
+- [ ] Add injected fetch tests for prefix, stripped model ID, endpoint, selected tier Key, structured-output body, thinking body, and unknown-provider rejection. Poison or omit `OPENAI_API_KEY` in the OpenAI test.
+- [ ] Run `pnpm test` and `npx tsc --noEmit`.
+- [ ] Commit: `feat(ai): add direct provider registry`.
 
-const expectedTiers: Record<AITask, AIModelTier> = {
-  "resume.parse": "fast",
-  "question.generate": "fast",
-  "question.follow-up": "fast",
-  "answer.score": "quality",
-  "report.generate": "quality",
-  "coach.generate": "quality",
-  "coach.evaluate": "quality",
-};
+## Chunk 2: Direct Retry, Repair, and Streaming
 
-test("maps every task to its fixed first-phase tier", () => {
-  for (const [task, tier] of Object.entries(expectedTiers)) {
-    assert.equal(getTaskTier(task as AITask), tier);
-  }
-});
+### Task 4: Update direct-provider error classification
 
-test("builds fast candidates in escalation order", () => {
-  const policy = loadModelPolicy(validEnv);
-  assert.deepEqual(resolveModelCandidates("resume.parse", policy), {
-    tier: "fast",
-    models: [
-      "google/fast",
-      "openai/fast-backup",
-      "anthropic/quality",
-      "openai/quality-backup",
-    ],
-  });
-});
+- [ ] Remove Gateway-specific error guards and tests.
+- [ ] Retain typed AI SDK structured-output, Zod, `RetryError`, `APICallError`, and documented network-cause handling.
+- [ ] Classify 408/429/5xx as transient; then classify statusless `APICallError` with `isRetryable: true` as transient; classify other known 4xx as fatal.
+- [ ] Keep content-safety refusal and unknown programming errors fatal. Do not infer model availability through fragile message matching.
+- [ ] Add table-driven tests covering statusless wrapped fetch failures, known status codes, nested causes, and fatal authentication/parameter failures.
+- [ ] Run `pnpm test`; commit `refactor(ai): classify direct provider failures`.
 
-test("quality candidates never contain fast models", () => {
-  const policy = loadModelPolicy(validEnv);
-  assert.deepEqual(resolveModelCandidates("answer.score", policy), {
-    tier: "quality",
-    models: ["anthropic/quality", "openai/quality-backup"],
-  });
-});
+### Task 5: Replace Gateway non-stream adapters
 
-test("requires both primary tiers", () => {
-  assert.throws(() => loadModelPolicy({}), /AI_MODEL_FAST/);
-  assert.throws(
-    () => loadModelPolicy({ AI_MODEL_FAST: "google/fast" }),
-    /AI_MODEL_QUALITY/,
-  );
-});
+- [ ] Replace `gateway(model)` with the Provider Registry in `generateStructured`.
+- [ ] Pass the candidate credential-tier Key explicitly; keep `maxRetries: 0`, one 45-second combined deadline, one global repair, and final `schema.parse`.
+- [ ] Delete Gateway-specific provider options from this path.
+- [ ] Keep injected tests for candidate order, tier-Key switch, repair prompt safety, deadline, validation, and external abort.
+- [ ] Run `pnpm test` and `npx tsc --noEmit`.
 
-test("rejects malformed creator/model identifiers", () => {
-  assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_MODEL_FAST: "fast" }),
-    /creator\/model/,
-  );
-});
+### Task 6: Implement pre-output-only streaming fallback
 
-test("validates optional and quality model identifiers", () => {
-  assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_MODEL_FAST_FALLBACK: "invalid" }),
-    /creator\/model/,
-  );
-  assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_MODEL_QUALITY: "invalid" }),
-    /creator\/model/,
-  );
-});
+- [ ] Define a minimal `StructuredStreamResult<T>` containing only `{ partialOutputStream, output }`; do not cast the wrapper to the full AI SDK stream result type.
+- [ ] Add failing tests for: error before usable partial → next candidate; usable partial then error → no next candidate; valid final object without partial → commit; invalid final object before commit → repair/fallback; external abort → no fallback.
+- [ ] Add `isUsablePartial` plus a `validateFinal` callback. Set committed before yielding the first usable partial, and run both Zod and `validateFinal` before committing a final object that produced no usable partial. Before commitment, apply the same global repair and transient retry budgets as non-streaming generation.
+- [ ] Capture provider failures through `streamText.onError`; when AI SDK turns them into stream error parts, prefer the captured raw `APICallError` over a later `NoOutputGeneratedError` for classification.
+- [ ] Give every candidate attempt its own `AbortController`, combined with caller abort and the one global 45-second deadline. Abort/cancel an old attempt before retry or fallback so it cannot continue generating or billing.
+- [ ] Ensure only the committed candidate owns the final output promise. After commitment, surface every error without fallback or replay.
+- [ ] Use real AI SDK stream error-event fixtures in addition to fake iterator throws.
+- [ ] Run `pnpm test` and `npx tsc --noEmit`; commit `feat(ai): add safe direct streaming fallback`.
 
-test("rejects duplicate configured models", () => {
-  assert.throws(
-    () =>
-      loadModelPolicy({
-        ...validEnv,
-        AI_MODEL_FAST_FALLBACK: "google/fast",
-      }),
-    /duplicate/i,
-  );
-  assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_MODEL_QUALITY: "google/fast" }),
-    /duplicate/i,
-  );
-});
+## Chunk 3: Startup, Route, and Privacy Migration
 
-test("rejects configured models outside the approved registry", () => {
-  assert.throws(
-    () =>
-      loadModelPolicy({
-        ...validEnv,
-        AI_MODEL_FAST: "google/unapproved",
-      }),
-    /approved/i,
-  );
-  assert.throws(
-    () =>
-      loadModelPolicy({
-        ...validEnv,
-        AI_MODEL_QUALITY_FALLBACK: "openai/unapproved-quality",
-      }),
-    /approved/i,
-  );
-});
+### Task 7: Replace Gateway startup validation before build verification
 
-test("requires a non-empty approved-model registry", () => {
-  const { AI_APPROVED_MODELS: _missing, ...withoutRegistry } = validEnv;
-  assert.throws(() => loadModelPolicy(withoutRegistry), /AI_APPROVED_MODELS/);
-  assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_APPROVED_MODELS: " " }),
-    /AI_APPROVED_MODELS/,
-  );
-});
+- [ ] Require both `FAST_MODEL_API_KEY` and `QUALITY_MODEL_API_KEY`, because both primary tiers are mandatory.
+- [ ] Keep Node-only validation, Edge-runtime bypass, and all model-policy checks.
+- [ ] Add tests for valid two-key configuration, each missing Key, invalid same-tier provider pairing, duplicate models, unknown prefixes, and Edge bypass.
+- [ ] Remove startup assumptions about `AI_GATEWAY_API_KEY`.
+- [ ] Run `pnpm test` and `npx tsc --noEmit`; commit `refactor(ai): validate direct model credentials`.
 
-test("trims optional fallback values", () => {
-  const policy = loadModelPolicy({
-    AI_MODEL_FAST: " google/fast ",
-    AI_MODEL_QUALITY: " anthropic/quality ",
-    AI_MODEL_FAST_FALLBACK: " ",
-    AI_APPROVED_MODELS: "google/fast,anthropic/quality",
-  });
-  assert.deepEqual(resolveModelCandidates("question.generate", policy), {
-    tier: "fast",
-    models: ["google/fast", "anthropic/quality"],
-  });
-});
+### Task 8: Preserve the streamed next-question route safely
 
-```
+- [ ] Add pure helper tests for usable partial detection: whitespace-only, duplicate output, and the first new non-whitespace `question`, `topic`, or `tip` delta.
+- [ ] Extend the route source contract test to require `streamStructured`, `question.generate`, `generatedQuestionSchema`, `request.signal`, and the usable-partial helper.
+- [ ] Preserve the NDJSON protocol, existing-question shortcut, partial loop, final schema validation, and database insertion.
+- [ ] Add a pure final semantic validator requiring `question.trim()` to be non-empty and pass it to `streamStructured` as `validateFinal`. A no-partial invalid final object must repair/fallback before commitment and must never reach database insertion.
+- [ ] Test both semantic-failure boundaries: no partial + empty question repairs/falls back; a previously emitted usable `topic`/`tip` + empty final question reports an error without fallback or database insertion.
+- [ ] Verify committed-before-write ordering and that any other post-commit failure does not start another provider or insert an incomplete question.
+- [ ] Run `pnpm test`, `npx tsc --noEmit`, and `pnpm lint`.
+- [ ] Commit: `refactor(ai): preserve streamed direct-provider fallback`.
 
-- [ ] **Step 3: Run the test and verify it fails**
+### Task 9: Sanitize AI provider errors across logs, responses, and persistence
 
-Run `pnpm test`.
+- [ ] Create one provider-neutral sanitizer that emits a safe error category, status, provider/model, retryability, and provider request ID where available.
+- [ ] Trace every `generateStructured`/`streamStructured` caller, including background jobs and resume parsing. Replace raw provider-object logging and any use of raw `error.message` in API responses or persisted error/status fields with the same safe summary.
+- [ ] Never log, return, or persist request bodies, response bodies, prompts, resume contents, answers, authorization headers, API Keys, or unclassified provider messages.
+- [ ] Add sentinel tests containing fake PII and fake Keys in nested `APICallError` fields and causes; assert none appears in serialized logs, HTTP response bodies, or captured persistence writes.
+- [ ] Run `pnpm test`, `npx tsc --noEmit`, and `pnpm lint`.
+- [ ] Commit: `fix(ai): sanitize provider errors`.
 
-Expected: the test file is discovered and FAILS because `model-policy.ts` does not exist; the TAP summary must not say `tests 0`.
+## Chunk 4: Cleanup, Deterministic Contracts, and Release Verification
 
-- [ ] **Step 4: Implement the policy module**
+### Task 10: Remove Gateway configuration and finish documentation
 
-Create `lib/ai/model-policy.ts` containing:
+- [ ] Remove `@ai-sdk/gateway` only after all production call sites have migrated; let pnpm update the lockfile.
+- [ ] Replace Gateway environment examples and README guidance with the two layer-Key contract and supported prefixes.
+- [ ] Document 智谱 AI 中国区 endpoint and clarify that model examples must be confirmed against the current China-region model list.
+- [ ] Update user-facing authentication/model-unavailable hints to be provider-neutral.
+- [ ] Confirm no source references remain to `AI_GATEWAY_API_KEY`, `@ai-sdk/gateway`, `gateway(`, `providerOptions.gateway`, `zai/*`, or `api.z.ai`.
+- [ ] Run `pnpm install --frozen-lockfile`, `pnpm test`, `npx tsc --noEmit`, `pnpm lint`, and `git diff --check`.
+- [ ] Commit: `docs(ai): configure direct tiered providers`.
 
-- The seven `AITask` literals and `AIModelTier = "fast" | "quality"`.
-- A complete `Record<AITask, AIModelTier>` matching the test.
-- `loadModelPolicy(env = process.env)`, which trims values, requires both primary models, validates `creator/model`, rejects duplicates, and returns a flat `Readonly<ModelPolicy>`. Runtime freezing is not required because every field is an immutable string or `undefined`.
-- A required comma-separated `AI_APPROVED_MODELS` registry. Every configured primary and fallback must appear in the registry; this is the deployment-time enforcement point for models that passed capability and scoring-consistency review.
-- `resolveModelCandidates(task, policy)`, which returns fast candidates as fast primary, optional fast fallback, quality primary, optional quality fallback; quality candidates contain only quality primary and optional quality fallback.
+### Task 11: Add deterministic provider contracts and opt-in live smoke tests
 
-Use this identifier validation:
+- [ ] Build injected fetch/local SSE fixtures for successful JSON, pre-output 429/5xx, statusless network failure, AI SDK error part, post-output failure, timeout, and caller abort. Normal tests must never call real providers or incur fees.
+- [ ] Target every configured candidate, not merely each task once. Each quality candidate must also pass the fast-task Schemas because fast fallback may escalate to quality.
+- [ ] Verify request bodies for endpoint, stripped model ID, tier Key, JSON mode/schema capability, thinking option, and absence of ambient `OPENAI_API_KEY` usage.
+- [ ] Add a separate opt-in command such as `pnpm test:ai:contract` that requires explicit non-production provider Keys and synthetic interview data.
+- [ ] In the opt-in run, exercise successful output for all seven tasks and every applicable candidate; confirm outputs pass local Zod validation. Do not depend on inducing live 429/5xx or stream timing failures.
+- [ ] Confirm invalid credentials fail immediately and sanitized logs contain no Key or synthetic PII.
 
-```ts
-const MODEL_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/;
-```
+## Final Verification
 
-- [ ] **Step 5: Run tests and typecheck**
-
-Run:
+Run the exact commands required by the repository and record exit codes. The build command must supply syntactically valid, non-secret placeholder model configuration because startup validation runs during build; it must not make provider requests.
 
 ```bash
-pnpm test
-npx tsc --noEmit
-```
-
-Expected: exactly 10 tests pass, 0 fail, and TypeScript exits 0.
-
-- [ ] **Step 6: Commit the routing foundation**
-
-```bash
-git add package.json lib/ai/model-policy.ts lib/ai/model-policy.test.ts
-git commit -m "feat(ai): define validated task model policy"
-```
-
-## Chunk 2: Bounded Structured Generation
-
-### Task 2: Implement provider-independent retry, repair, and fallback flow
-
-**Files:**
-- Create: `lib/ai/model-fallback.ts`
-- Create: `lib/ai/model-fallback.test.ts`
-
-- [ ] **Step 1: Write failing executor tests**
-
-Use symbolic errors and an injected classifier. Cover exactly nine cases: immediate success; one global repair; failed repair advancing to the next model without a second repair budget; one transient same-model retry; second transient failure advancing; immediate fallback; fatal stop; abort during backoff; and final eligible error after candidate exhaustion.
-
-The fake attempt records every `{ model, repair }`. Inject `sleep` and `random`; with `random = () => 0`, assert that the transient retry sleeps exactly 250 ms.
-
-- [ ] **Step 2: Run the focused test and verify it fails**
-
-Run `pnpm test`.
-
-Expected: the 10 Chunk 1 tests pass and the new executor tests fail because `model-fallback.ts` does not exist.
-
-- [ ] **Step 3: Implement `runModelCandidates`**
-
-```ts
-export type ModelErrorAction =
-  | "repair"
-  | "transient"
-  | "fallback"
-  | "fatal";
-
-export async function runModelCandidates<T>(options: {
-  models: readonly string[];
-  signal: AbortSignal;
-  classifyError: (error: unknown) => ModelErrorAction;
-  sleep: (milliseconds: number, signal: AbortSignal) => Promise<void>;
-  random?: () => number;
-  attempt: (input: {
-    model: string;
-    repair: boolean;
-    previousError?: unknown;
-    signal: AbortSignal;
-  }) => Promise<T>;
-}): Promise<T>;
-```
-
-Allow one repair across the whole invocation and one transient retry per model. Pass the repair-triggering error back as `previousError` only on the repair call so the adapter can include bounded invalid output. Use `250 + Math.floor(random() * 250)` milliseconds for the transient retry. Abort cancels every remaining action. Fatal errors throw immediately; exhaustion throws the final eligible error.
-
-- [ ] **Step 4: Verify and commit the executor**
-
-Run `pnpm test` and expect exactly 19 tests to pass, 0 fail. Then commit:
-
-```bash
-git add lib/ai/model-fallback.ts lib/ai/model-fallback.test.ts
-git commit -m "feat(ai): add bounded model fallback executor"
-```
-
-### Task 3: Add Gateway-aware error classification
-
-**Files:**
-- Create: `lib/ai/model-errors.ts`
-- Modify: `lib/ai/model-fallback.test.ts`
-- Modify: `package.json`
-- Modify: `pnpm-lock.yaml`
-
-- [ ] **Step 1: Add the direct Gateway dependency**
-
-Run `pnpm add @ai-sdk/gateway`; error guards imported by application code must be a direct dependency.
-
-- [ ] **Step 2: Write twelve failing classifier tests**
-
-Test: AI SDK no-object/no-output errors as `repair`; `NoObjectGeneratedError` with `finishReason: "content-filter"` as `fatal`; Zod errors as `repair`; Gateway rate-limit/internal errors as `transient`; Gateway response errors only for 408/429/5xx as `transient` and a 401 response as `fatal`; Gateway model-not-found as `fallback`; Gateway auth/invalid-request as `fatal`; `APICallError` only for 408/429/5xx as `transient`, including an explicit 409 fatal case; other 4xx as `fatal`; `RetryError.lastError` recursive unwrapping; identified Undici/network-cause `TypeError` as `transient`; and an ordinary programming `TypeError` plus unknown errors as `fatal`.
-
-Construct exported errors with documented constructors and guards. Do not match arbitrary message strings.
-
-- [ ] **Step 3: Implement the env-free classifier**
-
-Create `model-errors.ts` exporting `classifyModelError(error)`. It must not import model policy or read environment variables. Unwrap `RetryError.lastError` recursively before applying AI SDK and Gateway guards. Check content filtering before generic structured-output repair. Use an explicit 408/429/5xx status allowlist. The network guard must require a `TypeError` whose `cause.code` is one of the documented Undici/common network codes (`UND_ERR_*`, `ECONNRESET`, `ETIMEDOUT`, `ENOTFOUND`, or `ECONNREFUSED`); an ordinary `TypeError` is fatal.
-
-- [ ] **Step 4: Verify and commit classification**
-
-Run `pnpm test` and expect exactly 31 tests to pass, 0 fail. Then commit:
-
-```bash
-git add package.json pnpm-lock.yaml lib/ai/model-errors.ts lib/ai/model-fallback.test.ts
-git commit -m "feat(ai): classify gateway model failures"
-```
-
-### Task 4: Adapt AI SDK structured and streaming calls
-
-**Files:**
-- Create: `lib/ai/generate-structured.ts`
-- Create: `lib/ai/generate-structured.test.ts`
-
-- [ ] **Step 1: Write eight failing injected-adapter tests**
-
-Use factory-created adapters with fake call functions. Assert fast and quality candidate order; `maxRetries: 0`; global repair instruction plus 4,000-character invalid-output truncation; mandatory final `schema.parse`; combined external/internal abort; a 5 ms injectable timeout; streaming primary plus `providerOptions.gateway.models`; and preservation of streaming schema/signal without application replay. The repair test must include delimiter-breaking and instruction-like invalid text, assert that it never appears in the system message, and assert that the user prompt contains only a clearly labeled `JSON.stringify` encoding of the truncated untrusted output.
-
-- [ ] **Step 2: Run tests and verify the adapter import fails**
-
-Run `pnpm test`.
-
-Expected: 31 earlier tests pass and the adapter test file fails because `generate-structured.ts` does not exist.
-
-- [ ] **Step 3: Implement injectable adapters and production exports**
-
-Create `createStructuredGenerator({ policy, invoke, timeoutMs = 45_000, sleep, random })`. The small local `invoke` interface returns unknown output; the factory validates it with the supplied Zod schema. Combine the caller signal with `AbortSignal.timeout(timeoutMs)`, execute through `runModelCandidates`, set AI SDK `maxRetries: 0`, use `classifyModelError`, and return only `schema.parse(output)`.
-
-The single repair reads `previousError` supplied by the executor and appends only the trusted strict-JSON correction to the system message. Put at most 4,000 characters from `NoObjectGeneratedError.text` into the user prompt as clearly labeled untrusted data encoded with `JSON.stringify`; never promote prior model output into the system role. Export a production `generateStructured` using AI SDK `generateText` and `Output.object`.
-
-Keep module import env-free for unit tests: production exports obtain policy through a memoized `getProductionPolicy()` that calls `loadModelPolicy(process.env)` on first invocation. Final startup enforcement is added through `instrumentation.ts` in Chunk 4.
-
-Use this public boundary:
-
-```ts
-export async function generateStructured<TSchema extends z.ZodType>(input: {
-  task: AITask;
-  schema: TSchema;
-  system: string;
-  prompt: string;
-  abortSignal?: AbortSignal;
-}): Promise<z.output<TSchema>>;
-```
-
-- [ ] **Step 4: Implement the streaming adapter boundary**
-
-Export `streamStructured` with the same generic input and the inferred AI SDK `StreamTextResult` return. Use the first candidate as `model`, remaining candidates as `providerOptions.gateway.models`, the combined deadline signal, `maxRetries: 0`, and `Output.object`. Gateway may fail over before a usable stream; local failure after partial delivery is surfaced and never replayed.
-
-- [ ] **Step 5: Verify and commit adapters**
-
-Run `pnpm test` and expect exactly 39 tests to pass, 0 fail. Run `npx tsc --noEmit` and expect exit 0. Then commit:
-
-```bash
-git add lib/ai/generate-structured.ts lib/ai/generate-structured.test.ts
-git commit -m "feat(ai): add bounded structured generation"
-```
-
-## Chunk 3: Business Call Migration
-
-### Task 5: Add task-usage contract tests
-
-**Files:**
-- Create: `lib/ai/task-usage.test.ts`
-
-- [ ] **Step 1: Write source-contract tests before migration**
-
-Read `lib/resume/parse-resume.ts` and `lib/interview/index.ts` with `node:fs/promises`. Slice each exported function from its declaration to the next exported function and assert these exact helper/task/schema tuples:
-
-```text
-parseResumeWithAI            -> generateStructured / resume.parse / parsedResumeSchema
-generateInterviewQuestions   -> generateStructured / question.generate / generatedQuestionsSchema
-scoreInterviewAnswer         -> generateStructured / answer.score / scoreResultSchema
-generateInterviewReport      -> generateStructured / report.generate / interviewReportSchema
-generateFollowUp             -> generateStructured / question.follow-up / followUpRoundSchema
-generateCoachContent         -> generateStructured / coach.generate / coachStartSchema
-evaluateCoachAnswer          -> generateStructured / coach.evaluate / coachEvaluateSchema
-```
-
-Also assert that the two source files contain none of `chatLanguageModel`, `@ai-sdk/openai`, or direct `generateText({` calls after migration. Streaming assertions are added separately in Task 7.
-
-- [ ] **Step 2: Run tests and verify the usage contract fails**
-
-Run `pnpm test`.
-
-Expected: policy and fallback tests pass; task-usage tests FAIL against the current direct provider calls.
-
-- [ ] **Step 3: Keep the red test uncommitted for the migration task**
-
-Do not commit a deliberately failing repository state. Proceed directly to Task 6, which makes these contract tests green and commits tests with implementation.
-
-### Task 6: Migrate non-streaming business services
-
-**Files:**
-- Modify: `lib/resume/parse-resume.ts:1-29`
-- Modify: `lib/interview/index.ts:1-225`
-- Modify: `lib/ai/task-usage.test.ts`
-
-- [ ] **Step 1: Migrate resume parsing**
-
-Replace direct AI SDK/provider imports with `generateStructured`. Preserve the existing system and user prompt text verbatim and call task `resume.parse` with `parsedResumeSchema`.
-
-- [ ] **Step 2: Migrate all interview functions**
-
-Replace each direct `generateText`/`Output.object` block with `generateStructured`, using the six interview mappings enforced by `task-usage.test.ts`. Preserve every existing system prompt, user prompt, Zod schema, public function signature, and returned shape. Extract a system prompt to a named constant only when needed; do not refer to an undefined placeholder such as `existingSystemPrompt`.
-
-- [ ] **Step 3: Run focused and static verification**
-
-Run:
-
-```bash
-pnpm test
-npx tsc --noEmit
-pnpm lint
-test -z "$(rg 'chatLanguageModel|@ai-sdk/openai|generateText\(|Output\.object' lib/resume lib/interview || true)"
-```
-
-Expected: all tests pass, static commands exit 0, and the final shell assertion produces no output.
-
-- [ ] **Step 4: Commit the service migration**
-
-```bash
-git add lib/resume/parse-resume.ts lib/interview/index.ts lib/ai/task-usage.test.ts
-git commit -m "refactor(ai): route interview tasks by tier"
-```
-
-### Task 7: Migrate streamed next-question generation
-
-**Files:**
-- Modify: `app/api/interviews/[id]/next-question/route.ts:1-13`
-- Modify: `app/api/interviews/[id]/next-question/route.ts:261-269`
-- Modify: `lib/ai/task-usage.test.ts`
-
-- [ ] **Step 1: Add a failing stream-route contract test**
-
-Extend `task-usage.test.ts` to read the `POST` function in `app/api/interviews/[id]/next-question/route.ts` and assert that it contains all of:
-
-```text
-streamStructured
-task: "question.generate"
-schema: generatedQuestionSchema
-abortSignal: request.signal
-```
-
-Also assert that the route contains none of `chatLanguageModel`, direct `streamText({`, or `Output.object`. Run `pnpm test` and expect only the new stream-route contract to fail.
-
-- [ ] **Step 2: Replace the direct stream call**
-
-Import `streamStructured`, remove `streamText`, `Output`, and `chatLanguageModel`, and call task `question.generate` with `generatedQuestionSchema`, `request.signal`, and the exact existing strict-JSON system prompt. Do not change the NDJSON protocol, partial-output loop, custom error mapping, existing-question shortcut, or database insertion.
-
-- [ ] **Step 3: Verify the stream contract and build**
-
-Run:
-
-```bash
-pnpm test
-npx tsc --noEmit
-pnpm lint
-AI_MODEL_FAST=google/fast AI_MODEL_QUALITY=anthropic/quality AI_APPROVED_MODELS=google/fast,anthropic/quality AI_GATEWAY_API_KEY=test pnpm build
-test -z "$(rg 'chatLanguageModel|streamText\(|Output\.object' 'app/api/interviews/[id]/next-question/route.ts' || true)"
-```
-
-Expected: task-usage tests prove `streamStructured`, `question.generate`, `generatedQuestionSchema`, and abort-signal usage; all commands exit 0 and the final assertion has no output.
-
-- [ ] **Step 4: Commit the stream migration**
-
-```bash
-git add 'app/api/interviews/[id]/next-question/route.ts' lib/ai/task-usage.test.ts
-git commit -m "refactor(ai): route streamed questions through gateway"
-```
-
-## Chunk 4: Configuration and Release Verification
-
-### Task 8: Remove provider-specific configuration and document Gateway setup
-
-**Files:**
-- Delete: `lib/ai/chat-provider.ts`
-- Create: `instrumentation.ts`
-- Modify: `lib/ai/model-policy.test.ts`
-- Modify: `package.json`
-- Modify: `pnpm-lock.yaml`
-- Modify: `.env.example:4-7`
-- Modify: `README.md:77-89`
-
-- [ ] **Step 1: Remove the direct OpenAI provider dependency**
-
-Run `pnpm remove @ai-sdk/openai`, delete `lib/ai/chat-provider.ts`, and verify no consumer remains.
-
-- [ ] **Step 2: Add and test Node.js startup validation**
-
-Create root `instrumentation.ts` exporting `register(env: NodeJS.ProcessEnv = process.env)`. When `env.NEXT_RUNTIME` is absent or `nodejs`, require a non-empty `AI_GATEWAY_API_KEY` and call `loadModelPolicy(env)`; when it is `edge`, return without validation because the AI routes use Node.js.
-
-Add four tests: valid Node configuration with a Gateway key succeeds, missing Gateway key throws, invalid Node model configuration throws, and invalid Edge configuration is skipped. Run `pnpm test` and require all tests to pass before continuing.
-
-- [ ] **Step 3: Replace the example AI environment block**
-
-Use exactly:
-
-```env
-# Vercel AI Gateway
-AI_GATEWAY_API_KEY=your-ai-gateway-key
-AI_MODEL_FAST=creator/small-model
-AI_MODEL_FAST_FALLBACK=creator/backup-small-model
-AI_MODEL_QUALITY=creator/large-model
-AI_MODEL_QUALITY_FALLBACK=creator/backup-large-model
-AI_APPROVED_MODELS=creator/small-model,creator/backup-small-model,creator/large-model,creator/backup-large-model
-```
-
-- [ ] **Step 4: Replace README configuration guidance**
-
-List `AI_GATEWAY_API_KEY`, `AI_MODEL_FAST`, `AI_MODEL_FAST_FALLBACK`, `AI_MODEL_QUALITY`, `AI_MODEL_QUALITY_FALLBACK`, and `AI_APPROVED_MODELS`. Explain that the approved registry contains only models that passed structured-output and scoring-consistency review, explain `creator/model`, fast-to-quality escalation, and the prohibition on quality-to-fast downgrade. Link the model catalog at `https://vercel.com/ai-gateway/models`.
-
-Remove all setup guidance for `OPENAI_API_KEY`, `BASE_URL`, and `BASE_MODEL`.
-
-- [ ] **Step 5: Verify documentation and dependency cleanup**
-
-Run:
-
-```bash
-test -z "$(rg 'OPENAI_API_KEY|BASE_URL|BASE_MODEL|@ai-sdk/openai|chatLanguageModel' --glob '!node_modules/**' --glob '!docs/plans/**' --glob '!docs/superpowers/**' . || true)"
 pnpm install --frozen-lockfile
 pnpm test
 npx tsc --noEmit
 pnpm lint
-AI_MODEL_FAST=google/fast AI_MODEL_QUALITY=anthropic/quality AI_APPROVED_MODELS=google/fast,anthropic/quality AI_GATEWAY_API_KEY=test pnpm build
-git diff --check
-```
-
-Expected: the stale-configuration assertion prints nothing and every command exits 0.
-
-- [ ] **Step 6: Commit configuration and documentation**
-
-```bash
-git add package.json pnpm-lock.yaml .env.example README.md lib/ai/chat-provider.ts instrumentation.ts lib/ai/model-policy.test.ts
-git commit -m "docs(ai): configure tiered gateway models"
-```
-
-### Task 9: Run production-safe contract smoke tests
-
-**Files:**
-- Review: all files changed in Tasks 1-8
-
-- [ ] **Step 1: Configure synthetic-test models**
-
-Set valid Gateway credentials, four distinct supported `creator/model` identifiers, and an `AI_APPROVED_MODELS` registry containing all four. Confirm the application boots; missing Gateway credentials and missing, malformed, duplicate, or unapproved model configuration must fail through `instrumentation.ts` before an AI request is accepted.
-
-- [ ] **Step 2: Exercise all seven task contracts with synthetic data**
-
-Verify valid Zod output for resume parsing, question generation, follow-up, answer scoring, report generation, coach generation, and coach evaluation. Use no real resume or candidate answer.
-
-For every call, capture the Gateway request ID and confirm in Gateway observability that the requested primary model matches the task tier.
-
-- [ ] **Step 3: Verify fallback and non-fallback behavior**
-
-- In a fresh Node process, configure a syntactically valid but unavailable fast primary and confirm Gateway/application logs show the fast fallback served `resume.parse`.
-- Run `pnpm exec tsx --test lib/ai/generate-structured.test.ts` and confirm the injected malformed-output case records exactly one global repair before the next candidate.
-- In another fresh Node process, use invalid Gateway authentication and confirm it fails immediately without trying another model.
-- Run the injected external-abort case and confirm no additional model attempt starts.
-
-Stop the process, restore valid configuration, and start a fresh Node process after every configuration case. The memoized production policy and one-time startup validation must never be reused across smoke-test configurations.
-
-- [ ] **Step 4: Verify final invariants**
-
-Confirm:
-
-- All seven tasks have exactly one fixed tier.
-- Gateway credentials and both required primary models validate during Node startup.
-- Non-streaming schema failure gets at most one repair before fallback.
-- 408, 429, 5xx, and structured-output errors may fall back; other 4xx errors do not.
-- The total deadline is 45 seconds across repair and candidate attempts.
-- Streaming uses Gateway fallback only before a usable stream is established and never replays after partial delivery.
-- Fast candidates may reach quality; quality candidates never include fast.
-- Existing prompts, schemas, scoring dimensions, and interview flow remain unchanged.
-
-- [ ] **Step 5: Run the final automated suite**
-
-Run:
-
-```bash
-pnpm test
-npx tsc --noEmit
-pnpm lint
+FAST_MODEL_API_KEY=test-fast \
+QUALITY_MODEL_API_KEY=test-quality \
+AI_MODEL_FAST=deepseek/deepseek-chat \
+AI_MODEL_QUALITY=zhipu/glm-5.1 \
+AI_MODEL_QUALITY_FALLBACK=zhipu/glm-4.7 \
+AI_APPROVED_MODELS=deepseek/deepseek-chat,zhipu/glm-5.1,zhipu/glm-4.7 \
 pnpm build
 git diff --check
 git status --short
 ```
 
-Expected: tests, typecheck, lint, and build pass; `git diff --check` exits 0; the worktree contains only intentional smoke-test evidence or is clean.
+Also report:
 
-- [ ] **Step 6: Record deferred work in the implementation handoff**
+- the resolved AI SDK/provider package versions and why any package is not on its `latest` tag;
+- unit/typecheck/lint/build results;
+- deterministic contract-test results;
+- whether the optional paid live contract command was run, skipped, or failed for missing credentials;
+- pre-existing unrelated worktree changes left untouched.
 
-List model snapshots, lifecycle/idempotency, deterministic report aggregation, AI call auditing, and golden-dataset automation as separate follow-ups. Do not create extra files or expand this routing implementation.
+## Rollback
+
+If direct-provider schema contracts or stream behavior fail, revert only the direct-provider commit series and redeploy the last Gateway-based release. No database migration is involved. Never reset unrelated worktree changes.
