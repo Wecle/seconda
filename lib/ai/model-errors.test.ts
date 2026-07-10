@@ -6,14 +6,6 @@ import {
   NoOutputGeneratedError,
   RetryError,
 } from "ai";
-import {
-  GatewayAuthenticationError,
-  GatewayInternalServerError,
-  GatewayInvalidRequestError,
-  GatewayModelNotFoundError,
-  GatewayRateLimitError,
-  GatewayResponseError,
-} from "@ai-sdk/gateway";
 import { z } from "zod";
 import { classifyModelError } from "./model-errors";
 
@@ -62,45 +54,18 @@ test("repairs Zod validation errors", () => {
   if (!result.success) assert.equal(classifyModelError(result.error), "repair");
 });
 
-test("retries gateway rate limits and internal errors", () => {
-  assert.equal(classifyModelError(new GatewayRateLimitError()), "transient");
-  assert.equal(classifyModelError(new GatewayInternalServerError()), "transient");
-});
-
-test("retries only eligible Gateway response statuses", () => {
-  assert.equal(
-    classifyModelError(new GatewayResponseError({ statusCode: 408 })),
-    "transient",
-  );
-  assert.equal(
-    classifyModelError(new GatewayResponseError({ statusCode: 429 })),
-    "transient",
-  );
-  assert.equal(
-    classifyModelError(new GatewayResponseError({ statusCode: 503 })),
-    "transient",
-  );
-  assert.equal(
-    classifyModelError(new GatewayResponseError({ statusCode: 401 })),
-    "fatal",
-  );
-});
-
-test("falls back for unavailable Gateway models", () => {
-  assert.equal(classifyModelError(new GatewayModelNotFoundError()), "fallback");
-});
-
-test("does not retry Gateway authentication or request failures", () => {
-  assert.equal(classifyModelError(new GatewayAuthenticationError()), "fatal");
-  assert.equal(classifyModelError(new GatewayInvalidRequestError()), "fatal");
-});
-
-test("retries only eligible API response statuses", () => {
+test("retries only eligible direct-provider response statuses", () => {
   for (const statusCode of [408, 429, 500, 599]) {
     assert.equal(classifyModelError(apiError(statusCode)), "transient");
   }
   assert.equal(classifyModelError(apiError(409)), "fatal");
   assert.equal(classifyModelError(apiError(400)), "fatal");
+});
+
+test("retries a statusless retryable API call error but not other statusless failures", () => {
+  const retryable = Object.assign(apiError(), { isRetryable: true });
+  assert.equal(classifyModelError(retryable), "transient");
+  assert.equal(classifyModelError(apiError()), "fatal");
 });
 
 test("unwraps the final RetryError cause", () => {
@@ -115,6 +80,15 @@ test("unwraps the final RetryError cause", () => {
 test("retries documented network TypeErrors", () => {
   const error = new TypeError("network", {
     cause: Object.assign(new Error("reset"), { code: "ECONNRESET" }),
+  });
+  assert.equal(classifyModelError(error), "transient");
+});
+
+test("unwraps nested direct network causes", () => {
+  const error = new RetryError({
+    message: "retry exhausted",
+    reason: "maxRetriesExceeded",
+    errors: [new TypeError("network", { cause: Object.assign(new Error("dns"), { code: "ENOTFOUND" }) })],
   });
   assert.equal(classifyModelError(error), "transient");
 });

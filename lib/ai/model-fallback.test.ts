@@ -24,7 +24,7 @@ function createRunner(options: {
     controller,
     run: () =>
       runModelCandidates({
-        models: options.models ?? ["first/model", "second/model"],
+        candidates: (options.models ?? ["first/model", "second/model"]).map((model) => ({ model })),
         signal: controller.signal,
         classifyError: (error) =>
           options.classify?.[error instanceof Error ? error.message : ""] ?? "fatal",
