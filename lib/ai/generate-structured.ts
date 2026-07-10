@@ -171,7 +171,5 @@ export async function generateStructured<TSchema extends z.ZodType>(
 }
 
 export function streamStructured<TSchema extends z.ZodType>(input: StructuredInput<TSchema>) {
-  return createProductionGenerator().streamStructured(input) as ReturnType<
-    typeof streamText<any, any>
-  >;
+  return createProductionGenerator().streamStructured(input) as ReturnType<typeof streamText>;
 }
