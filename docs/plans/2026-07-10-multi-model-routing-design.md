@@ -1,63 +1,78 @@
-# Seconda 多模型任务路由设计
+# Seconda 直连厂商的多模型任务路由设计
 
 ## 背景
 
-Seconda 当前所有 AI 能力共用一个 `chatLanguageModel`。这使模型切换简单，但存在三个生产问题：不同任务无法按成本和质量分层、单个模型故障会影响全部流程、评分模型变更可能导致同一场面试的评分口径漂移。
+Seconda 已具备固定任务分层、结构化输出校验和候选模型 fallback 的应用层能力，但当前生产适配器依赖 Vercel AI Gateway。该依赖要求单独的 Gateway 鉴权和账户验证，且不适合直接使用团队已有的厂商 API 账户。
 
-本设计采用“应用内任务路由层 + 托管统一网关”。应用负责定义任务、质量层级和一致性规则；Vercel AI Gateway 负责供应商协议适配、模型和 Provider 路由、故障转移及用量治理。
+本设计将底层调用改为 AI SDK Provider Registry：应用仍控制任务层级、候选顺序、超时、修复与 fallback；各模型请求则直接发往 DeepSeek、OpenAI 或 Z.AI/GLM。业务模块不感知厂商、Base URL 或 Key。
 
 ## 目标
 
-- 简单任务固定使用小模型，复杂任务固定使用大模型。
-- 业务代码不直接依赖模型厂商 SDK、Base URL 或模型名称。
-- 保持同一场面试的评分模型、Prompt 和 Schema 版本稳定。
-- 对限流、短暂故障和结构化输出失败提供可控的重试与降级。
-- 记录足够的调用元数据，用于质量回归、成本分析和事故排查。
+- 简单任务固定使用 fast 层，评分、报告和教练任务固定使用 quality 层。
+- 每层只使用一把业务层级 Key：`FAST_MODEL_API_KEY` 与 `QUALITY_MODEL_API_KEY`。
+- 支持 `deepseek/*`、`openai/*`、`zai/*` 模型标识，并拒绝未知厂商前缀。
+- DeepSeek 等可恢复故障可在未输出任何流式内容前切换到下一个候选模型。
+- 保留现有 45 秒总时限、一次 JSON 修复、本地 Zod 复验和不重放已输出流的安全规则。
+- 不改变 PRD 定义的六维评分模型、Prompt、数据库结构或面试流程。
 
 ## 非目标
 
-- 第一阶段不使用模型自动判断请求复杂度。
-- 第一阶段不根据实时价格或延迟动态选择模型。
-- 不改变 PRD 定义的六维评分模型和面试流程。
-- 不允许任意未经验证的模型直接进入生产路由。
+- 不按单个任务分别指定七套模型；第一阶段仍只有 fast/quality 两层。
+- 不支持同一层级跨厂商 fallback；这需要额外的凭据绑定配置，超出“两把 Key”约束。
+- 不实现 LiteLLM、Vercel AI Gateway 或其他托管网关的审计、预算和 Provider 治理功能。
+- 不使用 ChatGPT Plus、Claude Pro、GLM Coding Plan 等消费级/专用工具订阅作为通用服务端 API 凭据。
 
-## 方案对比
+## 方案选择
 
-### 业务代码直连多个厂商
+### 直连厂商 + AI SDK Provider Registry
 
-每个厂商使用自己的 SDK。短期直接，但业务代码会感知不同的鉴权、结构化输出、错误和流式协议，维护与测试成本随模型数量增长。
+Provider Registry 将模型前缀映射为对应的 AI SDK Provider：
 
-### 应用自行实现全部协议兼容
+| 前缀 | Provider | 接口 |
+| --- | --- | --- |
+| `deepseek/*` | OpenAI-compatible Provider | `https://api.deepseek.com` |
+| `openai/*` | OpenAI Provider | OpenAI API |
+| `zai/*` | OpenAI-compatible Provider | `https://api.z.ai/api/paas/v4/` |
 
-可以避免第三方网关依赖，但需要长期跟进各厂商 API 变化。团队需要自行实现路由、熔断、预算、日志和协议转换。
+Z.AI 的 Coding endpoint 仅用于编码场景，不用于 Seconda 的通用面试任务。模型名与接口能力必须在上线前通过结构化输出契约测试。
 
-### 应用任务路由层 + 托管网关
+Registry 必须将 `provider/model` 拆为 Provider 与厂商模型 ID。例如 `deepseek/deepseek-v4-flash` 必须以 `deepseek-v4-flash` 传给 DeepSeek Provider，不能将完整带前缀字符串传给厂商。注入式 Registry 测试必须验证最终请求端点分别为 `https://api.deepseek.com/chat/completions` 与 `https://api.z.ai/api/paas/v4/chat/completions`。
 
-应用保留业务策略和可替换接口，网关承担供应商兼容与基础设施能力。该方案在当前 Next.js、AI SDK 6 技术栈下具有最好的维护性、稳定性和扩展性，因此作为第一阶段方案。
+此方案保留当前应用内路由的可测试性，并移除 Vercel Gateway 鉴权、账户验证及专属流式参数依赖，因此作为本次改造方案。
 
-## 架构
+### 不采用：继续 Vercel AI Gateway
 
-```text
-Resume / Interview / Report APIs
-              |
-              v
-      generateStructured(task)
-              |
-              v
-        Task Model Policy
-         /            \
-      fast           quality
-         \            /
-              v
-       Vercel AI Gateway
-              |
-              v
-     Approved Model Providers
+保留 Gateway 可减少厂商适配工作，但无法满足直连已有厂商 API 账户的目标。
+
+### 不采用：自建完整 Gateway
+
+自行实现密钥托管、预算、Provider 协议和审计会显著扩大本次范围。若未来需要集中治理，应将当前 Provider Registry Adapter 替换为 LiteLLM Proxy，而不是在 Seconda 中重建网关。
+
+## 配置模型
+
+```env
+FAST_MODEL_API_KEY=fast-tier-provider-api-key
+QUALITY_MODEL_API_KEY=quality-tier-provider-api-key
+
+AI_MODEL_FAST=deepseek/deepseek-v4-flash
+AI_MODEL_FAST_FALLBACK=deepseek/deepseek-v4-pro
+AI_MODEL_QUALITY=zai/glm-5.1
+AI_MODEL_QUALITY_FALLBACK=zai/glm-5
+AI_APPROVED_MODELS=deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,zai/glm-5.1,zai/glm-5
 ```
 
-业务模块只传入任务名、Prompt 和 Zod Schema。统一 AI 层选择模型、执行请求、验证结果并记录调用元数据。
+模型标识遵循 `provider/model`。`AI_APPROVED_MODELS` 是模型准入名单；每个已配置模型必须位于其中，且四个已配置模型不得重复。
 
-## 任务与层级
+凭据与候选槽位绑定，而不是与厂商环境变量绑定：
+
+- fast 主/备用候选使用 `FAST_MODEL_API_KEY`。
+- quality 主/备用候选使用 `QUALITY_MODEL_API_KEY`。
+- 因此 fast 主/备用必须具有相同 Provider 前缀；quality 主/备用也必须具有相同 Provider 前缀。
+- fast 候选耗尽后升级到 quality 候选，此时改用 `QUALITY_MODEL_API_KEY`。
+
+例如，fast 使用 DeepSeek、quality 使用 OpenAI 时，DeepSeek fast 主/备用失败后将升级到 OpenAI quality 主/备用。若两个层级均使用同一厂商，两个环境变量可以配置为同一把厂商 API Key。
+
+## 任务与路由
 
 ```ts
 type AITask =
@@ -70,131 +85,78 @@ type AITask =
   | "coach.evaluate";
 ```
 
-第一阶段映射如下：
+| 任务 | 层级 |
+| --- | --- |
+| `resume.parse` | fast |
+| `question.generate` | fast |
+| `question.follow-up` | fast |
+| `answer.score` | quality |
+| `report.generate` | quality |
+| `coach.generate` | quality |
+| `coach.evaluate` | quality |
 
-| 任务 | 层级 | 原因 |
-| --- | --- | --- |
-| `resume.parse` | fast | 以抽取和格式转换为主，结果受 Schema 约束 |
-| `question.generate` | fast | 约束明确、单次输出短 |
-| `question.follow-up` | fast | 基于已有不足生成一个追问 |
-| `answer.score` | quality | 直接影响六维评分与用户信任 |
-| `report.generate` | quality | 需要综合整场面试信息 |
-| `coach.generate` | quality | 需要准确解释知识与误区 |
-| `coach.evaluate` | quality | 涉及再次评分与反馈一致性 |
+候选顺序固定：
 
-模型名称只存在于环境配置或集中配置模块：
-
-```env
-AI_MODEL_FAST=creator/small-model
-AI_MODEL_FAST_FALLBACK=creator/backup-small-model
-AI_MODEL_QUALITY=creator/large-model
-AI_MODEL_QUALITY_FALLBACK=creator/backup-large-model
+```text
+fast 任务：fast 主 → fast 备用 → quality 主 → quality 备用
+quality 任务：quality 主 → quality 备用
 ```
 
-生产启动时必须校验所有必需配置。缺失、重复或未通过能力验证的模型应阻止部署进入就绪状态。
+候选对象必须保留其凭据层级，避免将 DeepSeek Key 错用于 OpenAI/GLM 请求。
 
-## 路由与降级
+## 非流式调用
 
-- fast 主模型出现可重试错误或结构化输出失败时，先尝试 fast 备用模型，仍失败可升级到 quality 模型。
-- quality 主模型失败时，只能切换到经过评分一致性验证的 quality 备用模型，不得降级到 fast。
-- 鉴权失败、请求参数错误和内容安全拒绝不做盲目重试。
-- 429、超时和 5xx 采用有限次数、带抖动的指数退避。
-- 每次调用设置总时限，避免一次请求因多层重试长时间占用 Route Handler。
-- fallback 成功仍要记录原始失败原因，便于发现主模型持续退化。
+`generateStructured(task, schema, system, prompt)` 继续是业务层唯一入口：
 
-## 评分一致性
+1. 根据任务解析带凭据层级的候选模型。
+2. 由 Provider Registry 构造相应 Language Model。
+3. 禁用 AI SDK 内建重试；应用层统一控制一次修复、一次瞬时重试和候选切换。
+4. 最终结果始终经本地 `schema.parse` 验证。
 
-创建面试时保存一份 AI 执行快照，至少包含：
+错误分类：
 
-- `questionModel`
-- `scoringModel`
-- `promptVersion`
-- `schemaVersion`
-- `routingPolicyVersion`
+- 结构化输出错误与 Zod 错误：一次全局修复机会，失败后切换候选。
+- 408、429、5xx、已识别网络错误：同模型一次带抖动重试，随后切换候选。
+- 除 408/429 以外的所有 4xx（包括模型名/请求参数错误）、内容安全拒绝及未知编程错误：立即失败，不盲目切换。
 
-同一场面试的单题评分固定使用该快照。模型退役时，已有面试按明确迁移规则处理，不能在无记录的情况下静默切换。
+总执行时间仍为 45 秒，覆盖修复、重试和所有候选尝试。
 
-报告中的总分和六维平均分应由应用根据已保存的单题得分确定性计算。大模型只生成优势、改进方向、总结和建议，避免模型重新计算数值造成漂移。
+## 流式下一题生成
 
-## 结构化输出
+保留既有 NDJSON 和部分题目输出体验，不降级为请求—响应。
 
-所有现有 AI 任务都依赖结构化结果。统一调用层必须：
+`streamStructured` 使用与非流式相同的 45 秒组合 deadline，并将调用方中断信号传给每一次候选尝试。它逐个启动候选流，并接受 `isUsablePartial` 回调来定义“已向用户输出”的边界：
 
-1. 使用任务对应的 Zod Schema。
-2. 让 Gateway 和 AI SDK 处理 Provider 协议差异。
-3. 对最终结果再次本地校验。
-4. 对可修复的 JSON 格式问题最多执行一次修复。
-5. 修复失败后切换兼容备用模型，不将部分对象写入数据库。
+1. 主候选在产生首个有效片段前失败，且错误可恢复：启动下一个候选。
+2. 首个有效片段已发送给客户端：该流成为已提交流。
+3. 已提交流之后发生错误：直接向客户端报告错误，不切换、不重放、不拼接第二个模型的输出。
 
-候选模型上线前必须通过各任务 Schema 的契约测试，不能只依据厂商宣称的“支持 JSON”。
+下一题路由将“相对上一次已发送 partial，`question`、`topic` 或 `tip` 出现新的非空白字符串”视为有效片段。必须先设置 committed 标记，再将该 partial 写入 NDJSON，防止重复 partial 或写入竞争触发错误 fallback。
 
-## 数据与审计
+候选在 committed 前的结果规则如下：
 
-每次 AI 调用记录以下元数据，但默认不持久化完整简历或回答 Prompt：
+- 首个有效 partial 前发生瞬时错误、结构化错误或本地 schema 校验失败：按全局一次修复、同模型一次瞬时重试和候选顺序继续。
+- 没有 partial 但最终完整对象通过 schema：将该候选标记为 committed，并把完整对象交给既有路由的最终发送逻辑。
+- 没有 partial 且最终对象无效或请求失败：不向客户端写入内容，继续上述修复/retry/fallback。
+- committed 后的任何请求、解析或 schema 错误：不再启动候选；仅向客户端报告错误，且不得写入题目数据库。
 
-- task、environment、interviewId 或 resumeVersionId
-- requestedModel、servedModel、provider
-- promptVersion、schemaVersion、routingPolicyVersion
-- latency、inputTokens、outputTokens、estimatedCost
-- retryCount、fallbackCount、finishReason、errorCategory
-- Gateway request ID 和应用 correlation ID
+## 启动校验与隐私
 
-简历和面试回答包含个人信息。生产日志应默认脱敏，禁用无必要的 Prompt/Response 全文记录，并通过 Provider allowlist、数据保留策略和无训练策略限制数据去向。
+Node.js 启动时：
 
-## 生命周期与幂等
+- 校验模型标识、批准名单、重复项与同层 Provider 一致性。
+- 因为 fast 和 quality 主模型都必填，始终要求 `FAST_MODEL_API_KEY` 与 `QUALITY_MODEL_API_KEY` 均为非空。
+- Edge runtime 跳过校验，因为 AI Route Handler 运行在 Node.js。
 
-当前创建面试流程先写入 `active` interview，再调用 AI 生成题目。AI 失败时可能留下没有题目的活动面试。
+API Key 只由服务端 Provider Registry 读取，禁止写入客户端环境变量、Prompt、响应或日志。默认不记录简历原文和候选人回答全文。
 
-生产流程应改为：
+## 测试与发布
 
-1. 创建 `creating` 状态的面试并生成幂等键。
-2. 调用 AI 生成首批题目。
-3. 在数据库事务中写入题目并将状态更新为 `active`。
-4. 最终失败时将面试标记为 `failed`，允许相同幂等键安全重试。
+- 单元测试：层级映射、模型前缀、Key 绑定、候选顺序、错误分类和流式提交边界。
+- 契约测试：每个批准模型对其相关 Zod Schema 的成功率。
+- 集成测试：DeepSeek 首片段前 429/5xx → quality fallback；首片段后错误不 fallback。
+- 冒烟测试：使用有效的非生产厂商 API Key 与虚构简历、回答执行全部七个任务，确认实际请求走预期厂商与模型。
 
-评分提交、报告生成和下一题生成也需要避免用户重试产生重复记录。数据库唯一约束继续作为最后防线。
+## 延期工作
 
-## 质量发布流程
-
-模型不是通过修改生产环境变量直接上线，而是按以下流程晋级：
-
-1. 使用固定简历、问题和回答构成黄金数据集。
-2. 验证 Schema 成功率、延迟、成本和内容质量。
-3. 对评分模型比较六维得分偏差和排序一致性。
-4. 先进行影子调用，不影响用户结果。
-5. 小比例灰度后再更新正式策略版本。
-6. 保留快速回滚到上一策略版本的能力。
-
-## 可观测性与告警
-
-按 task、model 和 provider 监控：
-
-- 成功率和 Schema 校验失败率
-- P50、P95、P99 延迟
-- 429、5xx、超时和 fallback 比例
-- 每次调用及每场面试成本
-- fast 升级到 quality 的比例
-- 评分分布与版本切换前后的漂移
-
-对连续主模型故障、fallback 激增、成本异常和评分分布突变设置告警。
-
-## 成本与容量
-
-- fast 与 quality 使用独立预算和调用指标。
-- 对用户和接口设置速率限制，防止重复提交或恶意消耗。
-- 限制最大简历文本、回答长度和历史轮数，避免不可控上下文成本。
-- 仅对无用户差异且不包含个人信息的内容使用缓存。
-- 报告等高成本任务应避免在客户端重试时重复生成。
-
-## 测试策略
-
-- 单元测试：任务到层级映射、错误分类、重试和 fallback 顺序。
-- 契约测试：每个候选模型对所有相关 Zod Schema 的通过率。
-- 集成测试：Gateway 路由、超时、Provider 故障和备用模型切换。
-- 数据库测试：creating/active/failed 状态、事务和幂等约束。
-- 回归评测：六维评分一致性、问题与简历关联性、报告内容质量。
-- 隐私测试：日志和遥测中不出现简历原文、回答全文或 API Key。
-
-## 后续演进
-
-只有在固定任务分层已有稳定数据后，才考虑第二阶段的动态复杂度路由。动态路由应首先应用于问题生成或教练内容，不应直接用于单题评分。若未来需要私有部署、多产品共享或更强租户治理，可在不改变业务接口的情况下将 Gateway Adapter 替换为 LiteLLM Proxy。
+模型/Prompt/Schema 快照、creating/failed 生命周期与幂等、确定性报告分数聚合、持久化 AI 调用审计、黄金数据集评测和动态复杂度路由继续作为独立项目处理。
