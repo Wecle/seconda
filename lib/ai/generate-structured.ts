@@ -9,7 +9,10 @@ import {
   type ModelPolicy,
   type ModelCandidate,
 } from "./model-policy";
-import { createProviderModel } from "./provider-registry";
+import {
+  applyStructuredOutputInstructions,
+  createProviderModel,
+} from "./provider-registry";
 
 const REPAIR_INSTRUCTION = "上一轮输出未能通过结构化校验。请只返回符合既定 Schema 的严格 JSON，不要添加说明或 Markdown。";
 const REPAIR_OUTPUT_LIMIT = 4_000;
@@ -251,9 +254,7 @@ function createProductionGenerator() {
       const provider = createProviderModel({ ...candidate, apiKey: apiKey! });
       const result = await generateText({
         model: provider.model,
-        system: provider.metadata.jsonInstruction
-          ? `${system}\n\n${provider.metadata.jsonInstruction}`
-          : system,
+        system: applyStructuredOutputInstructions(system, schema, provider.metadata),
         prompt,
         abortSignal,
         maxRetries,
@@ -265,9 +266,7 @@ function createProductionGenerator() {
       const provider = createProviderModel({ ...candidate, apiKey: apiKey! });
       return streamText({
         model: provider.model,
-        system: provider.metadata.jsonInstruction
-          ? `${system}\n\n${provider.metadata.jsonInstruction}`
-          : system,
+        system: applyStructuredOutputInstructions(system, schema, provider.metadata),
         prompt,
         abortSignal,
         maxRetries,
