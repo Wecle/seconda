@@ -53,6 +53,8 @@ test("routes streamed next-question generation through the shared generator", as
     'task: "question.generate"',
     "schema: generatedQuestionSchema",
     "abortSignal: request.signal",
+    "isUsableQuestionPartial",
+    "validateGeneratedQuestion",
   ]) {
     assert.equal(body.includes(value), true, `missing ${value}`);
   }

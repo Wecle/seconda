@@ -12,6 +12,7 @@ import {
 import { eq, and, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { generateCoachContent, evaluateCoachAnswer } from "@/lib/interview";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 const bodySchema = z.object({
   action: z.enum(["start", "answer"]),
@@ -174,7 +175,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (error) {
-    console.error("Error in coach deep dive:", error);
+    console.error("Error in coach deep dive:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Failed to process coach session" },
       { status: 500 }
