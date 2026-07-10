@@ -53,8 +53,6 @@ export async function runModelCandidates<T>(options: {
 
         if (action === "transient" && transientRetries < 1) {
           transientRetries += 1;
-          repair = false;
-          previousError = undefined;
           await sleep(250 + Math.floor(random() * 250), signal);
           throwIfAborted(signal);
           continue;
