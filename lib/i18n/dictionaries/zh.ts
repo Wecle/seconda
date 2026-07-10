@@ -142,9 +142,9 @@ export const zh = {
     actionFailed: "操作失败",
     pleaseTryAgain: "请稍后重试。",
     parseHints: {
-      invalidKey: "OPENAI_API_KEY 无效，请更新 .env 后重启服务。",
+      invalidKey: "AI Gateway 鉴权失败，请更新 AI_GATEWAY_API_KEY 后重启服务。",
       notFound:
-        "接口返回 Not Found。请检查 BASE_MODEL 和 BASE_URL 是否正确。",
+        "配置的 AI 模型不可用，请检查 AI_MODEL 配置和已批准模型列表。",
       rateLimit:
         "接口触发限流，请稍后重试上传，或降低并发请求频率。",
       textExtraction:

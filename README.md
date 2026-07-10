@@ -83,10 +83,15 @@ cp .env.example .env
 请按需填写以下关键变量：
 
 - `DATABASE_URL`
-- `OPENAI_API_KEY`
-- `BASE_URL`
-- `BASE_MODEL`
+- `AI_GATEWAY_API_KEY`
+- `AI_MODEL_FAST`
+- `AI_MODEL_FAST_FALLBACK`
+- `AI_MODEL_QUALITY`
+- `AI_MODEL_QUALITY_FALLBACK`
+- `AI_APPROVED_MODELS`
 - `AUTH_SECRET`
+
+AI 模型通过 [Vercel AI Gateway 模型目录](https://vercel.com/ai-gateway/models) 统一调用，模型标识使用 `creator/model` 格式。`AI_APPROVED_MODELS` 只能包含已通过结构化输出和评分一致性审核的模型。fast 任务会依次尝试 fast 主模型、fast 备用模型，再升级到 quality 模型；quality 任务只会在 quality 主/备用模型之间切换，绝不降级到 fast。
 
 ### 3) 执行数据库迁移
 

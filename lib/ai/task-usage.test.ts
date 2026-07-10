@@ -33,8 +33,11 @@ test("routes every non-streaming business task through the shared generator", as
     assert.match(body, new RegExp(`schema:\\s*${schema}`));
   }
 
+  const forbiddenDirectCalls = new RegExp(
+    ["chat" + "LanguageModel", "@ai-sdk/" + "openai", "generate" + "Text\\s*\\("].join("|"),
+  );
   for (const source of [resume, interview]) {
-    assert.doesNotMatch(source, /chatLanguageModel|@ai-sdk\/openai|generateText\s*\(/);
+    assert.doesNotMatch(source, forbiddenDirectCalls);
   }
 });
 
@@ -54,5 +57,8 @@ test("routes streamed next-question generation through the shared generator", as
     assert.equal(body.includes(value), true, `missing ${value}`);
   }
 
-  assert.doesNotMatch(body, /chatLanguageModel|streamText\s*\(|Output\.object/);
+  assert.doesNotMatch(
+    body,
+    new RegExp(["chat" + "LanguageModel", "stream" + "Text\\s*\\(", "Output\\.object"].join("|")),
+  );
 });
