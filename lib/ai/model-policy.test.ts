@@ -115,7 +115,8 @@ test("rejects configured models outside the approved registry", () => {
 });
 
 test("requires a non-empty approved-model registry", () => {
-  const { AI_APPROVED_MODELS: _missing, ...withoutRegistry } = validEnv;
+  const withoutRegistry: Partial<typeof validEnv> = { ...validEnv };
+  delete withoutRegistry.AI_APPROVED_MODELS;
   assert.throws(() => loadModelPolicy(withoutRegistry), /AI_APPROVED_MODELS/);
   assert.throws(
     () => loadModelPolicy({ ...validEnv, AI_APPROVED_MODELS: " " }),
