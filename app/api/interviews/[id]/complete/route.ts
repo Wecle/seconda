@@ -11,6 +11,7 @@ import { and, eq, asc } from "drizzle-orm";
 import { generateInterviewReport } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 export async function POST(
   _request: NextRequest,
@@ -131,7 +132,7 @@ export async function POST(
 
     return NextResponse.json(report);
   } catch (error) {
-    console.error("Error completing interview:", error);
+    console.error("Error completing interview:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Failed to complete interview" },
       { status: 500 }

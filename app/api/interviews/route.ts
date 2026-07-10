@@ -5,6 +5,7 @@ import { interviews, interviewQuestions, resumes, resumeVersions } from "@/lib/d
 import { and, eq } from "drizzle-orm";
 import { generateInterviewQuestions } from "@/lib/interview";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 const createSchema = z.object({
   level: z.string(),
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
       questionCount: body.questionCount,
     });
   } catch (error) {
-    console.error("Error creating interview:", error);
+    console.error("Error creating interview:", sanitizeAIError(error));
     return NextResponse.json(
       { error: "Failed to create interview" },
       { status: 500 }

@@ -3,20 +3,23 @@ import test from "node:test";
 import { register } from "../../instrumentation";
 
 const validEnv = {
-  AI_GATEWAY_API_KEY: "test-key",
-  AI_MODEL_FAST: "google/fast",
-  AI_MODEL_QUALITY: "anthropic/quality",
-  AI_APPROVED_MODELS: "google/fast,anthropic/quality",
+  FAST_MODEL_API_KEY: "fast-key",
+  QUALITY_MODEL_API_KEY: "quality-key",
+  AI_MODEL_FAST: "deepseek/fast",
+  AI_MODEL_QUALITY: "zhipu/quality",
+  AI_APPROVED_MODELS: "deepseek/fast,zhipu/quality",
 };
 
-test("accepts a valid Node.js Gateway configuration", () => {
+test("accepts valid Node.js direct-provider configuration", () => {
   assert.doesNotThrow(() => register(validEnv));
 });
 
-test("requires a Gateway key in Node.js", () => {
-  const withoutKey: Partial<typeof validEnv> = { ...validEnv };
-  delete withoutKey.AI_GATEWAY_API_KEY;
-  assert.throws(() => register(withoutKey), /AI_GATEWAY_API_KEY/);
+test("requires both layer keys in Node.js", () => {
+  for (const name of ["FAST_MODEL_API_KEY", "QUALITY_MODEL_API_KEY"] as const) {
+    const withoutKey: Partial<typeof validEnv> = { ...validEnv };
+    delete withoutKey[name];
+    assert.throws(() => register(withoutKey), new RegExp(name));
+  }
 });
 
 test("rejects invalid Node.js model configuration", () => {
