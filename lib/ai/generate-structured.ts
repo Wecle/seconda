@@ -1,4 +1,4 @@
-import { generateText, streamText, Output } from "ai";
+import { generateText, streamText } from "ai";
 import { z } from "zod";
 import { runModelCandidates, type ModelErrorAction } from "./model-fallback";
 import { classifyModelError } from "./model-errors";
@@ -11,6 +11,7 @@ import {
 } from "./model-policy";
 import {
   applyStructuredOutputInstructions,
+  createProviderOutput,
   createProviderModel,
 } from "./provider-registry";
 
@@ -258,7 +259,7 @@ function createProductionGenerator() {
         prompt,
         abortSignal,
         maxRetries,
-        output: Output.object({ schema }),
+        output: createProviderOutput(schema, provider.metadata),
       });
       return result.output;
     },
@@ -271,7 +272,7 @@ function createProductionGenerator() {
         abortSignal,
         maxRetries,
         onError: ({ error }) => onError(error instanceof Error ? error : new Error("Provider stream error")),
-        output: Output.object({ schema }),
+        output: createProviderOutput(schema, provider.metadata),
       });
     },
   });

@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generateText, Output } from "ai";
+import { generateText } from "ai";
 import { z } from "zod";
 import {
   applyStructuredOutputInstructions,
+  createProviderOutput,
   createProviderModel,
 } from "./provider-registry";
 
@@ -40,7 +41,7 @@ async function requestFor(model: string, credentialTier: "fast" | "quality", api
     system: "Return JSON.",
     prompt: "fixture",
     maxRetries: 0,
-    output: Output.object({ schema }),
+    output: createProviderOutput(schema, provider.metadata),
   });
 
   return { provider, url, authorization, body, output: result.output };
@@ -63,8 +64,9 @@ test("智谱中国区 uses its mandated endpoint, stripped model id, and selecte
   assert.equal(result.url, "https://open.bigmodel.cn/api/paas/v4/chat/completions");
   assert.equal(result.authorization, "Bearer quality-sentinel");
   assert.equal(result.body.model, "glm-5.1");
+  assert.deepEqual(result.body.response_format, { type: "json_object" });
   assert.equal("thinking" in result.body, false);
-  assert.equal(result.provider.metadata.structuredOutput, "sdk-json");
+  assert.equal(result.provider.metadata.structuredOutput, "json-object");
   assert.deepEqual(result.output, { value: "ok" });
 });
 
