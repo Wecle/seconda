@@ -37,3 +37,22 @@ test("routes every non-streaming business task through the shared generator", as
     assert.doesNotMatch(source, /chatLanguageModel|@ai-sdk\/openai|generateText\s*\(/);
   }
 });
+
+test("routes streamed next-question generation through the shared generator", async () => {
+  const route = await readFile(
+    `${root}/app/api/interviews/[id]/next-question/route.ts`,
+    "utf8",
+  );
+  const body = exportedFunction(route, "POST");
+
+  for (const value of [
+    "streamStructured",
+    'task: "question.generate"',
+    "schema: generatedQuestionSchema",
+    "abortSignal: request.signal",
+  ]) {
+    assert.equal(body.includes(value), true, `missing ${value}`);
+  }
+
+  assert.doesNotMatch(body, /chatLanguageModel|streamText\s*\(|Output\.object/);
+});
