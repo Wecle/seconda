@@ -38,6 +38,7 @@ export interface InterviewAgentRepository {
     now: Date;
   }): Promise<void>;
   recordProviderProgress(runId: string, now: Date): Promise<void>;
+  saveRunTrigger(runId: string, trigger: AgentRunTrigger): Promise<void>;
   appendMessage(input: {
     id?: string;
     interviewId: string;
@@ -66,6 +67,12 @@ export type AgentRunRecord = {
   leaseExpiresAt: Date | null;
   resumeCount: number;
   checkpoint: AgentCheckpoint | null;
+  trigger: AgentRunTrigger | null;
+};
+
+export type AgentRunTrigger = {
+  mode: "opening" | "answer";
+  instruction: string;
 };
 
 export type AgentEventRecord = {
@@ -91,6 +98,7 @@ type MemoryRun = {
   attemptNumber: number;
   provisionalMessageId: string | null;
   lastProviderProgressAt: Date | null;
+  trigger: AgentRunTrigger | null;
 };
 
 export function createInMemoryInterviewAgentRepository(
@@ -128,6 +136,7 @@ export function createInMemoryInterviewAgentRepository(
         attemptNumber: 0,
         provisionalMessageId: null,
         lastProviderProgressAt: null,
+        trigger: null,
       };
       runs.set(run.id, run);
       runKeys.set(key, run.id);
@@ -180,6 +189,9 @@ export function createInMemoryInterviewAgentRepository(
     },
     async recordProviderProgress(runId, now) {
       requireRunningMemoryRun(runs, runId).lastProviderProgressAt = now;
+    },
+    async saveRunTrigger(runId, trigger) {
+      requireRunningMemoryRun(runs, runId).trigger = trigger;
     },
     async appendMessage(input) {
       const key = input.idempotencyKey
@@ -238,6 +250,7 @@ function memoryRunRecord(run: MemoryRun): AgentRunRecord {
     leaseExpiresAt: run.leaseExpiresAt,
     resumeCount: run.resumeCount,
     checkpoint: run.checkpoint ?? null,
+    trigger: run.trigger,
   };
 }
 
@@ -324,6 +337,7 @@ export function createDrizzleInterviewAgentRepository(
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
         resumeCount: interviewAgentRuns.resumeCount,
         checkpoint: interviewAgentRuns.checkpointJson,
+        trigger: interviewAgentRuns.triggerJson,
       }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
       return run ? parseRunRecord(run) : null;
     },
@@ -361,6 +375,7 @@ export function createDrizzleInterviewAgentRepository(
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
         resumeCount: interviewAgentRuns.resumeCount,
         checkpoint: interviewAgentRuns.checkpointJson,
+        trigger: interviewAgentRuns.triggerJson,
       });
       if (claimed) return { claimed: true, run: parseRunRecord(claimed) };
       return { claimed: false, run: await this.getRun(runId) };
@@ -402,6 +417,15 @@ export function createDrizzleInterviewAgentRepository(
       await database.update(interviewAgentRuns).set({
         lastProviderProgressAt: now,
         updatedAt: now,
+      }).where(and(
+        eq(interviewAgentRuns.id, runId),
+        eq(interviewAgentRuns.status, "running"),
+      ));
+    },
+    async saveRunTrigger(runId, trigger) {
+      await database.update(interviewAgentRuns).set({
+        triggerJson: trigger,
+        updatedAt: new Date(),
       }).where(and(
         eq(interviewAgentRuns.id, runId),
         eq(interviewAgentRuns.status, "running"),
@@ -500,11 +524,13 @@ function parseRunRecord(row: {
   leaseExpiresAt: Date | null;
   resumeCount: number;
   checkpoint: unknown;
+  trigger: unknown;
 }): AgentRunRecord {
   return {
     ...row,
     status: row.status as AgentRunRecord["status"],
     exitReason: row.exitReason as AgentExitReason | null,
     checkpoint: row.checkpoint as AgentCheckpoint | null,
+    trigger: row.trigger as AgentRunTrigger | null,
   };
 }

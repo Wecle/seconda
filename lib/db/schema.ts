@@ -98,6 +98,7 @@ export const interviewAgentRuns = pgTable("interview_agent_runs", {
   resumeCount: integer("resume_count").notNull().default(0),
   lastEventSequence: integer("last_event_sequence").notNull().default(0),
   checkpointJson: jsonb("checkpoint_json"),
+  triggerJson: jsonb("trigger_json"),
   errorJson: jsonb("error_json"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),

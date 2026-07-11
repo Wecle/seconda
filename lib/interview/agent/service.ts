@@ -34,6 +34,10 @@ export interface AgentRunExecutor {
   }): Promise<{ exitReason: AgentExitReason }>;
 }
 
+export interface AgentRunScheduler {
+  schedule(runId: string): Promise<void>;
+}
+
 export async function createAgentInterview(options: {
   input: {
     resumeVersionId: string;
@@ -42,7 +46,7 @@ export async function createAgentInterview(options: {
   };
   store: AgentInterviewStore;
   repository: InterviewAgentRepository;
-  executor: AgentRunExecutor;
+  scheduler: AgentRunScheduler;
   signal: AbortSignal;
 }) {
   const created = await options.store.createInterview({
@@ -54,13 +58,11 @@ export async function createAgentInterview(options: {
     interviewId: created.interviewId,
     idempotencyKey: options.input.idempotencyKey,
   });
-  await options.executor.run({
-    interviewId: created.interviewId,
-    runId: run.id,
+  await options.repository.saveRunTrigger(run.id, {
     mode: "opening",
     instruction: openingInstruction(created.resumeSummary),
-    signal: options.signal,
   });
+  await options.scheduler.schedule(run.id);
   return {
     interviewId: created.interviewId,
     runId: run.id,
@@ -76,7 +78,7 @@ export async function submitCandidateMessage(options: {
   };
   store: AgentInterviewStore;
   repository: InterviewAgentRepository;
-  executor: AgentRunExecutor;
+  scheduler: AgentRunScheduler;
   signal: AbortSignal;
 }) {
   const interview = await options.store.loadInterview(options.input.interviewId);
@@ -102,14 +104,12 @@ export async function submitCandidateMessage(options: {
     return { runId: existingOrNewRun.id, status: "accepted" as const };
   }
 
-  await options.executor.run({
-    interviewId: options.input.interviewId,
-    runId: existingOrNewRun.id,
+  await options.repository.saveRunTrigger(existingOrNewRun.id, {
     mode: "answer",
     instruction:
       "评估候选人的最新回答，更新覆盖度，然后选择一个深入追问、一个新主题或结束面试。一次只提交一个候选人可见结果。",
-    signal: options.signal,
   });
+  await options.scheduler.schedule(existingOrNewRun.id);
   return { runId: existingOrNewRun.id, status: "accepted" as const };
 }
 

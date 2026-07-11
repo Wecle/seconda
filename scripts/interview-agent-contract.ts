@@ -16,6 +16,7 @@ import {
   endAgentInterview,
   submitCandidateMessage,
 } from "../lib/interview/agent/service";
+import { executeClaimedRun } from "../lib/interview/agent/worker";
 
 async function main() {
   const resumeVersionId = process.env.INTERVIEW_AGENT_TEST_RESUME_VERSION_ID?.trim();
@@ -28,6 +29,16 @@ async function main() {
 
   const dependencies = createProductionAgentDependencies();
   const store = createDrizzleAgentInterviewStore(db);
+  const scheduler = {
+    async schedule(runId: string) {
+      await executeClaimedRun({
+        runId,
+        owner: `contract:${randomUUID()}`,
+        repository: dependencies.repository,
+        executor: dependencies.executor,
+      });
+    },
+  };
   const created = await createAgentInterview({
     input: {
       resumeVersionId,
@@ -42,7 +53,7 @@ async function main() {
     },
     store,
     repository: dependencies.repository,
-    executor: dependencies.executor,
+    scheduler,
     signal: new AbortController().signal,
   });
 
@@ -59,7 +70,7 @@ async function main() {
       input: { interviewId: created.interviewId, content, idempotencyKey: randomUUID() },
       store,
       repository: dependencies.repository,
-      executor: dependencies.executor,
+      scheduler,
       signal: new AbortController().signal,
     });
   }
