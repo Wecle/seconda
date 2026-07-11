@@ -90,6 +90,12 @@ async function migrate() {
     )
   `;
 
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS config_version INTEGER NOT NULL DEFAULT 1`;
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS preference TEXT`;
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS preference_tags JSONB`;
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS target_role TEXT`;
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS candidate_round_count INTEGER NOT NULL DEFAULT 0`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS interview_questions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -105,6 +111,78 @@ async function migrate() {
       feedback_json JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (interview_id, question_index)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_agent_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      idempotency_key TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      exit_reason TEXT,
+      model TEXT,
+      stream_mode TEXT NOT NULL DEFAULT 'non_streaming',
+      turn_count INTEGER NOT NULL DEFAULT 0,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+      cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+      last_event_sequence INTEGER NOT NULL DEFAULT 0,
+      checkpoint_json JSONB,
+      error_json JSONB,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (interview_id, idempotency_key)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_agent_events (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      run_id UUID NOT NULL REFERENCES interview_agent_runs(id) ON DELETE CASCADE,
+      sequence INTEGER NOT NULL,
+      type TEXT NOT NULL,
+      payload JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (run_id, sequence)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      run_id UUID REFERENCES interview_agent_runs(id) ON DELETE SET NULL,
+      sequence INTEGER NOT NULL,
+      idempotency_key TEXT,
+      role TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      content TEXT NOT NULL,
+      question_id UUID REFERENCES interview_questions(id) ON DELETE SET NULL,
+      metadata JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (interview_id, sequence),
+      UNIQUE (interview_id, idempotency_key)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_coverage (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      category TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      resume_evidence_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      question_count INTEGER NOT NULL DEFAULT 0,
+      depth INTEGER NOT NULL DEFAULT 0,
+      evidence_quality INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'uncovered',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (interview_id, category, topic)
     )
   `;
 
@@ -167,6 +245,10 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_resumes_user ON resumes(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_shares_interview ON interview_shares(interview_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_interview ON interview_agent_runs(interview_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_events_run ON interview_agent_events(run_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_messages_interview ON interview_messages(interview_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_coverage_interview ON interview_coverage(interview_id)`;
 
   console.log("Database migrated successfully");
   await sql.end();

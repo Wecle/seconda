@@ -60,6 +60,11 @@ export const interviews = pgTable("interviews", {
   language: text("language").notNull(),
   questionCount: integer("question_count").notNull(),
   persona: text("persona").notNull(),
+  configVersion: integer("config_version").notNull().default(1),
+  preference: text("preference"),
+  preferenceTags: jsonb("preference_tags").$type<string[]>(),
+  targetRole: text("target_role"),
+  candidateRoundCount: integer("candidate_round_count").notNull().default(0),
   status: text("status").notNull().default("active"),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
@@ -68,6 +73,82 @@ export const interviews = pgTable("interviews", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const interviewAgentRuns = pgTable("interview_agent_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  idempotencyKey: text("idempotency_key").notNull(),
+  status: text("status").notNull().default("running"),
+  exitReason: text("exit_reason"),
+  model: text("model"),
+  streamMode: text("stream_mode").notNull().default("non_streaming"),
+  turnCount: integer("turn_count").notNull().default(0),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
+  cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+  lastEventSequence: integer("last_event_sequence").notNull().default(0),
+  checkpointJson: jsonb("checkpoint_json"),
+  errorJson: jsonb("error_json"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.interviewId, table.idempotencyKey),
+]);
+
+export const interviewAgentEvents = pgTable("interview_agent_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
+  sequence: integer("sequence").notNull(),
+  type: text("type").notNull(),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.runId, table.sequence),
+]);
+
+export const interviewMessages = pgTable("interview_messages", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").references(() => interviewAgentRuns.id, { onDelete: "set null" }),
+  sequence: integer("sequence").notNull(),
+  idempotencyKey: text("idempotency_key"),
+  role: text("role").notNull(),
+  kind: text("kind").notNull(),
+  content: text("content").notNull(),
+  questionId: uuid("question_id").references(() => interviewQuestions.id, { onDelete: "set null" }),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.interviewId, table.sequence),
+  unique().on(table.interviewId, table.idempotencyKey),
+]);
+
+export const interviewCoverage = pgTable("interview_coverage", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  category: text("category").notNull(),
+  topic: text("topic").notNull(),
+  resumeEvidenceIds: jsonb("resume_evidence_ids").$type<string[]>().notNull(),
+  questionCount: integer("question_count").notNull().default(0),
+  depth: integer("depth").notNull().default(0),
+  evidenceQuality: integer("evidence_quality").notNull().default(0),
+  status: text("status").notNull().default("uncovered"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.interviewId, table.category, table.topic),
+]);
 
 export const interviewShares = pgTable("interview_shares", {
   id: uuid("id").primaryKey().defaultRandom(),
