@@ -113,6 +113,10 @@ Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。消息提交
 
 `text_delta` 是 provisional 内容；只有收到 `message_committed` 后才是正式消息。一旦 provisional 内容已展示，该 Run 不会静默切换模型或把另一个 attempt 的文本拼接到同一消息。
 
+Agent 上下文采用 cache-stable Prompt Pipe。面试设置、简历概览与证据目录、当前 checkpoint 位于稳定前缀；最近消息和本轮指令只追加在增量尾部。普通轮次不会改变 `cacheEpoch`，每 5 个候选人回答轮次或上下文达到有效预算的 90% 时才生成新 checkpoint。压缩只读取上个 checkpoint 之后的完整消息组，首次超长会截断最旧的完整组重试，连续 3 次失败后以 `prompt_too_long` 终止。
+
+`INTERVIEW_AGENT_CONTEXT_WINDOW` 默认 `128000`，`INTERVIEW_AGENT_OUTPUT_RESERVE` 默认 `8000`；运行时还固定保留 20% headroom。最近尾部最多保留 8 条消息。每个 Run 记录 prompt 模板版本、cache epoch、估算上下文 token，以及厂商实际返回的 input/output/cache-read/cache-write token。厂商未提供 cache 字段时保留为“不可用”语义，监控中不得按 0 命中计算；跨厂商或模型降级也不假设缓存可复用。
+
 当前阶段保留 legacy 面试室 UI；在 Agent UI 迁移完成前，Dashboard 仍默认创建 v1 面试。关闭开关会让新 Agent API 返回 404，不会删除已有 v2 数据。
 
 使用已解析且归属于测试用户的简历版本执行 live contract：

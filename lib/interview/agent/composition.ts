@@ -23,7 +23,26 @@ import { compactInterviewContextIfNeeded } from "./context/persisted-compaction"
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
-  const model = createStructuredInterviewAgentModelPort();
+  const model = createStructuredInterviewAgentModelPort({
+    async onUsage({ runId, usage }) {
+      await db.update(interviewAgentRuns).set({
+        inputTokens: sql`${interviewAgentRuns.inputTokens} + ${usage.inputTokens}`,
+        outputTokens: sql`${interviewAgentRuns.outputTokens} + ${usage.outputTokens}`,
+        ...(usage.cachedInputTokens === null ? {} : {
+          cachedInputTokens: sql`${interviewAgentRuns.cachedInputTokens} + ${usage.cachedInputTokens}`,
+        }),
+        ...(usage.cacheWriteTokens === null ? {} : {
+          cacheWriteTokens: sql`${interviewAgentRuns.cacheWriteTokens} + ${usage.cacheWriteTokens}`,
+        }),
+        ...(
+          usage.cachedInputTokens === null && usage.cacheWriteTokens === null
+            ? {}
+            : { cacheMetricsAvailable: 1 }
+        ),
+        updatedAt: new Date(),
+      }).where(eq(interviewAgentRuns.id, runId));
+    },
+  });
   const executor: AgentRunExecutor = {
     async run(input) {
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);

@@ -164,6 +164,7 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS context_input_tokens INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_input_tokens INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_output_tokens INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS cache_metrics_available INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS compaction_failure_count INTEGER NOT NULL DEFAULT 0`;
 
   await sql`
