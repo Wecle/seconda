@@ -641,6 +641,19 @@ export default function InterviewRoomPage() {
     return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} />;
   }
 
+  if (interview?.configVersion === 1 && interview.status === "active") {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background p-6">
+        <div className="max-w-lg rounded-2xl border bg-card p-8 text-center shadow-sm">
+          <Bot className="mx-auto size-10 text-muted-foreground" />
+          <h1 className="mt-4 text-xl font-semibold">历史面试已转为只读</h1>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">该会话使用旧版固定题目流程，迁移后不再接受新的回答。已完成的历史记录和报告仍会保留。</p>
+          <Button className="mt-6" onClick={() => router.push("/dashboard")}>返回控制台</Button>
+        </div>
+      </div>
+    );
+  }
+
   const isInterviewDone =
     !currentQuestion &&
     answeredCount >= (interview?.questionCount ?? Infinity);

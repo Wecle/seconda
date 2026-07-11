@@ -13,6 +13,7 @@ import { scoreInterviewAnswer } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
+import { legacyInterviewReadOnlyResponse } from "@/lib/interview/legacy";
 
 const answerSchema = z.object({
   questionId: z.string().uuid(),
@@ -58,6 +59,7 @@ export async function POST(
         { status: 404 }
       );
     }
+    if (interview.configVersion <= 2) return legacyInterviewReadOnlyResponse();
 
     if (interview.status !== "active") {
       return NextResponse.json(

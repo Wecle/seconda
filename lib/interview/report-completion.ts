@@ -17,6 +17,9 @@ export async function completeInterviewReport(database: Database, interviewId: s
     const [existing] = await database.select().from(interviews)
       .where(eq(interviews.id, interviewId)).limit(1);
     if (existing?.status === "completed" && existing.reportJson) return existing.reportJson;
+    if (existing?.status === "reporting") {
+      return waitForCompletedReport(database, interviewId);
+    }
     throw new Error("Interview report is already being generated or cannot be completed");
   }
   const interview = claimed[0];
@@ -69,6 +72,17 @@ export async function completeInterviewReport(database: Database, interviewId: s
       .where(and(eq(interviews.id, interviewId), eq(interviews.status, "reporting")));
     throw error;
   }
+}
+
+async function waitForCompletedReport(database: Database, interviewId: string) {
+  for (let attempt = 0; attempt < 90; attempt += 1) {
+    const [interview] = await database.select({ status: interviews.status, reportJson: interviews.reportJson })
+      .from(interviews).where(eq(interviews.id, interviewId)).limit(1);
+    if (interview?.status === "completed" && interview.reportJson) return interview.reportJson;
+    if (interview?.status !== "reporting") throw new Error("Concurrent report generation did not complete");
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("Timed out waiting for concurrent report generation");
 }
 
 async function waitForPendingAgentScores(database: Database, interviewId: string) {

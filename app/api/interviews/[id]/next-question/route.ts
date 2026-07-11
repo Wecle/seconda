@@ -10,6 +10,7 @@ import { and, eq, asc, isNull, isNotNull } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { streamStructured } from "@/lib/ai/generate-structured";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
+import { legacyInterviewReadOnlyResponse } from "@/lib/interview/legacy";
 import {
   isUsableQuestionPartial,
   validateGeneratedQuestion,
@@ -83,6 +84,7 @@ export async function POST(
         { status: 404 }
       );
     }
+    if (interview.configVersion <= 2) return legacyInterviewReadOnlyResponse();
 
     const [existingNext] = await db
       .select()
