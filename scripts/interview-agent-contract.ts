@@ -101,6 +101,17 @@ async function main() {
     .orderBy(desc(interviewAgentRuns.createdAt))
     .limit(1);
   assert.ok(lastRun, "a completed Agent run must exist");
+  const allEvents = await dependencies.repository.listEvents(lastRun.id, 0);
+  const cursor = allEvents.length > 1 ? allEvents.at(-2)!.sequence : 0;
+  const replayed = await dependencies.repository.listEvents(lastRun.id, cursor);
+  assert.ok(replayed.every((event) => event.sequence > cursor), "event replay cursor must be exclusive");
+  assert.equal(new Set(replayed.map((event) => event.sequence)).size, replayed.length, "replayed events must not duplicate sequences");
+  const persistedRun = await dependencies.repository.getRun(lastRun.id);
+  assert.ok(
+    persistedRun?.status !== "running" ||
+      Boolean(persistedRun.leaseExpiresAt && persistedRun.leaseExpiresAt.getTime() > Date.now()),
+    "running Agent run must hold an unexpired lease",
+  );
   process.stdout.write(`${JSON.stringify({ interviewId: created.interviewId, runId: lastRun.id, exitReason: lastRun.exitReason })}\n`);
 }
 

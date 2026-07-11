@@ -87,10 +87,23 @@ export function createAgentRunScheduler(options: {
           owner,
           repository: options.repository,
           executor: options.executor,
+          leaseMs: readPositiveInteger(
+            process.env.INTERVIEW_AGENT_LEASE_MS,
+            30_000,
+          ),
+          renewEveryMs: readPositiveInteger(
+            process.env.INTERVIEW_AGENT_LEASE_RENEW_MS,
+            10_000,
+          ),
         });
       });
     },
   };
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function getRecoveryDisposition(

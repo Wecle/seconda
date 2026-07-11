@@ -103,9 +103,17 @@ AI 调用直接使用厂商 API，模型标识仅支持 `deepseek/*`、`openai/*
 POST /api/interviews
 POST /api/interviews/:id/messages
 POST /api/interviews/:id/end
+GET  /api/interviews/:id/runs/:runId/events?after=<sequence>
+POST /api/interviews/:id/runs/:runId/resume
 ```
 
-Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。当前阶段保留 legacy 面试室 UI；在 Agent UI 迁移完成前，Dashboard 仍默认创建 v1 面试。关闭开关会让新 Agent API 返回 404，不会删除已有 v2 数据。
+Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。消息提交返回 `202` 后，由持有 30 秒数据库租约的 Worker 执行；默认每 10 秒续租。租约过期的 Run 可通过 `resume` 接口重新调度，同一时刻只有一个 Worker 能成功 claim。
+
+事件接口使用 SSE，并通过 `after` sequence 重放断线期间的持久化事件。业务空闲 10 秒会发送不落库的 heartbeat。模型流 25 秒没有 token 或工具进展会触发 provider idle timeout。瞬时错误采用 500ms 起始、2 倍增长、8 秒封顶的 full-jitter 退避，每个模型最多重试 2 次。
+
+`text_delta` 是 provisional 内容；只有收到 `message_committed` 后才是正式消息。一旦 provisional 内容已展示，该 Run 不会静默切换模型或把另一个 attempt 的文本拼接到同一消息。
+
+当前阶段保留 legacy 面试室 UI；在 Agent UI 迁移完成前，Dashboard 仍默认创建 v1 面试。关闭开关会让新 Agent API 返回 404，不会删除已有 v2 数据。
 
 使用已解析且归属于测试用户的简历版本执行 live contract：
 
