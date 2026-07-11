@@ -50,6 +50,10 @@ export async function GET(
           runId: run.id,
           afterSequence: parsedAfter.data,
           signal: request.signal,
+          heartbeatMs: readPositiveInteger(
+            process.env.INTERVIEW_AGENT_HEARTBEAT_MS,
+            10_000,
+          ),
         })) {
           controller.enqueue(encoder.encode(encodeSseEvent(event)));
         }
@@ -66,4 +70,9 @@ export async function GET(
       "X-Accel-Buffering": "no",
     },
   });
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
