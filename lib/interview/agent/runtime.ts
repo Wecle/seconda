@@ -1,0 +1,187 @@
+import type { AgentExitReason } from "./contracts";
+import { AgentLoopDetector } from "./loop-detector";
+import type {
+  AgentRuntimeMessage,
+  InterviewAgentModelPort,
+} from "./model-port";
+import type { InterviewAgentRepository } from "./repository";
+import {
+  executeInterviewTool,
+  type InterviewToolDefinition,
+  type ToolPipelineHook,
+} from "./tool-pipeline";
+
+const MAX_MODEL_TURNS = 8;
+const TERMINAL_TOOLS = new Set([
+  "ask_interview_question",
+  "finish_interview",
+]);
+
+export async function runInterviewAgent(options: {
+  interviewId: string;
+  runId: string;
+  repository: InterviewAgentRepository;
+  model: InterviewAgentModelPort;
+  tools: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>;
+  hooks?: readonly ToolPipelineHook[];
+  initialMessages: readonly AgentRuntimeMessage[];
+  signal: AbortSignal;
+  progressHash: () => string;
+}): Promise<{ exitReason: AgentExitReason; turnCount: number }> {
+  const messages = [...options.initialMessages];
+  const loopDetector = new AgentLoopDetector();
+  let lastEventSequence = 0;
+  let toolCallCount = 0;
+
+  lastEventSequence = (await options.repository.appendEvent(options.runId, {
+    type: "run_started",
+    payload: { interviewId: options.interviewId },
+  })).sequence;
+
+  for (let turn = 1; turn <= MAX_MODEL_TURNS; turn += 1) {
+    if (options.signal.aborted) {
+      return failRun(options, "aborted_streaming", options.signal.reason, turn - 1);
+    }
+
+    await options.repository.saveCheckpoint(options.runId, {
+      turnCount: turn - 1,
+      toolCallCount,
+      lastEventSequence,
+      progressHash: options.progressHash(),
+      activeSkillNames: [],
+    });
+    lastEventSequence = (await options.repository.appendEvent(options.runId, {
+      type: "model_started",
+      payload: { turn },
+    })).sequence;
+
+    let step;
+    try {
+      step = await options.model.nextStep({
+        runId: options.runId,
+        messages,
+        tools: [...options.tools.keys()].map((name) => ({
+          name,
+          description: `Seconda interview domain tool: ${name}`,
+        })),
+        signal: options.signal,
+      });
+    } catch (error) {
+      return failRun(options, "aborted_streaming", error, turn);
+    }
+
+    if (step.type === "final") {
+      messages.push({
+        role: "system",
+        content:
+          "最终文本不会直接展示给候选人。请调用 ask_interview_question 或 finish_interview。",
+      });
+      continue;
+    }
+
+    toolCallCount += 1;
+    const definition = options.tools.get(step.toolName);
+    if (!definition) {
+      const loop = loopDetector.record({
+        toolName: step.toolName,
+        args: step.args,
+        result: { code: "UNKNOWN_TOOL" },
+        progressHash: options.progressHash(),
+        unknownTool: true,
+      });
+      messages.push({
+        role: "tool",
+        content: JSON.stringify({ callId: step.callId, error: "UNKNOWN_TOOL" }),
+      });
+      const handled = await handleLoopDecision(options, loop, messages);
+      if (handled) return { exitReason: handled, turnCount: turn };
+      continue;
+    }
+
+    const result = await executeInterviewTool({
+      definition,
+      rawInput: step.args,
+      context: {
+        interviewId: options.interviewId,
+        runId: options.runId,
+        repository: options.repository,
+      },
+      hooks: options.hooks,
+    });
+
+    if (options.signal.aborted) {
+      return failRun(options, "aborted_tools", options.signal.reason, turn);
+    }
+    if (!result.ok && result.error.code === "HOOK_STOPPED") {
+      return failRun(options, "hook_stopped", new Error(result.error.message), turn);
+    }
+
+    messages.push({
+      role: "tool",
+      content: JSON.stringify({ callId: step.callId, toolName: step.toolName, result }),
+    });
+    const loop = loopDetector.record({
+      toolName: step.toolName,
+      args: step.args,
+      result,
+      progressHash: options.progressHash(),
+    });
+    const handled = await handleLoopDecision(options, loop, messages);
+    if (handled) return { exitReason: handled, turnCount: turn };
+
+    if (result.ok && TERMINAL_TOOLS.has(step.toolName)) {
+      lastEventSequence = (await options.repository.appendEvent(options.runId, {
+        type: "run_completed",
+        payload: { turn, toolName: step.toolName },
+      })).sequence;
+      await options.repository.saveCheckpoint(options.runId, {
+        turnCount: turn,
+        toolCallCount,
+        lastEventSequence,
+        progressHash: options.progressHash(),
+        activeSkillNames: [],
+      });
+      await options.repository.completeRun(options.runId, "completed");
+      return { exitReason: "completed", turnCount: turn };
+    }
+  }
+
+  await options.repository.failRun(
+    options.runId,
+    "max_turns",
+    new Error("Agent reached the model turn limit"),
+  );
+  return { exitReason: "max_turns", turnCount: MAX_MODEL_TURNS };
+}
+
+async function handleLoopDecision(
+  options: Parameters<typeof runInterviewAgent>[0],
+  decision: ReturnType<AgentLoopDetector["record"]>,
+  messages: AgentRuntimeMessage[],
+): Promise<AgentExitReason | null> {
+  if (decision.level === "continue") return null;
+  await options.repository.appendEvent(options.runId, {
+    type: "warning",
+    payload: decision,
+  });
+  if (decision.level === "warning") {
+    messages.push({ role: "system", content: decision.message });
+    return null;
+  }
+  await options.repository.failRun(
+    options.runId,
+    decision.reason,
+    new Error(decision.message),
+  );
+  return decision.reason;
+}
+
+async function failRun(
+  options: Parameters<typeof runInterviewAgent>[0],
+  reason: AgentExitReason,
+  error: unknown,
+  turnCount: number,
+) {
+  await options.repository.failRun(options.runId, reason, error);
+  return { exitReason: reason, turnCount };
+}

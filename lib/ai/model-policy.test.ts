@@ -19,6 +19,7 @@ const validEnv = {
 
 const expectedTiers: Record<AITask, AIModelTier> = {
   "resume.parse": "fast",
+  "interview.agent": "fast",
   "question.generate": "fast",
   "question.follow-up": "fast",
   "answer.score": "quality",
