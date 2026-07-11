@@ -151,6 +151,14 @@ async function migrate() {
     )
   `;
 
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS attempt_id TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS attempt_number INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS provisional_message_id TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS last_provider_progress_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS resume_count INTEGER NOT NULL DEFAULT 0`;
+
   await sql`
     CREATE TABLE IF NOT EXISTS interview_messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -246,6 +254,7 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user ON oauth_accounts(user_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_shares_interview ON interview_shares(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_interview ON interview_agent_runs(interview_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_lease ON interview_agent_runs(status, lease_expires_at)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_events_run ON interview_agent_events(run_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_messages_interview ON interview_messages(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_coverage_interview ON interview_coverage(interview_id)`;

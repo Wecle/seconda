@@ -96,6 +96,39 @@ export const agentCheckpointSchema = z.object({
   activeSkillNames: z.array(z.string()),
 });
 
+export const textDeltaPayloadSchema = z.object({
+  messageId: z.string().min(1),
+  attemptId: z.string().min(1),
+  text: z.string().min(1),
+  provisional: z.literal(true),
+}).strict();
+
+export const messageCommittedPayloadSchema = z.object({
+  messageId: z.string().min(1),
+  messageSequence: z.number().int().min(1),
+}).strict();
+
+export const persistedAgentStreamEventSchema = z.object({
+  type: agentEventTypeSchema,
+  sequence: z.number().int().min(1),
+  payload: z.unknown(),
+}).strict();
+
+export const heartbeatStreamEventSchema = z.object({
+  type: z.literal("heartbeat"),
+  serverTime: z.string().datetime(),
+}).strict();
+
+export const agentStreamEventSchema = z.union([
+  persistedAgentStreamEventSchema,
+  heartbeatStreamEventSchema,
+]);
+
+export const runLeaseSchema = z.object({
+  owner: z.string().min(1),
+  expiresAt: z.date(),
+}).strict();
+
 export type QuestionCategory = z.infer<typeof questionCategorySchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentExitReason = z.infer<typeof agentExitReasonSchema>;
@@ -106,6 +139,10 @@ export type CoverageStatus = z.infer<typeof coverageStatusSchema>;
 export type InterviewDecision = z.infer<typeof interviewDecisionSchema>;
 export type AgentModelStep = z.infer<typeof agentModelStepSchema>;
 export type AgentCheckpoint = z.infer<typeof agentCheckpointSchema>;
+export type TextDeltaPayload = z.infer<typeof textDeltaPayloadSchema>;
+export type MessageCommittedPayload = z.infer<typeof messageCommittedPayloadSchema>;
+export type AgentStreamEvent = z.infer<typeof agentStreamEventSchema>;
+export type RunLease = z.infer<typeof runLeaseSchema>;
 
 export type InterviewAgentState = {
   interviewId: string;
