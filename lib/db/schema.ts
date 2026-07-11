@@ -90,6 +90,7 @@ export const interviewAgentRuns = pgTable("interview_agent_runs", {
   outputTokens: integer("output_tokens").notNull().default(0),
   cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
   cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
+  cacheMetricsAvailable: integer("cache_metrics_available").notNull().default(0),
   leaseOwner: text("lease_owner"),
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
   attemptId: text("attempt_id"),

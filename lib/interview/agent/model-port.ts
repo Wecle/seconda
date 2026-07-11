@@ -14,6 +14,7 @@ import {
 } from "@/lib/ai/provider-registry";
 import { runAgentAttempts } from "./attempt-controller";
 import { agentModelStepSchema, type AgentModelStep } from "./contracts";
+import { normalizeModelUsage, type NormalizedModelUsage } from "./context/telemetry";
 
 export type AgentRuntimeMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -63,6 +64,7 @@ export interface InterviewAgentModelPort {
 type CandidateStream = {
   partialOutputStream: AsyncIterable<unknown>;
   output: PromiseLike<unknown>;
+  usage?: PromiseLike<unknown>;
 };
 
 export function createStreamingInterviewAgentModelPort(options: {
@@ -86,6 +88,7 @@ export function createStreamingInterviewAgentModelPort(options: {
   createMessageId?: () => string;
   sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
+  onUsage?: (input: { runId: string; usage: NormalizedModelUsage }) => Promise<void>;
 }): InterviewAgentModelPort {
   return {
     nextStep(input) {
@@ -155,6 +158,12 @@ export function createStreamingInterviewAgentModelPort(options: {
             input.signal,
           );
           await input.onProviderProgress();
+          if (stream.usage) {
+            await options.onUsage?.({
+              runId: input.runId,
+              usage: normalizeModelUsage(await Promise.resolve(stream.usage)),
+            });
+          }
           return agentModelStepSchema.parse(output);
         },
       });
@@ -167,7 +176,9 @@ export function createStreamingInterviewAgentModelPort(options: {
   };
 }
 
-export function createStructuredInterviewAgentModelPort(): InterviewAgentModelPort {
+export function createStructuredInterviewAgentModelPort(options?: {
+  onUsage?: (input: { runId: string; usage: NormalizedModelUsage }) => Promise<void>;
+}): InterviewAgentModelPort {
   const policy = loadModelPolicy(process.env);
   const { candidates } = resolveModelCandidates("interview.agent", policy);
   return createStreamingInterviewAgentModelPort({
@@ -179,6 +190,7 @@ export function createStructuredInterviewAgentModelPort(): InterviewAgentModelPo
     classifyError: (error) =>
       classifyModelError(error) === "transient" ? "transient" : "fatal",
     async onAttemptStarted() {},
+    onUsage: options?.onUsage,
     async streamCandidate(input) {
       const candidate = candidates.find((item) => item.model === input.model);
       if (!candidate) throw new Error(`Unknown Agent model candidate: ${input.model}`);
