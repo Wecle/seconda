@@ -1,5 +1,5 @@
 import type { ParsedResume } from "@/lib/resume/types";
-import type { InterviewConfig } from "@/lib/interview/settings";
+import type { StoredInterviewConfig } from "@/lib/interview/settings";
 
 export interface VersionInterview {
   id: string;
@@ -28,7 +28,7 @@ export interface Resume {
   id: string;
   title: string;
   currentVersionId: string | null;
-  interviewSettings: InterviewConfig | null;
+  interviewSettings: StoredInterviewConfig | null;
   createdAt: string;
   updatedAt: string;
   versions: ResumeVersion[];

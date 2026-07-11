@@ -6,8 +6,8 @@ import { FileUp, Loader2, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n/context";
 import {
-  defaultInterviewConfig,
-  type InterviewConfig,
+  defaultInterviewConfigV2,
+  type InterviewConfigV2,
 } from "@/lib/interview/settings";
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
 import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
@@ -51,9 +51,9 @@ export default function DashboardPage() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draftInterviewConfig, setDraftInterviewConfig] =
-    useState<InterviewConfig>(defaultInterviewConfig);
+    useState<InterviewConfigV2>(defaultInterviewConfigV2);
   const [interviewConfigByResumeId, setInterviewConfigByResumeId] = useState<
-    Record<string, InterviewConfig>
+    Record<string, InterviewConfigV2>
   >({});
   const [savingInterviewSettings, setSavingInterviewSettings] = useState(false);
   const [creatingInterview, setCreatingInterview] = useState(false);
@@ -73,9 +73,9 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = (await res.json()) as Resume[];
         setResumes(data);
-        const persistedConfigMap: Record<string, InterviewConfig> = {};
+        const persistedConfigMap: Record<string, InterviewConfigV2> = {};
         for (const resume of data) {
-          if (resume.interviewSettings) {
+          if (resume.interviewSettings?.configVersion === 2) {
             persistedConfigMap[resume.id] = resume.interviewSettings;
           }
         }
@@ -227,7 +227,7 @@ export default function DashboardPage() {
   const openSettingsDialog = () => {
     if (!selectedResumeId) return;
     setDraftInterviewConfig(
-      interviewConfigByResumeId[selectedResumeId] ?? defaultInterviewConfig,
+      interviewConfigByResumeId[selectedResumeId] ?? defaultInterviewConfigV2,
     );
     setSettingsOpen(true);
   };
@@ -249,7 +249,7 @@ export default function DashboardPage() {
 
       setInterviewConfigByResumeId((prev) => ({
         ...prev,
-        [selectedResumeId]: data.interviewSettings as InterviewConfig,
+        [selectedResumeId]: data.interviewSettings as InterviewConfigV2,
       }));
       setSettingsOpen(false);
     } catch (e) {
@@ -274,11 +274,11 @@ export default function DashboardPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          level: selectedInterviewConfig.level.toLowerCase(),
-          type: selectedInterviewConfig.type,
+          configVersion: 2,
           language: selectedInterviewConfig.language,
-          questionCount: selectedInterviewConfig.questionCount,
           persona: selectedInterviewConfig.persona,
+          preference: selectedInterviewConfig.preference,
+          preferenceTags: selectedInterviewConfig.preferenceTags,
           resumeVersionId: selectedVersion.id,
         }),
       });

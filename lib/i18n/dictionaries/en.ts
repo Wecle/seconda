@@ -162,7 +162,15 @@ export const en = {
   interview: {
     settingsTitle: "Interview Settings",
     settingsDescription:
-      "Configure your AI mock interview session parameters.",
+      "Set the interviewer style and focus; the Agent adapts to your resume and answers.",
+    preference: "Interview focus",
+    preferenceDescription: "Choose focus areas and add anything you want the interviewer to emphasize.",
+    preferencePlaceholder: "For example: go deep on distributed systems projects, trade-offs, and reflection…",
+    preferenceTags: {
+      project_deep_dive: "Project deep dive",
+      technical_foundations: "Technical foundations",
+      behavioral_evidence: "Behavioral evidence",
+    },
     targetLevel: "Target Level",
     levels: {
       Junior: "Junior",
