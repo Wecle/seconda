@@ -22,14 +22,14 @@
 ***Seconda*** 是一个 AI 驱动的模拟面试系统，帮助用户从简历出发完成完整的面试训练闭环：
 
 1. 上传 PDF 简历并结构化解析
-2. 配置面试参数（级别、类型、语言、风格、题量）
-3. 在面试室逐题作答并获得评分
+2. 配置面试语言、面试官风格与面试偏好
+3. 在连续的 Agent 面试中自我介绍、作答并接受深入追问
 4. 生成完整评估报告并进行单题深挖复盘
 
 ## 核心能力
 
 - 简历驱动出题：问题基于简历内容生成，不虚构经历
-- 渐进式面试流程：创建会话预生成 `min(3, total)` 题，答完一题再生成下一题
+- 有界 Agent 面试：根据简历和回答自主选择追问、切换主题或结束，同类最多 3 题、全局最多 20 轮
 - 六维评分模型：每题按 6 个维度评分（0-10）并给出改进建议
 - 全局评估报告：输出总分（0-100）、雷达维度、优势与重点改进项
 - 单题 Deep Dive：支持题目级复盘与教练式强化训练
@@ -83,6 +83,7 @@ cp .env.example .env
 请按需填写以下关键变量：
 
 - `DATABASE_URL`
+- `INTERVIEW_AGENT_V2_ENABLED`
 - `FAST_MODEL_API_KEY`
 - `QUALITY_MODEL_API_KEY`
 - `AI_MODEL_FAST`
@@ -93,6 +94,24 @@ cp .env.example .env
 - `AUTH_SECRET`
 
 AI 调用直接使用厂商 API，模型标识仅支持 `deepseek/*`、`openai/*` 和 `zhipu/*`。每层使用自己的 Key：fast 候选使用 `FAST_MODEL_API_KEY`，quality 候选使用 `QUALITY_MODEL_API_KEY`；同一层的主/备用候选必须属于同一厂商。fast 任务会依次尝试 fast 主模型、fast 备用模型，再升级到 quality 模型；quality 任务只会在 quality 主/备用模型之间切换，绝不降级到 fast。`AI_APPROVED_MODELS` 只能包含已通过结构化输出和评分一致性审核的模型。智谱仅使用中国区开放平台：`https://open.bigmodel.cn/api/paas/v4/`；示例模型 ID 部署前须以中国区当前模型列表和候选级契约测试确认。
+
+### Agent v2 开关
+
+`INTERVIEW_AGENT_V2_ENABLED=true` 时，后端开放版本化 Agent API：
+
+```text
+POST /api/interviews
+POST /api/interviews/:id/messages
+POST /api/interviews/:id/end
+```
+
+Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。当前阶段保留 legacy 面试室 UI；在 Agent UI 迁移完成前，Dashboard 仍默认创建 v1 面试。关闭开关会让新 Agent API 返回 404，不会删除已有 v2 数据。
+
+使用已解析且归属于测试用户的简历版本执行 live contract：
+
+```bash
+INTERVIEW_AGENT_TEST_RESUME_VERSION_ID=<uuid> pnpm test:interview:agent
+```
 
 ### 3) 执行数据库迁移
 
