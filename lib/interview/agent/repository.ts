@@ -20,7 +20,7 @@ export interface InterviewAgentRepository {
   createRun(input: {
     interviewId: string;
     idempotencyKey: string;
-  }): Promise<{ id: string; status: "running" }>;
+  }): Promise<{ id: string; status: "running"; created: boolean }>;
   appendEvent(
     runId: string,
     event: { type: AgentEventType; payload: unknown },
@@ -70,7 +70,7 @@ export function createInMemoryInterviewAgentRepository(
     async createRun(input) {
       const key = `${input.interviewId}:${input.idempotencyKey}`;
       const existingId = runKeys.get(key);
-      if (existingId) return { id: existingId, status: "running" };
+      if (existingId) return { id: existingId, status: "running", created: false };
       const run: MemoryRun = {
         id: `run-${++id}`,
         interviewId: input.interviewId,
@@ -80,7 +80,7 @@ export function createInMemoryInterviewAgentRepository(
       };
       runs.set(run.id, run);
       runKeys.set(key, run.id);
-      return { id: run.id, status: "running" };
+      return { id: run.id, status: "running", created: true };
     },
     async appendEvent(runId) {
       const run = requireMemoryRun(runs, runId);
@@ -155,13 +155,13 @@ export function createDrizzleInterviewAgentRepository(
           eq(interviewAgentRuns.idempotencyKey, input.idempotencyKey),
         ))
         .limit(1);
-      if (existing) return { id: existing.id, status: "running" };
+      if (existing) return { id: existing.id, status: "running", created: false };
 
       const [created] = await database
         .insert(interviewAgentRuns)
         .values(input)
         .returning({ id: interviewAgentRuns.id });
-      return { id: created.id, status: "running" };
+      return { id: created.id, status: "running", created: true };
     },
     async appendEvent(runId, event) {
       return database.transaction(async (tx) => {
