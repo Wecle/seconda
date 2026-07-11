@@ -261,6 +261,19 @@ Prompt construction moves out of API routes into a Prompt Pipe. Ordered layers a
 
 Each layer declares priority, token budget, cache key, trust level, and whether it may be trimmed.
 
+Restoring a run does not mean regenerating every prompt segment. The Prompt Pipe incrementally assembles versioned segments and preserves the longest possible stable prefix:
+
+1. stable system rules, scoring rules, persona contract, and fixed tool schemas;
+2. semi-stable resume overview, interview preference, and confirmed target role;
+3. a checkpoint summary and compact coverage state that change only at a compaction boundary;
+4. an append-only recent conversation tail and the current candidate answer.
+
+Stable segments must not contain timestamps, random identifiers, volatile counters, nondeterministic object-key ordering, or reordered tool definitions. New conversation content is appended after cached segments rather than inserted into the middle. A prompt-template version change, target-role correction, tool-contract change, or compaction checkpoint starts a new cache epoch; ordinary interview turns do not.
+
+Compaction is low-frequency rather than per-turn. The initial policy checks after every turn but normally creates a new checkpoint only after 4-6 candidate rounds or when the configured token-pressure threshold is crossed. Coverage is persisted in full but injected as a compact deterministic projection; detailed evidence is loaded through tools only when needed.
+
+Runtime telemetry records `inputTokens`, `cachedInputTokens`, `cacheWriteTokens` when the provider exposes them, `outputTokens`, cache-hit ratio, compaction cost, and estimated cost per interview turn. Model fallback never assumes cache portability across providers. The routing policy should keep a healthy interview on the same provider and model unless reliability policy requires a switch.
+
 ### 9.1 Three-level compaction
 
 1. Lightweight pruning removes duplicated static text, old low-value tool results, and redundant metadata.
