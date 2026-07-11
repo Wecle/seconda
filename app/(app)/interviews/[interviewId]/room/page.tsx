@@ -9,6 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { InterviewAnswerPanel } from "@/components/interview/interview-answer-panel";
 import { InterviewResumeContextSheet } from "@/components/interview/interview-resume-context-sheet";
 import { InterviewCompletionView } from "@/components/interview/interview-completion-view";
+import { AgentInterviewRoom } from "@/components/interview/agent-interview-room";
 import type { ParsedResume } from "@/lib/resume/types";
 import {
   Bot,
@@ -32,6 +33,7 @@ interface InterviewData {
   reportJson: unknown;
   startedAt: string | null;
   completedAt: string | null;
+  configVersion: number;
 }
 
 interface ResumeSnapshotData {
@@ -46,6 +48,10 @@ interface ResumeSnapshotData {
 interface InterviewApiResponse {
   interview: InterviewData;
   resumeSnapshot: ResumeSnapshotData | null;
+  agentState?: {
+    messages: Array<{ id: string; sequence: number; role: string; kind: string; content: string }>;
+    latestRun: { id: string; status: string; exitReason: string | null; lastEventSequence: number } | null;
+  } | null;
 }
 
 interface CurrentQuestionData {
@@ -127,6 +133,7 @@ export default function InterviewRoomPage() {
   const [resumeSnapshot, setResumeSnapshot] = useState<ResumeSnapshotData | null>(
     null,
   );
+  const [agentState, setAgentState] = useState<InterviewApiResponse["agentState"]>(null);
   const [completingReport, setCompletingReport] = useState(false);
   const [autoCompletionTriggered, setAutoCompletionTriggered] = useState(false);
   const [openingReport, setOpeningReport] = useState(false);
@@ -139,6 +146,7 @@ export default function InterviewRoomPage() {
     }).then((r) => r.json(),
     )) as InterviewApiResponse;
     setInterview(data.interview);
+    setAgentState(data.agentState ?? null);
     setResumeSnapshot(data.resumeSnapshot ?? null);
   }, [interviewId]);
 
@@ -627,6 +635,10 @@ export default function InterviewRoomPage() {
         <Loader2 className="size-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (interview?.configVersion === 2) {
+    return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} />;
   }
 
   const isInterviewDone =

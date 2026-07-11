@@ -9,13 +9,14 @@ import { createProductionAgentDependencies } from "@/lib/interview/agent/composi
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { submitCandidateMessage } from "@/lib/interview/agent/service";
 import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
+import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+    if (!isInterviewAgentEnabled()) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const userId = await getCurrentUserId();

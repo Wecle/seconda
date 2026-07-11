@@ -6,6 +6,7 @@ import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
 import { encodeSseEvent, pollAgentEvents } from "@/lib/interview/agent/sse";
+import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -17,7 +18,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; runId: string }> },
 ) {
-  if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+  if (!isInterviewAgentEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const userId = await getCurrentUserId();

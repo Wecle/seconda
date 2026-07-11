@@ -244,6 +244,8 @@ export const en = {
       "Tip: Reviewing your report after each session helps you improve faster.",
     questionLoadFailed: "Failed to generate the next question. Please try again later.",
     retryLoadQuestion: "Retry Loading Question",
+    roundsUnit: "rounds",
+    agentInterview: "Adaptive Agent Interview",
   },
   report: {
     title: "Interview Evaluation",

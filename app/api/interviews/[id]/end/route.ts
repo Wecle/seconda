@@ -7,13 +7,14 @@ import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { endAgentInterview } from "@/lib/interview/agent/service";
+import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+    if (!isInterviewAgentEnabled()) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
     const userId = await getCurrentUserId();

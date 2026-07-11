@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
+import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 import {
   createAgentRunScheduler,
   getRecoveryDisposition,
@@ -19,7 +20,7 @@ export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string; runId: string }> },
 ) {
-  if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+  if (!isInterviewAgentEnabled()) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   const userId = await getCurrentUserId();

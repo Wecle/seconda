@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
-import { and, eq, asc } from "drizzle-orm";
+import { interviewAgentRuns, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
+import { and, eq, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
@@ -35,12 +35,21 @@ export async function GET(
       );
     }
 
-    const rows = await db
+    const [rows, agentMessages, latestRuns] = await Promise.all([db
       .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
       .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
       .where(eq(interviewQuestions.interviewId, id))
-      .orderBy(asc(interviewQuestions.questionIndex));
+      .orderBy(asc(interviewQuestions.questionIndex)),
+      interview.configVersion === 2
+        ? db.select({ id: interviewMessages.id, sequence: interviewMessages.sequence, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
+          .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
+        : Promise.resolve([]),
+      interview.configVersion === 2
+        ? db.select({ id: interviewAgentRuns.id, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, lastEventSequence: interviewAgentRuns.lastEventSequence })
+          .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt)).limit(1)
+        : Promise.resolve([]),
+    ]);
 
     const questionsWithScores = rows.map(({ question, score }) => {
       const feedback = question.feedbackJson as Record<string, unknown> | null;
@@ -59,6 +68,10 @@ export async function GET(
     return NextResponse.json({
       interview,
       questions: questionsWithScores,
+      agentState: interview.configVersion === 2 ? {
+        messages: agentMessages,
+        latestRun: latestRuns[0] ?? null,
+      } : null,
       resumeSnapshot: resumeVersion
         ? {
             id: resumeVersion.id,
