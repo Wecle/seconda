@@ -65,6 +65,7 @@ export const interviews = pgTable("interviews", {
   preferenceTags: jsonb("preference_tags").$type<string[]>(),
   targetRole: text("target_role"),
   candidateRoundCount: integer("candidate_round_count").notNull().default(0),
+  compactionFailureCount: integer("compaction_failure_count").notNull().default(0),
   status: text("status").notNull().default("active"),
   startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),

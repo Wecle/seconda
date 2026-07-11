@@ -18,12 +18,20 @@ import {
   loadResumeEvidence,
 } from "./context/resume-evidence";
 import { loadAgentContext } from "./context/assembler";
+import { effectiveContextBudget } from "./context/budget";
+import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
   const model = createStructuredInterviewAgentModelPort();
   const executor: AgentRunExecutor = {
     async run(input) {
+      const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
+      const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
+      await compactInterviewContextIfNeeded(db, {
+        interviewId: input.interviewId,
+        effectiveBudget: effectiveContextBudget({ contextWindow, outputReserve }),
+      });
       const promptContext = await loadAgentContext(db, {
         interviewId: input.interviewId,
         runId: input.runId,
@@ -76,6 +84,11 @@ export function createProductionAgentDependencies() {
     },
   };
   return { repository, executor };
+}
+
+function readPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function createToolHandlers(
