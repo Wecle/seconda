@@ -2,6 +2,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   interviewCoverage,
+  interviewAgentRuns,
   interviewMessages,
   interviewQuestions,
   interviews,
@@ -16,12 +17,24 @@ import {
   indexResumeEvidence,
   loadResumeEvidence,
 } from "./context/resume-evidence";
+import { loadAgentContext } from "./context/assembler";
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
   const model = createStructuredInterviewAgentModelPort();
   const executor: AgentRunExecutor = {
     async run(input) {
+      const promptContext = await loadAgentContext(db, {
+        interviewId: input.interviewId,
+        runId: input.runId,
+        currentInstruction: input.instruction,
+      });
+      await db.update(interviewAgentRuns).set({
+        promptTemplateVersion: promptContext.templateVersion,
+        cacheEpoch: promptContext.cacheEpoch,
+        contextInputTokens: promptContext.estimatedTokens,
+        updatedAt: new Date(),
+      }).where(eq(interviewAgentRuns.id, input.runId));
       let progressVersion = 0;
       const handlers = createToolHandlers(repository, () => {
         progressVersion += 1;
@@ -55,6 +68,10 @@ export function createProductionAgentDependencies() {
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
         progressHash: () => String(progressVersion),
+        promptContext: {
+          stablePrefix: promptContext.stablePrefix,
+          incrementalTail: promptContext.incrementalTail,
+        },
       });
     },
   };

@@ -27,6 +27,10 @@ export async function runInterviewAgent(options: {
   initialMessages: readonly AgentRuntimeMessage[];
   signal: AbortSignal;
   progressHash: () => string;
+  promptContext?: {
+    stablePrefix: string;
+    incrementalTail: string;
+  };
 }): Promise<{ exitReason: AgentExitReason; turnCount: number }> {
   const messages = [...options.initialMessages];
   const loopDetector = new AgentLoopDetector();
@@ -66,6 +70,7 @@ export async function runInterviewAgent(options: {
           description: describeTool(name),
         })),
         signal: options.signal,
+        promptContext: options.promptContext,
       };
       if (options.model.nextStepStream) {
         const streamed = await options.model.nextStepStream({

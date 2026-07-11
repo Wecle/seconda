@@ -36,6 +36,10 @@ type NextStepInput = {
   messages: readonly AgentRuntimeMessage[];
   tools: readonly AgentToolDescriptor[];
   signal: AbortSignal;
+  promptContext?: {
+    stablePrefix: string;
+    incrementalTail: string;
+  };
 };
 
 export interface InterviewAgentModelPort {
@@ -255,12 +259,19 @@ function buildPrompt(input: {
   runId: string;
   messages: readonly AgentRuntimeMessage[];
   tools: readonly AgentToolDescriptor[];
+  promptContext?: {
+    stablePrefix: string;
+    incrementalTail: string;
+  };
 }) {
-  return JSON.stringify({
-    runId: input.runId,
+  const runtimeTail = JSON.stringify({
     tools: input.tools,
     messages: input.messages,
+    runId: input.runId,
   });
+  return input.promptContext
+    ? `${input.promptContext.stablePrefix}\n${input.promptContext.incrementalTail}\n${runtimeTail}`
+    : runtimeTail;
 }
 
 const AGENT_SYSTEM_PROMPT =
