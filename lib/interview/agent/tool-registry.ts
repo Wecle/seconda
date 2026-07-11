@@ -65,6 +65,10 @@ export function createInterviewToolRegistry(options: {
     input: z.infer<typeof schemas.ask_interview_question>,
     context: InterviewToolContext,
   ) => Promise<InterviewActionInput>;
+  validateEvidenceIds?: (
+    evidenceIds: readonly string[],
+    context: InterviewToolContext,
+  ) => Promise<string[]>;
 }): InterviewToolRegistry {
   return new Map(interviewToolNames.map((name) => {
     const definition: InterviewToolDefinition<unknown, unknown> = {
@@ -72,6 +76,26 @@ export function createInterviewToolRegistry(options: {
       inputSchema: schemas[name],
       normalize: normalizeToolInput,
       async validateBusiness(input, context) {
+        if (
+          options.validateEvidenceIds &&
+          (name === "ask_interview_question" || name === "update_coverage")
+        ) {
+          const evidenceIds = (input as { resumeEvidenceIds?: unknown }).resumeEvidenceIds;
+          if (Array.isArray(evidenceIds)) {
+            const missing = await options.validateEvidenceIds(
+              evidenceIds.filter((id): id is string => typeof id === "string"),
+              context,
+            );
+            if (missing.length > 0) {
+              return {
+                code: "EVIDENCE_NOT_FOUND",
+                message: `简历证据不存在：${missing.join(", ")}`,
+                retryable: true,
+                suggestion: "调用 get_resume_evidence 并使用目录中返回的 evidence id。",
+              };
+            }
+          }
+        }
         if (name !== "ask_interview_question") return null;
         const authorization = authorizeInterviewAction(
           await options.loadActionInput(

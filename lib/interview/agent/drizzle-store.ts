@@ -7,6 +7,7 @@ import {
 } from "@/lib/db/schema";
 import { questionCategorySchema } from "./contracts";
 import type { AgentInterviewStore } from "./service";
+import { indexResumeEvidence } from "./context/resume-evidence";
 
 type AgentDatabase = typeof import("@/lib/db").db;
 
@@ -109,6 +110,5 @@ export function createDrizzleAgentInterviewStore(
 }
 
 function buildResumeSummary(parsedJson: unknown, extractedText: string | null) {
-  const structured = JSON.stringify(parsedJson ?? {});
-  return `${structured.slice(0, 4_000)}\n${(extractedText ?? "").slice(0, 4_000)}`;
+  return indexResumeEvidence(parsedJson, extractedText ?? "").overview;
 }
