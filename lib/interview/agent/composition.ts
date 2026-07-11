@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   interviewCoverage,
@@ -6,6 +6,7 @@ import {
   interviewMessages,
   interviewQuestions,
   interviews,
+  questionScores,
   resumeVersions,
 } from "@/lib/db/schema";
 import { createStructuredInterviewAgentModelPort } from "./model-port";
@@ -18,6 +19,7 @@ import {
   loadResumeEvidence,
 } from "./context/resume-evidence";
 import { loadAgentContext } from "./context/assembler";
+import { completeInterviewReport } from "@/lib/interview/report-completion";
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 
@@ -137,11 +139,32 @@ function createToolHandlers(
         status: interviewCoverage.status,
       }).from(interviewCoverage).where(eq(interviewCoverage.interviewId, context.interviewId));
     },
-    async record_answer_evaluation(input: { questionId: string; evaluation: unknown }) {
-      await db.update(interviewQuestions).set({ feedbackJson: input.evaluation })
-        .where(eq(interviewQuestions.id, input.questionId));
+    async record_answer_evaluation(input: { evaluation: { scores: { understanding: number; expression: number; logic: number; depth: number; authenticity: number; reflection: number; overall: number }; strengths: string[]; improvements: string[]; advice: string[]; deepDive: unknown } }, context: { interviewId: string }) {
+      const [question] = await db.select({ id: interviewQuestions.id })
+        .from(interviewQuestions)
+        .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
+        .where(and(
+          eq(interviewQuestions.interviewId, context.interviewId),
+          isNotNull(interviewQuestions.answeredAt),
+          isNull(questionScores.id),
+        ))
+        .orderBy(desc(interviewQuestions.questionIndex))
+        .limit(1);
+      if (!question) return { recorded: true, alreadyRecorded: true };
+      await db.transaction(async (tx) => {
+        await tx.insert(questionScores).values({ questionId: question.id, ...input.evaluation.scores })
+          .onConflictDoNothing({ target: questionScores.questionId });
+        await tx.update(interviewQuestions).set({
+          feedbackJson: {
+            strengths: input.evaluation.strengths,
+            improvements: input.evaluation.improvements,
+            advice: input.evaluation.advice,
+            deepDive: input.evaluation.deepDive,
+          },
+        }).where(eq(interviewQuestions.id, question.id));
+      });
       markProgress();
-      return { recorded: true };
+      return { recorded: true, questionId: question.id };
     },
     async update_coverage(input: { category: string; topic: string; status: string; resumeEvidenceIds: string[] }, context: { interviewId: string }) {
       await db.insert(interviewCoverage).values({
@@ -202,6 +225,7 @@ function createToolHandlers(
     async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string }) {
       await db.update(interviews).set({ status: "completing", updatedAt: new Date() })
         .where(and(eq(interviews.id, context.interviewId), eq(interviews.status, "active")));
+      await completeInterviewReport(db, context.interviewId);
       await repository.appendMessage({
         interviewId: context.interviewId,
         runId: context.runId,
