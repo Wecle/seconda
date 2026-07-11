@@ -1,0 +1,163 @@
+import { and, asc, eq, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  interviewCoverage,
+  interviewMessages,
+  interviewQuestions,
+  interviews,
+  resumeVersions,
+} from "@/lib/db/schema";
+import { createStructuredInterviewAgentModelPort } from "./model-port";
+import { createDrizzleInterviewAgentRepository } from "./repository";
+import { runInterviewAgent } from "./runtime";
+import { createInterviewToolRegistry } from "./tool-registry";
+import type { AgentRunExecutor } from "./service";
+
+export function createProductionAgentDependencies() {
+  const repository = createDrizzleInterviewAgentRepository(db);
+  const model = createStructuredInterviewAgentModelPort();
+  const executor: AgentRunExecutor = {
+    async run(input) {
+      let progressVersion = 0;
+      const handlers = createToolHandlers(repository, () => {
+        progressVersion += 1;
+      });
+      const tools = createInterviewToolRegistry({
+        handlers: handlers as Parameters<typeof createInterviewToolRegistry>[0]["handlers"],
+        async loadActionInput(toolInput) {
+          const state = await repository.loadState(input.interviewId);
+          return {
+            ...state,
+            proposal: {
+              action: toolInput.action,
+              category: toolInput.category,
+              intent: toolInput.intent,
+              question: toolInput.question,
+              resumeEvidenceIds: toolInput.resumeEvidenceIds,
+            },
+          };
+        },
+      });
+      return runInterviewAgent({
+        interviewId: input.interviewId,
+        runId: input.runId,
+        repository,
+        model,
+        tools,
+        initialMessages: [{ role: "user", content: input.instruction }],
+        signal: input.signal,
+        progressHash: () => String(progressVersion),
+      });
+    },
+  };
+  return { repository, executor };
+}
+
+function createToolHandlers(
+  repository: ReturnType<typeof createDrizzleInterviewAgentRepository>,
+  markProgress: () => void,
+) {
+  return {
+    async get_resume_evidence(input: { evidenceIds: string[] }, context: { interviewId: string }) {
+      const [row] = await db.select({
+        parsedJson: resumeVersions.parsedJson,
+        extractedText: resumeVersions.extractedText,
+      }).from(interviews)
+        .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
+        .where(eq(interviews.id, context.interviewId))
+        .limit(1);
+      if (!row) throw new Error("Interview resume snapshot not found");
+      const evidence = {
+        "resume:structured": JSON.stringify(row.parsedJson ?? {}).slice(0, 8_000),
+        "resume:text": (row.extractedText ?? "").slice(0, 8_000),
+      };
+      return input.evidenceIds.flatMap((id) =>
+        id in evidence ? [{ id, content: evidence[id as keyof typeof evidence] }] : [],
+      );
+    },
+    async get_interview_history(input: { limit: number }, context: { interviewId: string }) {
+      const messages = await db.select({ role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
+        .from(interviewMessages)
+        .where(eq(interviewMessages.interviewId, context.interviewId))
+        .orderBy(asc(interviewMessages.sequence));
+      return messages.slice(-input.limit);
+    },
+    async get_coverage_state(_input: unknown, context: { interviewId: string }) {
+      return db.select({
+        category: interviewCoverage.category,
+        topic: interviewCoverage.topic,
+        questionCount: interviewCoverage.questionCount,
+        status: interviewCoverage.status,
+      }).from(interviewCoverage).where(eq(interviewCoverage.interviewId, context.interviewId));
+    },
+    async record_answer_evaluation(input: { questionId: string; evaluation: unknown }) {
+      await db.update(interviewQuestions).set({ feedbackJson: input.evaluation })
+        .where(eq(interviewQuestions.id, input.questionId));
+      markProgress();
+      return { recorded: true };
+    },
+    async update_coverage(input: { category: string; topic: string; status: string; resumeEvidenceIds: string[] }, context: { interviewId: string }) {
+      await db.insert(interviewCoverage).values({
+        interviewId: context.interviewId,
+        category: input.category,
+        topic: input.topic,
+        status: input.status,
+        resumeEvidenceIds: input.resumeEvidenceIds,
+      }).onConflictDoUpdate({
+        target: [interviewCoverage.interviewId, interviewCoverage.category, interviewCoverage.topic],
+        set: { status: input.status, resumeEvidenceIds: input.resumeEvidenceIds, updatedAt: new Date() },
+      });
+      markProgress();
+      return { updated: true };
+    },
+    async ask_interview_question(input: { category: string; topic: string; question: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string }) {
+      const question = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${context.interviewId}))`);
+        const [indexRow] = await tx.select({ next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1` })
+          .from(interviewQuestions)
+          .where(eq(interviewQuestions.interviewId, context.interviewId));
+        const [created] = await tx.insert(interviewQuestions).values({
+          interviewId: context.interviewId,
+          questionIndex: Number(indexRow.next),
+          questionType: input.category,
+          topic: input.topic,
+          question: input.question,
+          tip: "",
+        }).returning({ id: interviewQuestions.id });
+        await tx.update(interviewCoverage).set({
+          questionCount: sql`${interviewCoverage.questionCount} + 1`,
+          resumeEvidenceIds: input.resumeEvidenceIds,
+          status: "partial",
+          updatedAt: new Date(),
+        }).where(and(
+          eq(interviewCoverage.interviewId, context.interviewId),
+          eq(interviewCoverage.category, input.category),
+          eq(interviewCoverage.topic, "__category__"),
+        ));
+        return created;
+      });
+      await repository.appendMessage({
+        interviewId: context.interviewId,
+        runId: context.runId,
+        role: "assistant",
+        kind: "question",
+        content: input.question,
+      });
+      markProgress();
+      return { questionId: question.id, committed: true };
+    },
+    async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string }) {
+      await db.update(interviews).set({ status: "completing", updatedAt: new Date() })
+        .where(and(eq(interviews.id, context.interviewId), eq(interviews.status, "active")));
+      await repository.appendMessage({
+        interviewId: context.interviewId,
+        runId: context.runId,
+        role: "assistant",
+        kind: "finish",
+        content: input.closingMessage,
+      });
+      markProgress();
+      return { committed: true };
+    },
+  };
+}

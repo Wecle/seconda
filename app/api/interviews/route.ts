@@ -6,6 +6,11 @@ import { and, eq } from "drizzle-orm";
 import { generateInterviewQuestions } from "@/lib/interview";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
+import { randomUUID } from "node:crypto";
+import { createAgentInterviewRequestSchema } from "@/lib/interview/agent/api-contracts";
+import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
+import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
+import { createAgentInterview } from "@/lib/interview/agent/service";
 
 const createSchema = z.object({
   level: z.string(),
@@ -24,6 +29,56 @@ export async function POST(request: NextRequest) {
     }
 
     const rawBody = await request.json();
+
+    if (rawBody?.configVersion === 2) {
+      if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+        return NextResponse.json(
+          { error: "Agent interviews are not enabled" },
+          { status: 404 },
+        );
+      }
+      const v2 = createAgentInterviewRequestSchema.safeParse(rawBody);
+      if (!v2.success) {
+        return NextResponse.json(
+          { error: "Invalid request body", details: v2.error.flatten() },
+          { status: 400 },
+        );
+      }
+      const [ownedResume] = await db
+        .select()
+        .from(resumeVersions)
+        .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
+        .where(and(
+          eq(resumeVersions.id, v2.data.resumeVersionId),
+          eq(resumes.userId, userId),
+        ));
+      if (!ownedResume || ownedResume.resume_versions.parseStatus !== "parsed") {
+        return NextResponse.json(
+          { error: "Parsed resume version not found" },
+          { status: 404 },
+        );
+      }
+      const dependencies = createProductionAgentDependencies();
+      const result = await createAgentInterview({
+        input: {
+          resumeVersionId: v2.data.resumeVersionId,
+          config: {
+            configVersion: 2,
+            language: v2.data.language,
+            persona: v2.data.persona,
+            preference: v2.data.preference,
+            preferenceTags: v2.data.preferenceTags,
+          },
+          idempotencyKey: `create:${randomUUID()}`,
+        },
+        store: createDrizzleAgentInterviewStore(db),
+        repository: dependencies.repository,
+        executor: dependencies.executor,
+        signal: request.signal,
+      });
+      return NextResponse.json({ ...result, configVersion: 2 }, { status: 201 });
+    }
+
     const parsed = createSchema.safeParse(rawBody);
 
     if (!parsed.success) {
