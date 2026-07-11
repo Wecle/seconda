@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { InterviewAgentRepository } from "./repository";
+import type { AgentRunRecord } from "./repository";
 import type { AgentRunExecutor, AgentRunScheduler } from "./service";
 
 export async function executeClaimedRun(options: {
@@ -90,4 +91,20 @@ export function createAgentRunScheduler(options: {
       });
     },
   };
+}
+
+export function getRecoveryDisposition(
+  run: AgentRunRecord,
+  now: Date,
+): "already_running" | "schedule" | "completed" | "failed" {
+  if (run.status === "completed") return "completed";
+  if (run.status === "failed") return "failed";
+  if (
+    run.leaseOwner &&
+    run.leaseExpiresAt &&
+    run.leaseExpiresAt.getTime() > now.getTime()
+  ) {
+    return "already_running";
+  }
+  return "schedule";
 }
