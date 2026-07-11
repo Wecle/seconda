@@ -8,6 +8,7 @@ import { createProductionAgentDependencies } from "@/lib/interview/agent/composi
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { endAgentInterview } from "@/lib/interview/agent/service";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
+import { completeInterviewReport } from "@/lib/interview/report-completion";
 
 export async function POST(
   _request: Request,
@@ -33,7 +34,8 @@ export async function POST(
       store: createDrizzleAgentInterviewStore(db),
       repository: dependencies.repository,
     });
-    return NextResponse.json(result);
+    const report = await completeInterviewReport(db, id);
+    return NextResponse.json({ ...result, status: "completed", report });
   } catch (error) {
     console.error("Error ending Agent interview:", sanitizeAIError(error));
     return NextResponse.json({ error: "Failed to end interview" }, { status: 500 });

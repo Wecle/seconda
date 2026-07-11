@@ -1,7 +1,8 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import {
   interviewCoverage,
   interviewMessages,
+  interviewQuestions,
   interviews,
   resumeVersions,
 } from "@/lib/db/schema";
@@ -86,6 +87,20 @@ export function createDrizzleAgentInterviewStore(
         )).returning({ id: interviews.id });
         if (updated.length === 0) throw new Error("Interview round limit reached");
 
+        const [question] = await tx.select({ id: interviewQuestions.id })
+          .from(interviewQuestions)
+          .where(and(
+            eq(interviewQuestions.interviewId, input.interviewId),
+            isNull(interviewQuestions.answeredAt),
+          ))
+          .orderBy(desc(interviewQuestions.questionIndex))
+          .limit(1);
+        if (!question) throw new Error("No unanswered interview question exists");
+
+        await tx.update(interviewQuestions).set({
+          answerText: input.content,
+          answeredAt: new Date(),
+        }).where(eq(interviewQuestions.id, question.id));
         await tx.insert(interviewMessages).values({
           interviewId: input.interviewId,
           runId: input.runId,
@@ -94,6 +109,7 @@ export function createDrizzleAgentInterviewStore(
           role: "user",
           kind: "answer",
           content: input.content,
+          questionId: question.id,
         });
         return true;
       });

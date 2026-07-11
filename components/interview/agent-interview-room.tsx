@@ -113,7 +113,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     setEnding(false);
   };
 
-  const completed = interviewStatus === "completing" || interviewStatus === "completed";
+  const completed = ["completing", "reporting", "completed"].includes(interviewStatus);
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex h-16 items-center justify-between border-b px-6">
