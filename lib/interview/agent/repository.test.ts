@@ -74,3 +74,33 @@ test("persists and reloads checkpoints and interview state", async () => {
   assert.equal((await repository.loadState("interview-1")).candidateRoundCount, 3);
   assert.equal(repository.inspectRun(run.id)?.checkpoint?.progressHash, "progress");
 });
+
+test("replays only events after the supplied cursor", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview-1", idempotencyKey: "run" });
+  await repository.appendEvent(run.id, { type: "run_started", payload: { value: 1 } });
+  await repository.appendEvent(run.id, { type: "model_started", payload: { value: 2 } });
+  await repository.appendEvent(run.id, { type: "warning", payload: { value: 3 } });
+  assert.deepEqual((await repository.listEvents(run.id, 1)).map((event) => event.sequence), [2, 3]);
+});
+
+test("allows one lease owner and supports stale takeover", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview-1", idempotencyKey: "run" });
+  const now = new Date("2026-07-11T00:00:00.000Z");
+  assert.equal((await repository.claimRun(run.id, "worker-a", now, 30_000)).claimed, true);
+  assert.equal((await repository.claimRun(run.id, "worker-b", new Date(now.getTime() + 10_000), 30_000)).claimed, false);
+  assert.equal((await repository.claimRun(run.id, "worker-b", new Date(now.getTime() + 31_000), 30_000)).claimed, true);
+  assert.equal((await repository.getRun(run.id))?.resumeCount, 1);
+});
+
+test("renews and releases leases only for their owner", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview-1", idempotencyKey: "run" });
+  const now = new Date("2026-07-11T00:00:00.000Z");
+  await repository.claimRun(run.id, "worker-a", now, 30_000);
+  assert.equal(await repository.renewLease(run.id, "worker-b", now, 30_000), false);
+  assert.equal(await repository.renewLease(run.id, "worker-a", now, 30_000), true);
+  assert.equal(await repository.releaseLease(run.id, "worker-b"), false);
+  assert.equal(await repository.releaseLease(run.id, "worker-a"), true);
+});
