@@ -22,6 +22,7 @@ import { loadAgentContext } from "./context/assembler";
 import { completeInterviewReport } from "@/lib/interview/report-completion";
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
+import { resolveRunSkills } from "./skills";
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -88,12 +89,17 @@ export function createProductionAgentDependencies() {
           };
         },
       });
+      const active = resolveRunSkills(input.mode);
+      const deferredTools = new Map(
+        [...tools].filter(([name]) => active.toolNames.has(name)),
+      );
       return runInterviewAgent({
         interviewId: input.interviewId,
         runId: input.runId,
         repository,
         model,
-        tools,
+        tools: deferredTools,
+        activeSkills: active.skills,
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
         progressHash: () => String(progressVersion),
