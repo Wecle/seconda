@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import type { ParsedResume } from "@/lib/resume/types";
-import type { InterviewConfig } from "@/lib/interview/settings";
+import type { InterviewConfigV2 } from "@/lib/interview/settings";
 import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
 import { ParsedResumeEditor } from "@/components/resume/parsed-resume-editor";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +46,7 @@ interface ResumePreviewPaneProps {
   retryingParse: boolean;
   onPreviewModeChange: (mode: "parsed" | "original") => void;
   onRetryParse: () => void;
-  selectedInterviewConfig: InterviewConfig | null;
+  selectedInterviewConfig: InterviewConfigV2 | null;
   creatingInterview: boolean;
   onOpenSettings: () => void;
   onStartInterview: () => void;

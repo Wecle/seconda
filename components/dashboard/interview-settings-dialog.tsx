@@ -11,14 +11,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { InterviewConfig } from "@/lib/interview/settings";
+import type { InterviewConfigV2 } from "@/lib/interview/settings";
 
 interface InterviewSettingsDialogProps {
   open: boolean;
   saving: boolean;
-  value: InterviewConfig;
+  value: InterviewConfigV2;
   onOpenChange: (open: boolean) => void;
-  onChange: (value: InterviewConfig) => void;
+  onChange: (value: InterviewConfigV2) => void;
   onCancel: () => void;
   onSave: () => void;
 }

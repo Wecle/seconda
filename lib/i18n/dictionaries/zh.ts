@@ -153,7 +153,15 @@ export const zh = {
   },
   interview: {
     settingsTitle: "面试设置",
-    settingsDescription: "配置你的 AI 模拟面试参数。",
+    settingsDescription: "设置面试官风格与关注方向，Agent 会根据简历和回答自主追问。",
+    preference: "面试偏好",
+    preferenceDescription: "可选择关注方向，也可以补充希望重点练习的内容。",
+    preferencePlaceholder: "例如：重点深挖分布式系统项目，追问技术取舍和复盘……",
+    preferenceTags: {
+      project_deep_dive: "项目深挖",
+      technical_foundations: "技术基础",
+      behavioral_evidence: "行为经历",
+    },
     targetLevel: "目标级别",
     levels: {
       Junior: "初级",
