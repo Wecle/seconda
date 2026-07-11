@@ -62,7 +62,9 @@ export async function executeClaimedRun(options: {
     if (current?.status === "running") {
       await options.repository.failRun(
         options.runId,
-        leaseLost ? "aborted_tools" : "aborted_streaming",
+        leaseLost
+          ? "aborted_tools"
+          : isPromptTooLong(error) ? "prompt_too_long" : "aborted_streaming",
         error,
       );
     }
@@ -71,6 +73,11 @@ export async function executeClaimedRun(options: {
     clearInterval(interval);
     await options.repository.releaseLease(options.runId, options.owner);
   }
+}
+
+function isPromptTooLong(error: unknown) {
+  return typeof error === "object" && error !== null
+    && "code" in error && error.code === "PROMPT_TOO_LONG";
 }
 
 export function createAgentRunScheduler(options: {

@@ -129,6 +129,7 @@ export async function loadAgentContext(
       .limit(8),
     database.select({
       cacheEpoch: interviewContextSnapshots.cacheEpoch,
+      throughMessageSequence: interviewContextSnapshots.throughMessageSequence,
       summary: interviewContextSnapshots.summary,
     }).from(interviewContextSnapshots)
       .where(eq(interviewContextSnapshots.interviewId, input.interviewId))
@@ -149,7 +150,9 @@ export async function loadAgentContext(
     cacheEpoch: snapshot?.cacheEpoch ?? 0,
     checkpointSummary: snapshot?.summary ?? "",
     coverage,
-    recentMessages: messages.reverse(),
+    recentMessages: messages.reverse().filter(
+      (message) => message.sequence > (snapshot?.throughMessageSequence ?? 0),
+    ),
     currentInstruction: input.currentInstruction,
     runId: input.runId,
     contextWindow: readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000),
