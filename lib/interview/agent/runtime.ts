@@ -62,7 +62,7 @@ export async function runInterviewAgent(options: {
         messages,
         tools: [...options.tools.keys()].map((name) => ({
           name,
-          description: `Seconda interview domain tool: ${name}`,
+          description: describeTool(name),
         })),
         signal: options.signal,
       });
@@ -152,6 +152,25 @@ export async function runInterviewAgent(options: {
     new Error("Agent reached the model turn limit"),
   );
   return { exitReason: "max_turns", turnCount: MAX_MODEL_TURNS };
+}
+
+function describeTool(name: string) {
+  const descriptions: Record<string, string> = {
+    get_resume_evidence:
+      '读取简历证据。参数：{"evidenceIds":["resume:structured"|"resume:text"]}。',
+    get_interview_history:
+      '读取近期面试消息。参数：{"limit":1到20的整数}。',
+    get_coverage_state: "读取当前题型覆盖度。参数：{}。",
+    record_answer_evaluation:
+      '记录回答评估。参数：{"questionId":"UUID","evaluation":任意结构化评估}。',
+    update_coverage:
+      '更新覆盖度。参数：{"category":题型enum,"topic":"主题","status":"uncovered"|"partial"|"sufficient"|"exhausted","resumeEvidenceIds":["证据ID"]}。',
+    ask_interview_question:
+      '提交唯一候选人可见问题。参数：{"action":"ask"|"clarify","category":题型enum,"intent":"new_topic"|"follow_up"|"verify_evidence","question":"单一问题","topic":"主题","resumeEvidenceIds":["resume:structured"|"resume:text"]}。',
+    finish_interview:
+      '结束面试。参数：{"reason":"coverage_sufficient"|"low_information_gain"|"user_requested"|"max_rounds","closingMessage":"结束语"}。',
+  };
+  return descriptions[name] ?? `Seconda interview domain tool: ${name}`;
 }
 
 async function handleLoopDecision(
