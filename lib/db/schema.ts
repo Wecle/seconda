@@ -1,5 +1,5 @@
 import { pgTable, text, integer, timestamp, uuid, jsonb, unique } from "drizzle-orm/pg-core";
-import type { InterviewConfig } from "@/lib/interview/settings";
+import type { StoredInterviewConfig } from "@/lib/interview/settings";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -28,7 +28,7 @@ export const resumes = pgTable("resumes", {
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   currentVersionId: uuid("current_version_id"),
-  interviewSettings: jsonb("interview_settings").$type<InterviewConfig>(),
+  interviewSettings: jsonb("interview_settings").$type<StoredInterviewConfig>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
