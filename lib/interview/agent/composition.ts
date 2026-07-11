@@ -12,6 +12,10 @@ import { createDrizzleInterviewAgentRepository } from "./repository";
 import { runInterviewAgent } from "./runtime";
 import { createInterviewToolRegistry } from "./tool-registry";
 import type { AgentRunExecutor } from "./service";
+import {
+  indexResumeEvidence,
+  loadResumeEvidence,
+} from "./context/resume-evidence";
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -24,6 +28,10 @@ export function createProductionAgentDependencies() {
       });
       const tools = createInterviewToolRegistry({
         handlers: handlers as Parameters<typeof createInterviewToolRegistry>[0]["handlers"],
+        async validateEvidenceIds(evidenceIds, context) {
+          const index = await loadInterviewEvidenceIndex(context.interviewId);
+          return loadResumeEvidence(index, evidenceIds).missingIds;
+        },
         async loadActionInput(toolInput) {
           const state = await repository.loadState(input.interviewId);
           return {
@@ -59,21 +67,11 @@ function createToolHandlers(
 ) {
   return {
     async get_resume_evidence(input: { evidenceIds: string[] }, context: { interviewId: string }) {
-      const [row] = await db.select({
-        parsedJson: resumeVersions.parsedJson,
-        extractedText: resumeVersions.extractedText,
-      }).from(interviews)
-        .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-        .where(eq(interviews.id, context.interviewId))
-        .limit(1);
-      if (!row) throw new Error("Interview resume snapshot not found");
-      const evidence = {
-        "resume:structured": JSON.stringify(row.parsedJson ?? {}).slice(0, 8_000),
-        "resume:text": (row.extractedText ?? "").slice(0, 8_000),
+      const index = await loadInterviewEvidenceIndex(context.interviewId);
+      return {
+        directory: index.directory,
+        ...loadResumeEvidence(index, input.evidenceIds),
       };
-      return input.evidenceIds.flatMap((id) =>
-        id in evidence ? [{ id, content: evidence[id as keyof typeof evidence] }] : [],
-      );
     },
     async get_interview_history(input: { limit: number }, context: { interviewId: string }) {
       const messages = await db.select({ role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
@@ -166,4 +164,16 @@ function createToolHandlers(
       return { committed: true };
     },
   };
+}
+
+async function loadInterviewEvidenceIndex(interviewId: string) {
+  const [row] = await db.select({
+    parsedJson: resumeVersions.parsedJson,
+    extractedText: resumeVersions.extractedText,
+  }).from(interviews)
+    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
+    .where(eq(interviews.id, interviewId))
+    .limit(1);
+  if (!row) throw new Error("Interview resume snapshot not found");
+  return indexResumeEvidence(row.parsedJson, row.extractedText ?? "");
 }
