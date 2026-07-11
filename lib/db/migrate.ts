@@ -159,6 +159,26 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS last_provider_progress_at TIMESTAMPTZ`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS resume_count INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS trigger_json JSONB`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS prompt_template_version TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS cache_epoch INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS context_input_tokens INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_input_tokens INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_output_tokens INTEGER NOT NULL DEFAULT 0`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_context_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      cache_epoch INTEGER NOT NULL,
+      through_message_sequence INTEGER NOT NULL,
+      token_estimate INTEGER NOT NULL,
+      compaction_level INTEGER NOT NULL,
+      summary TEXT NOT NULL,
+      snapshot_json JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (interview_id, cache_epoch)
+    )
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS interview_messages (
@@ -257,6 +277,7 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_interview ON interview_agent_runs(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_lease ON interview_agent_runs(status, lease_expires_at)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_agent_events_run ON interview_agent_events(run_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_interview_context_snapshots_interview ON interview_context_snapshots(interview_id, cache_epoch)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_messages_interview ON interview_messages(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_coverage_interview ON interview_coverage(interview_id)`;
 
