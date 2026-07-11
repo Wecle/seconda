@@ -160,8 +160,26 @@ export function createDrizzleInterviewAgentRepository(
       const [created] = await database
         .insert(interviewAgentRuns)
         .values(input)
+        .onConflictDoNothing({
+          target: [
+            interviewAgentRuns.interviewId,
+            interviewAgentRuns.idempotencyKey,
+          ],
+        })
         .returning({ id: interviewAgentRuns.id });
-      return { id: created.id, status: "running", created: true };
+      if (created) {
+        return { id: created.id, status: "running", created: true };
+      }
+      const [winner] = await database
+        .select({ id: interviewAgentRuns.id })
+        .from(interviewAgentRuns)
+        .where(and(
+          eq(interviewAgentRuns.interviewId, input.interviewId),
+          eq(interviewAgentRuns.idempotencyKey, input.idempotencyKey),
+        ))
+        .limit(1);
+      if (!winner) throw new Error("Idempotent Agent run could not be resolved");
+      return { id: winner.id, status: "running", created: false };
     },
     async appendEvent(runId, event) {
       return database.transaction(async (tx) => {

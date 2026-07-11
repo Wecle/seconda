@@ -79,7 +79,15 @@ export function createInterviewToolRegistry(options: {
             context,
           ),
         );
-        if (authorization.allowed) return null;
+        if (authorization.allowed && authorization.action === "ask") return null;
+        if (authorization.allowed) {
+          return {
+            code: "INTERVIEW_MUST_FINISH",
+            message: "面试已达到结束条件，不能继续提问。",
+            retryable: false,
+            suggestion: "调用 finish_interview。",
+          };
+        }
         return authorizationError(authorization.reason);
       },
       async authorize(_input, context) {
