@@ -6,7 +6,7 @@ import {
   endAgentInterview,
   submitCandidateMessage,
   type AgentInterviewStore,
-  type AgentRunExecutor,
+  type AgentRunScheduler,
 } from "./service";
 
 function fixture(options?: { status?: string; configVersion?: number }) {
@@ -32,10 +32,13 @@ function fixture(options?: { status?: string; configVersion?: number }) {
     },
     async markCompleting() { status = "completing"; calls.push("markCompleting"); return true; },
   };
-  const executor: AgentRunExecutor = {
-    async run(input) { calls.push(`run:${input.mode}`); return { exitReason: "completed" }; },
+  const scheduler: AgentRunScheduler = {
+    async schedule(runId) {
+      const run = await repository.getRun(runId);
+      calls.push(`run:${run?.trigger?.mode}`);
+    },
   };
-  return { repository, store, executor, calls, getRounds: () => rounds };
+  return { repository, store, scheduler, calls, getRounds: () => rounds };
 }
 
 test("creates an interview, initializes coverage and starts an opening run", async () => {
@@ -48,7 +51,7 @@ test("creates an interview, initializes coverage and starts an opening run", asy
     },
     store: f.store,
     repository: f.repository,
-    executor: f.executor,
+    scheduler: f.scheduler,
     signal: new AbortController().signal,
   });
   assert.equal(result.interviewId, "interview");
@@ -58,8 +61,8 @@ test("creates an interview, initializes coverage and starts an opening run", asy
 test("accepts a candidate answer exactly once for a repeated idempotency key", async () => {
   const f = fixture();
   const input = { interviewId: "interview", content: "我的回答", idempotencyKey: "message-key" };
-  const first = await submitCandidateMessage({ input, store: f.store, repository: f.repository, executor: f.executor, signal: new AbortController().signal });
-  const second = await submitCandidateMessage({ input, store: f.store, repository: f.repository, executor: f.executor, signal: new AbortController().signal });
+  const first = await submitCandidateMessage({ input, store: f.store, repository: f.repository, scheduler: f.scheduler, signal: new AbortController().signal });
+  const second = await submitCandidateMessage({ input, store: f.store, repository: f.repository, scheduler: f.scheduler, signal: new AbortController().signal });
   assert.equal(first.runId, second.runId);
   assert.equal(f.getRounds(), 1);
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 1);
@@ -72,7 +75,7 @@ test("rejects inactive and legacy interviews", async () => {
         input: { interviewId: "interview", content: "answer", idempotencyKey: "key" },
         store: f.store,
         repository: f.repository,
-        executor: f.executor,
+        scheduler: f.scheduler,
         signal: new AbortController().signal,
       }),
       /not an active v2 interview/,

@@ -158,6 +158,7 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS provisional_message_id TEXT`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS last_provider_progress_at TIMESTAMPTZ`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS resume_count INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS trigger_json JSONB`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS interview_messages (

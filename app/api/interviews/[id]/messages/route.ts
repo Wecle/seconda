@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { db } from "@/lib/db";
 import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
@@ -8,6 +8,7 @@ import { candidateMessageRequestSchema } from "@/lib/interview/agent/api-contrac
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { submitCandidateMessage } from "@/lib/interview/agent/service";
+import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
 
 export async function POST(
   request: NextRequest,
@@ -31,11 +32,15 @@ export async function POST(
       return NextResponse.json({ error: "Interview not found" }, { status: 404 });
     }
     const dependencies = createProductionAgentDependencies();
+    const scheduler = createAgentRunScheduler({
+      ...dependencies,
+      defer: (task) => after(task),
+    });
     const result = await submitCandidateMessage({
       input: { interviewId: id, ...parsed.data },
       store: createDrizzleAgentInterviewStore(db),
       repository: dependencies.repository,
-      executor: dependencies.executor,
+      scheduler,
       signal: request.signal,
     });
     return NextResponse.json(result, { status: 202 });

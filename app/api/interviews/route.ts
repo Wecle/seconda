@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviews, interviewQuestions, resumes, resumeVersions } from "@/lib/db/schema";
@@ -11,6 +11,7 @@ import { createAgentInterviewRequestSchema } from "@/lib/interview/agent/api-con
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { createAgentInterview } from "@/lib/interview/agent/service";
+import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
 
 const createSchema = z.object({
   level: z.string(),
@@ -59,6 +60,10 @@ export async function POST(request: NextRequest) {
         );
       }
       const dependencies = createProductionAgentDependencies();
+      const scheduler = createAgentRunScheduler({
+        ...dependencies,
+        defer: (task) => after(task),
+      });
       const result = await createAgentInterview({
         input: {
           resumeVersionId: v2.data.resumeVersionId,
@@ -73,7 +78,7 @@ export async function POST(request: NextRequest) {
         },
         store: createDrizzleAgentInterviewStore(db),
         repository: dependencies.repository,
-        executor: dependencies.executor,
+        scheduler,
         signal: request.signal,
       });
       return NextResponse.json({ ...result, configVersion: 2 }, { status: 201 });
