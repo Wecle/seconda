@@ -129,6 +129,32 @@ export const runLeaseSchema = z.object({
   expiresAt: z.date(),
 }).strict();
 
+export const contextSnapshotSchema = z.object({
+  cacheEpoch: z.number().int().min(0),
+  throughMessageSequence: z.number().int().min(0),
+  tokenEstimate: z.number().int().min(0),
+  compactionLevel: z.number().int().min(1).max(3),
+  summary: z.string(),
+  resumeEvidenceIds: z.array(z.string()),
+  activeThreads: z.array(z.object({
+    category: questionCategorySchema,
+    topic: z.string().min(1),
+  })),
+  categoryCounts: z.record(z.string(), z.number().int().min(0)).superRefine(
+    (counts, context) => {
+      for (const category of Object.keys(counts)) {
+        if (!questionCategorySchema.safeParse(category).success) {
+          context.addIssue({
+            code: "custom",
+            message: `Unknown question category: ${category}`,
+          });
+        }
+      }
+    },
+  ),
+  recentTailStartSequence: z.number().int().min(0),
+}).strict();
+
 export type QuestionCategory = z.infer<typeof questionCategorySchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentExitReason = z.infer<typeof agentExitReasonSchema>;
@@ -143,6 +169,7 @@ export type TextDeltaPayload = z.infer<typeof textDeltaPayloadSchema>;
 export type MessageCommittedPayload = z.infer<typeof messageCommittedPayloadSchema>;
 export type AgentStreamEvent = z.infer<typeof agentStreamEventSchema>;
 export type RunLease = z.infer<typeof runLeaseSchema>;
+export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
 
 export type InterviewAgentState = {
   interviewId: string;

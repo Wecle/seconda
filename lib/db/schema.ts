@@ -96,6 +96,11 @@ export const interviewAgentRuns = pgTable("interview_agent_runs", {
   provisionalMessageId: text("provisional_message_id"),
   lastProviderProgressAt: timestamp("last_provider_progress_at", { withTimezone: true }),
   resumeCount: integer("resume_count").notNull().default(0),
+  promptTemplateVersion: text("prompt_template_version"),
+  cacheEpoch: integer("cache_epoch").notNull().default(0),
+  contextInputTokens: integer("context_input_tokens").notNull().default(0),
+  compactionInputTokens: integer("compaction_input_tokens").notNull().default(0),
+  compactionOutputTokens: integer("compaction_output_tokens").notNull().default(0),
   lastEventSequence: integer("last_event_sequence").notNull().default(0),
   checkpointJson: jsonb("checkpoint_json"),
   triggerJson: jsonb("trigger_json"),
@@ -170,6 +175,22 @@ export const interviewShares = pgTable("interview_shares", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+export const interviewContextSnapshots = pgTable("interview_context_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  cacheEpoch: integer("cache_epoch").notNull(),
+  throughMessageSequence: integer("through_message_sequence").notNull(),
+  tokenEstimate: integer("token_estimate").notNull(),
+  compactionLevel: integer("compaction_level").notNull(),
+  summary: text("summary").notNull(),
+  snapshotJson: jsonb("snapshot_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.interviewId, table.cacheEpoch),
+]);
 
 export const interviewQuestions = pgTable("interview_questions", {
   id: uuid("id").primaryKey().defaultRandom(),
