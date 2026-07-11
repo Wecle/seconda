@@ -56,8 +56,9 @@ export async function runInterviewAgent(options: {
     })).sequence;
 
     let step;
+    let provisionalMessageId: string | undefined;
     try {
-      step = await options.model.nextStep({
+      const modelInput = {
         runId: options.runId,
         messages,
         tools: [...options.tools.keys()].map((name) => ({
@@ -65,7 +66,35 @@ export async function runInterviewAgent(options: {
           description: describeTool(name),
         })),
         signal: options.signal,
-      });
+      };
+      if (options.model.nextStepStream) {
+        const streamed = await options.model.nextStepStream({
+          ...modelInput,
+          onAttemptStarted: async (attempt) => {
+            await options.repository.startAttempt(options.runId, {
+              ...attempt,
+              now: new Date(),
+            });
+          },
+          onProviderProgress: async () => {
+            await options.repository.recordProviderProgress(options.runId, new Date());
+          },
+          onProvisionalDelta: async (delta) => {
+            provisionalMessageId = delta.messageId;
+            lastEventSequence = (await options.repository.appendEvent(options.runId, {
+              type: "text_delta",
+              payload: {
+                ...delta,
+                provisional: true,
+              },
+            })).sequence;
+          },
+        });
+        step = streamed.step;
+        provisionalMessageId = streamed.provisionalMessageId ?? provisionalMessageId;
+      } else {
+        step = await options.model.nextStep(modelInput);
+      }
     } catch (error) {
       return failRun(options, "aborted_streaming", error, turn);
     }
@@ -105,6 +134,7 @@ export async function runInterviewAgent(options: {
         interviewId: options.interviewId,
         runId: options.runId,
         repository: options.repository,
+        provisionalMessageId,
       },
       hooks: options.hooks,
     });
@@ -130,6 +160,13 @@ export async function runInterviewAgent(options: {
     if (handled) return { exitReason: handled, turnCount: turn };
 
     if (result.ok && TERMINAL_TOOLS.has(step.toolName)) {
+      const committed = readCommittedMessage(result.output);
+      if (committed) {
+        lastEventSequence = (await options.repository.appendEvent(options.runId, {
+          type: "message_committed",
+          payload: committed,
+        })).sequence;
+      }
       lastEventSequence = (await options.repository.appendEvent(options.runId, {
         type: "run_completed",
         payload: { turn, toolName: step.toolName },
@@ -152,6 +189,15 @@ export async function runInterviewAgent(options: {
     new Error("Agent reached the model turn limit"),
   );
   return { exitReason: "max_turns", turnCount: MAX_MODEL_TURNS };
+}
+
+function readCommittedMessage(output: unknown) {
+  if (!output || typeof output !== "object") return null;
+  const value = output as { messageId?: unknown; messageSequence?: unknown };
+  return typeof value.messageId === "string" &&
+    typeof value.messageSequence === "number"
+    ? { messageId: value.messageId, messageSequence: value.messageSequence }
+    : null;
 }
 
 function describeTool(name: string) {

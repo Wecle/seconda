@@ -30,7 +30,16 @@ export interface InterviewAgentRepository {
   claimRun(runId: string, owner: string, now: Date, leaseMs: number): Promise<{ claimed: boolean; run: AgentRunRecord | null }>;
   renewLease(runId: string, owner: string, now: Date, leaseMs: number): Promise<boolean>;
   releaseLease(runId: string, owner: string): Promise<boolean>;
+  startAttempt(runId: string, input: {
+    model: string;
+    attemptId: string;
+    attemptNumber: number;
+    provisionalMessageId: string;
+    now: Date;
+  }): Promise<void>;
+  recordProviderProgress(runId: string, now: Date): Promise<void>;
   appendMessage(input: {
+    id?: string;
     interviewId: string;
     runId: string;
     role: "user" | "assistant";
@@ -77,6 +86,11 @@ type MemoryRun = {
   leaseExpiresAt: Date | null;
   resumeCount: number;
   events: AgentEventRecord[];
+  model: string | null;
+  attemptId: string | null;
+  attemptNumber: number;
+  provisionalMessageId: string | null;
+  lastProviderProgressAt: Date | null;
 };
 
 export function createInMemoryInterviewAgentRepository(
@@ -109,6 +123,11 @@ export function createInMemoryInterviewAgentRepository(
         leaseExpiresAt: null,
         resumeCount: 0,
         events: [],
+        model: null,
+        attemptId: null,
+        attemptNumber: 0,
+        provisionalMessageId: null,
+        lastProviderProgressAt: null,
       };
       runs.set(run.id, run);
       runKeys.set(key, run.id);
@@ -151,6 +170,17 @@ export function createInMemoryInterviewAgentRepository(
       run.leaseExpiresAt = null;
       return true;
     },
+    async startAttempt(runId, input) {
+      const run = requireRunningMemoryRun(runs, runId);
+      run.model = input.model;
+      run.attemptId = input.attemptId;
+      run.attemptNumber = input.attemptNumber;
+      run.provisionalMessageId = input.provisionalMessageId;
+      run.lastProviderProgressAt = input.now;
+    },
+    async recordProviderProgress(runId, now) {
+      requireRunningMemoryRun(runs, runId).lastProviderProgressAt = now;
+    },
     async appendMessage(input) {
       const key = input.idempotencyKey
         ? `${input.interviewId}:${input.idempotencyKey}`
@@ -159,7 +189,7 @@ export function createInMemoryInterviewAgentRepository(
       if (existing) return existing;
       const sequence = (messageSequences.get(input.interviewId) ?? 0) + 1;
       messageSequences.set(input.interviewId, sequence);
-      const result = { id: `message-${++id}`, sequence };
+      const result = { id: input.id ?? `message-${++id}`, sequence };
       if (key) messageKeys.set(key, result);
       return result;
     },
@@ -354,6 +384,28 @@ export function createDrizzleInterviewAgentRepository(
       }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.leaseOwner, owner)))
         .returning({ id: interviewAgentRuns.id });
       return rows.length > 0;
+    },
+    async startAttempt(runId, input) {
+      await database.update(interviewAgentRuns).set({
+        model: input.model,
+        attemptId: input.attemptId,
+        attemptNumber: input.attemptNumber,
+        provisionalMessageId: input.provisionalMessageId,
+        lastProviderProgressAt: input.now,
+        updatedAt: input.now,
+      }).where(and(
+        eq(interviewAgentRuns.id, runId),
+        eq(interviewAgentRuns.status, "running"),
+      ));
+    },
+    async recordProviderProgress(runId, now) {
+      await database.update(interviewAgentRuns).set({
+        lastProviderProgressAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(interviewAgentRuns.id, runId),
+        eq(interviewAgentRuns.status, "running"),
+      ));
     },
     async appendMessage(input) {
       if (input.idempotencyKey) {
