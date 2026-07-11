@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createInMemoryInterviewAgentRepository } from "./repository";
-import { encodeSseEvent, pollAgentEvents } from "./sse";
+import { encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "./sse";
 
 test("encodes persisted events with sequence ids", () => {
   assert.equal(encodeSseEvent({
@@ -9,6 +9,11 @@ test("encodes persisted events with sequence ids", () => {
     sequence: 3,
     payload: { message: "warn" },
   }), 'id: 3\nevent: warning\ndata: {"message":"warn"}\n\n');
+});
+
+test("honors EventSource Last-Event-ID on automatic reconnect", () => {
+  assert.equal(resolveReplayCursor(2, 7), 7);
+  assert.equal(resolveReplayCursor(9, 4), 9);
 });
 
 test("replays ordered events after a cursor and closes after terminal", async () => {

@@ -8,6 +8,10 @@ export function encodeSseEvent(event: AgentStreamEvent) {
   return `id: ${event.sequence}\nevent: ${event.type}\ndata: ${JSON.stringify(event.payload)}\n\n`;
 }
 
+export function resolveReplayCursor(queryCursor: number, lastEventId: number) {
+  return Math.max(queryCursor, lastEventId);
+}
+
 export async function* pollAgentEvents(options: {
   repository: InterviewAgentRepository;
   runId: string;

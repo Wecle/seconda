@@ -5,7 +5,7 @@ import { db } from "@/lib/db";
 import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
-import { encodeSseEvent, pollAgentEvents } from "@/lib/interview/agent/sse";
+import { encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "@/lib/interview/agent/sse";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 const paramsSchema = z.object({
@@ -25,7 +25,8 @@ export async function GET(
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsedParams = paramsSchema.safeParse(await params);
   const parsedAfter = afterSchema.safeParse(request.nextUrl.searchParams.get("after") ?? 0);
-  if (!parsedParams.success || !parsedAfter.success) {
+  const parsedLastEventId = afterSchema.safeParse(request.headers.get("last-event-id") ?? 0);
+  if (!parsedParams.success || !parsedAfter.success || !parsedLastEventId.success) {
     return NextResponse.json({ error: "Invalid stream cursor" }, { status: 400 });
   }
 
@@ -49,7 +50,7 @@ export async function GET(
         for await (const event of pollAgentEvents({
           repository,
           runId: run.id,
-          afterSequence: parsedAfter.data,
+          afterSequence: resolveReplayCursor(parsedAfter.data, parsedLastEventId.data),
           signal: request.signal,
           heartbeatMs: readPositiveInteger(
             process.env.INTERVIEW_AGENT_HEARTBEAT_MS,
