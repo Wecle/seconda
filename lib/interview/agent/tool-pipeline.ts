@@ -13,6 +13,7 @@ export type InterviewToolContext = {
   interviewId: string;
   runId: string;
   repository: InterviewAgentRepository;
+  provisionalMessageId?: string;
 };
 
 export interface InterviewToolDefinition<TInput, TOutput> {

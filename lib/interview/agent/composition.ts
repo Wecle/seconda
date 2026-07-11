@@ -110,7 +110,7 @@ function createToolHandlers(
       markProgress();
       return { updated: true };
     },
-    async ask_interview_question(input: { category: string; topic: string; question: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string }) {
+    async ask_interview_question(input: { category: string; topic: string; question: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; provisionalMessageId?: string }) {
       const question = await db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${context.interviewId}))`);
         const [indexRow] = await tx.select({ next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1` })
@@ -136,7 +136,8 @@ function createToolHandlers(
         ));
         return created;
       });
-      await repository.appendMessage({
+      const message = await repository.appendMessage({
+        id: context.provisionalMessageId,
         interviewId: context.interviewId,
         runId: context.runId,
         role: "assistant",
@@ -144,7 +145,12 @@ function createToolHandlers(
         content: input.question,
       });
       markProgress();
-      return { questionId: question.id, committed: true };
+      return {
+        questionId: question.id,
+        messageId: message.id,
+        messageSequence: message.sequence,
+        committed: true,
+      };
     },
     async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string }) {
       await db.update(interviews).set({ status: "completing", updatedAt: new Date() })

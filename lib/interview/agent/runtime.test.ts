@@ -104,3 +104,44 @@ test("maps an abort during tool execution to aborted_tools", async () => {
   });
   assert.equal(result.exitReason, "aborted_tools");
 });
+
+test("commits the same message identity used by provisional deltas", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  const definition = tool("ask_interview_question");
+  definition.execute = async (_input, context) => {
+    const message = await context.repository.appendMessage({
+      id: context.provisionalMessageId,
+      interviewId: context.interviewId,
+      runId: context.runId,
+      role: "assistant",
+      kind: "question",
+      content: "请自我介绍",
+    });
+    return { messageId: message.id, messageSequence: message.sequence };
+  };
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() { throw new Error("non-streaming path should not run"); },
+      async nextStepStream(input) {
+        await input.onProvisionalDelta({ messageId: "message-stable", attemptId: "attempt-1", text: "请自我介绍" });
+        return {
+          step: { type: "tool_call", callId: "1", toolName: "ask_interview_question", args: {} },
+          attemptId: "attempt-1",
+          provisionalMessageId: "message-stable",
+        };
+      },
+    },
+    tools: new Map([[definition.name, definition]]),
+    initialMessages: [],
+    signal: new AbortController().signal,
+    progressHash: () => "progress",
+  });
+  assert.equal(result.exitReason, "completed");
+  const events = await repository.listEvents(run.id, 0);
+  assert.equal((events.find((event) => event.type === "text_delta")?.payload as { messageId: string }).messageId, "message-stable");
+  assert.equal((events.find((event) => event.type === "message_committed")?.payload as { messageId: string }).messageId, "message-stable");
+});
