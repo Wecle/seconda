@@ -12,6 +12,7 @@ import { createProductionAgentDependencies } from "@/lib/interview/agent/composi
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { createAgentInterview } from "@/lib/interview/agent/service";
 import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
+import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 const createSchema = z.object({
   level: z.string(),
@@ -32,7 +33,7 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.json();
 
     if (rawBody?.configVersion === 2) {
-      if (process.env.INTERVIEW_AGENT_V2_ENABLED !== "true") {
+      if (!isInterviewAgentEnabled()) {
         return NextResponse.json(
           { error: "Agent interviews are not enabled" },
           { status: 404 },

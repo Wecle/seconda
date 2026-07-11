@@ -182,7 +182,10 @@ export function InterviewHistoryPanel({
                         : "text-amber-600";
                   const scoreBadge =
                     score != null ? getScoreBadge(score) : null;
-                  const metaLabel = `${getLevelLabel(interview.level)} · ${interview.questionCount} ${t.report.questions}`;
+                  const isAgent = interview.configVersion === 2;
+                  const metaLabel = isAgent
+                    ? `${interview.candidateRoundCount} ${t.interview.roundsUnit} · Agent`
+                    : `${getLevelLabel(interview.level)} · ${interview.questionCount} ${t.report.questions}`;
 
                   return (
                     <article
@@ -195,7 +198,7 @@ export function InterviewHistoryPanel({
                             {getDateLabel(interview.createdAt)}
                           </p>
                           <h4 className="text-sm font-semibold text-slate-900 dark:text-white">
-                            {getTypeLabel(interview.type)}
+                            {isAgent ? (interview.targetRole || t.interview.agentInterview) : getTypeLabel(interview.type)}
                           </h4>
                           <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
                             {metaLabel}

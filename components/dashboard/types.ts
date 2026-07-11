@@ -8,6 +8,9 @@ export interface VersionInterview {
   level: string;
   overallScore: number | null;
   questionCount: number;
+  configVersion: number;
+  targetRole: string | null;
+  candidateRoundCount: number;
   createdAt: string;
   completedAt: string | null;
 }
