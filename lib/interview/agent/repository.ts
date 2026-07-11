@@ -1,4 +1,4 @@
-import { and, asc, eq, isNotNull, sql } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import {
   interviewAgentEvents,
   interviewAgentRuns,
@@ -25,6 +25,11 @@ export interface InterviewAgentRepository {
     runId: string,
     event: { type: AgentEventType; payload: unknown },
   ): Promise<{ sequence: number }>;
+  getRun(runId: string): Promise<AgentRunRecord | null>;
+  listEvents(runId: string, afterSequence: number): Promise<AgentEventRecord[]>;
+  claimRun(runId: string, owner: string, now: Date, leaseMs: number): Promise<{ claimed: boolean; run: AgentRunRecord | null }>;
+  renewLease(runId: string, owner: string, now: Date, leaseMs: number): Promise<boolean>;
+  releaseLease(runId: string, owner: string): Promise<boolean>;
   appendMessage(input: {
     interviewId: string;
     runId: string;
@@ -43,6 +48,23 @@ export interface InterviewAgentRepository {
   ): Promise<void>;
 }
 
+export type AgentRunRecord = {
+  id: string;
+  interviewId: string;
+  status: "running" | "completed" | "failed";
+  exitReason: AgentExitReason | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  resumeCount: number;
+  checkpoint: AgentCheckpoint | null;
+};
+
+export type AgentEventRecord = {
+  sequence: number;
+  type: AgentEventType;
+  payload: unknown;
+};
+
 type MemoryRun = {
   id: string;
   interviewId: string;
@@ -50,6 +72,11 @@ type MemoryRun = {
   status: "running" | "completed" | "failed";
   eventSequence: number;
   checkpoint?: AgentCheckpoint;
+  exitReason: AgentExitReason | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  resumeCount: number;
+  events: AgentEventRecord[];
 };
 
 export function createInMemoryInterviewAgentRepository(
@@ -77,15 +104,52 @@ export function createInMemoryInterviewAgentRepository(
         idempotencyKey: input.idempotencyKey,
         status: "running",
         eventSequence: 0,
+        exitReason: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        resumeCount: 0,
+        events: [],
       };
       runs.set(run.id, run);
       runKeys.set(key, run.id);
       return { id: run.id, status: "running", created: true };
     },
-    async appendEvent(runId) {
+    async appendEvent(runId, event) {
       const run = requireMemoryRun(runs, runId);
       run.eventSequence += 1;
+      run.events.push({ sequence: run.eventSequence, ...event });
       return { sequence: run.eventSequence };
+    },
+    async getRun(runId) {
+      const run = runs.get(runId);
+      return run ? memoryRunRecord(run) : null;
+    },
+    async listEvents(runId, afterSequence) {
+      return requireMemoryRun(runs, runId).events.filter((event) => event.sequence > afterSequence);
+    },
+    async claimRun(runId, owner, now, leaseMs) {
+      const run = requireMemoryRun(runs, runId);
+      if (run.status !== "running") return { claimed: false, run: memoryRunRecord(run) };
+      const sameOwner = run.leaseOwner === owner;
+      const expired = !run.leaseExpiresAt || run.leaseExpiresAt.getTime() <= now.getTime();
+      if (!sameOwner && !expired) return { claimed: false, run: memoryRunRecord(run) };
+      if (run.leaseOwner && run.leaseOwner !== owner && expired) run.resumeCount += 1;
+      run.leaseOwner = owner;
+      run.leaseExpiresAt = new Date(now.getTime() + leaseMs);
+      return { claimed: true, run: memoryRunRecord(run) };
+    },
+    async renewLease(runId, owner, now, leaseMs) {
+      const run = requireMemoryRun(runs, runId);
+      if (run.status !== "running" || run.leaseOwner !== owner) return false;
+      run.leaseExpiresAt = new Date(now.getTime() + leaseMs);
+      return true;
+    },
+    async releaseLease(runId, owner) {
+      const run = requireMemoryRun(runs, runId);
+      if (run.leaseOwner !== owner) return false;
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
+      return true;
     },
     async appendMessage(input) {
       const key = input.idempotencyKey
@@ -116,16 +180,35 @@ export function createInMemoryInterviewAgentRepository(
     async completeRun(runId) {
       const run = requireRunningMemoryRun(runs, runId);
       run.status = "completed";
+      run.exitReason = "completed";
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
     },
-    async failRun(runId) {
+    async failRun(runId, exitReason) {
       const run = requireRunningMemoryRun(runs, runId);
       run.status = "failed";
+      run.exitReason = exitReason;
+      run.leaseOwner = null;
+      run.leaseExpiresAt = null;
     },
     inspectRun(runId) {
       return runs.get(runId);
     },
   };
   return repository;
+}
+
+function memoryRunRecord(run: MemoryRun): AgentRunRecord {
+  return {
+    id: run.id,
+    interviewId: run.interviewId,
+    status: run.status,
+    exitReason: run.exitReason,
+    leaseOwner: run.leaseOwner,
+    leaseExpiresAt: run.leaseExpiresAt,
+    resumeCount: run.resumeCount,
+    checkpoint: run.checkpoint ?? null,
+  };
 }
 
 function requireMemoryRun(runs: Map<string, MemoryRun>, runId: string) {
@@ -201,6 +284,77 @@ export function createDrizzleInterviewAgentRepository(
         return run;
       });
     },
+    async getRun(runId) {
+      const [run] = await database.select({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+        status: interviewAgentRuns.status,
+        exitReason: interviewAgentRuns.exitReason,
+        leaseOwner: interviewAgentRuns.leaseOwner,
+        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+        resumeCount: interviewAgentRuns.resumeCount,
+        checkpoint: interviewAgentRuns.checkpointJson,
+      }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
+      return run ? parseRunRecord(run) : null;
+    },
+    async listEvents(runId, afterSequence) {
+      const rows = await database.select({
+        sequence: interviewAgentEvents.sequence,
+        type: interviewAgentEvents.type,
+        payload: interviewAgentEvents.payload,
+      }).from(interviewAgentEvents)
+        .where(and(eq(interviewAgentEvents.runId, runId), sql`${interviewAgentEvents.sequence} > ${afterSequence}`))
+        .orderBy(asc(interviewAgentEvents.sequence));
+      return rows as AgentEventRecord[];
+    },
+    async claimRun(runId, owner, now, leaseMs) {
+      const expiresAt = new Date(now.getTime() + leaseMs);
+      const [claimed] = await database.update(interviewAgentRuns).set({
+        resumeCount: sql`CASE WHEN ${interviewAgentRuns.leaseOwner} IS NOT NULL AND ${interviewAgentRuns.leaseOwner} <> ${owner} THEN ${interviewAgentRuns.resumeCount} + 1 ELSE ${interviewAgentRuns.resumeCount} END`,
+        leaseOwner: owner,
+        leaseExpiresAt: expiresAt,
+        updatedAt: now,
+      }).where(and(
+        eq(interviewAgentRuns.id, runId),
+        eq(interviewAgentRuns.status, "running"),
+        or(
+          isNull(interviewAgentRuns.leaseExpiresAt),
+          lte(interviewAgentRuns.leaseExpiresAt, now),
+          eq(interviewAgentRuns.leaseOwner, owner),
+        ),
+      )).returning({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+        status: interviewAgentRuns.status,
+        exitReason: interviewAgentRuns.exitReason,
+        leaseOwner: interviewAgentRuns.leaseOwner,
+        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+        resumeCount: interviewAgentRuns.resumeCount,
+        checkpoint: interviewAgentRuns.checkpointJson,
+      });
+      if (claimed) return { claimed: true, run: parseRunRecord(claimed) };
+      return { claimed: false, run: await this.getRun(runId) };
+    },
+    async renewLease(runId, owner, now, leaseMs) {
+      const rows = await database.update(interviewAgentRuns).set({
+        leaseExpiresAt: new Date(now.getTime() + leaseMs),
+        updatedAt: now,
+      }).where(and(
+        eq(interviewAgentRuns.id, runId),
+        eq(interviewAgentRuns.status, "running"),
+        eq(interviewAgentRuns.leaseOwner, owner),
+      )).returning({ id: interviewAgentRuns.id });
+      return rows.length > 0;
+    },
+    async releaseLease(runId, owner) {
+      const rows = await database.update(interviewAgentRuns).set({
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        updatedAt: new Date(),
+      }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.leaseOwner, owner)))
+        .returning({ id: interviewAgentRuns.id });
+      return rows.length > 0;
+    },
     async appendMessage(input) {
       if (input.idempotencyKey) {
         const [existing] = await database
@@ -265,6 +419,8 @@ export function createDrizzleInterviewAgentRepository(
         exitReason,
         completedAt: new Date(),
         updatedAt: new Date(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
       }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.status, "running"))).returning({ id: interviewAgentRuns.id });
       if (rows.length === 0) throw new Error(`Run ${runId} is already terminal`);
     },
@@ -275,8 +431,28 @@ export function createDrizzleInterviewAgentRepository(
         errorJson: sanitizeAIError(error),
         completedAt: new Date(),
         updatedAt: new Date(),
+        leaseOwner: null,
+        leaseExpiresAt: null,
       }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.status, "running"))).returning({ id: interviewAgentRuns.id });
       if (rows.length === 0) throw new Error(`Run ${runId} is already terminal`);
     },
+  };
+}
+
+function parseRunRecord(row: {
+  id: string;
+  interviewId: string;
+  status: string;
+  exitReason: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  resumeCount: number;
+  checkpoint: unknown;
+}): AgentRunRecord {
+  return {
+    ...row,
+    status: row.status as AgentRunRecord["status"],
+    exitReason: row.exitReason as AgentExitReason | null,
+    checkpoint: row.checkpoint as AgentCheckpoint | null,
   };
 }
