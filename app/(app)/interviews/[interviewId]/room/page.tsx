@@ -50,7 +50,7 @@ interface InterviewApiResponse {
   resumeSnapshot: ResumeSnapshotData | null;
   agentState?: {
     messages: Array<{ id: string; sequence: number; role: string; kind: string; content: string }>;
-    latestRun: { id: string; status: string; exitReason: string | null; lastEventSequence: number } | null;
+    latestRun: { id: string; status: "running" | "completed" | "failed"; exitReason: string | null; lastEventSequence: number } | null;
   } | null;
 }
 
