@@ -89,6 +89,7 @@ export async function runInterviewAgent(options: {
 
     let step;
     let provisionalMessageId: string | undefined;
+    const bufferedDeltas: Array<{ messageId: string; attemptId: string; text: string }> = [];
     try {
       const modelInput = {
         runId: options.runId,
@@ -114,13 +115,7 @@ export async function runInterviewAgent(options: {
           },
           onProvisionalDelta: async (delta) => {
             provisionalMessageId = delta.messageId;
-            lastEventSequence = (await options.repository.appendEvent(options.runId, {
-              type: "text_delta",
-              payload: {
-                ...delta,
-                provisional: true,
-              },
-            })).sequence;
+            bufferedDeltas.push(delta);
           },
         });
         step = streamed.step;
@@ -212,9 +207,21 @@ export async function runInterviewAgent(options: {
     if (result.ok && TERMINAL_TOOLS.has(step.toolName)) {
       const committed = readCommittedMessage(result.output);
       if (committed) {
+        if (bufferedDeltas.length > 0) {
+          lastEventSequence = (await options.repository.appendEvent(options.runId, {
+            type: "response_started",
+            payload: { runId: options.runId, messageId: committed.messageId },
+          })).sequence;
+          for (const delta of bufferedDeltas) {
+            lastEventSequence = (await options.repository.appendEvent(options.runId, {
+              type: "text_delta",
+              payload: { ...delta, runId: options.runId, provisional: true },
+            })).sequence;
+          }
+        }
         lastEventSequence = (await options.repository.appendEvent(options.runId, {
           type: "message_committed",
-          payload: committed,
+          payload: { ...committed, runId: options.runId },
         })).sequence;
       }
       await options.repository.saveCheckpoint(options.runId, {
