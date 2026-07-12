@@ -237,6 +237,7 @@ export const zh = {
   },
   report: {
     title: "面试评估报告",
+    loadFailed: "报告加载失败，请稍后重试。",
     aiMockInterviewer: "AI 模拟面试官",
     dashboard: "控制台",
     history: "历史记录",

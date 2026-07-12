@@ -210,11 +210,13 @@ export default function ReportPage() {
   const router = useRouter();
   const { interviewId } = useParams();
   const logoDataUrlRef = useRef<string | null>(null);
+  const reportRequestRef = useRef<AbortController | null>(null);
   const [data, setData] = useState<InterviewApiResponse | null>(null);
   const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
     null,
   );
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterTab>("All");
   const [exportLoading, setExportLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
@@ -231,24 +233,32 @@ export default function ReportPage() {
 
   const loadReport = useCallback(async (signal: AbortSignal) => {
     const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
+    if (!response.ok) throw new Error(`Report request failed with ${response.status}`);
     const next = await response.json() as InterviewApiResponse;
     setData(next);
     setLoading(false);
   }, [interviewId]);
 
-  useEffect(() => {
+  const startInitialReportLoad = useCallback(() => {
+    reportRequestRef.current?.abort();
     const controller = new AbortController();
-    let active = true;
+    reportRequestRef.current = controller;
+    setLoading(true);
+    setLoadError(false);
     void loadReport(controller.signal).catch((error: unknown) => {
-      if (!active || isAbortError(error)) return;
+      if (controller.signal.aborted || isAbortError(error)) return;
       setLoading(false);
-      setActionMessage("报告加载失败，请重试。");
+      setLoadError(true);
     });
-    return () => {
-      active = false;
-      controller.abort();
-    };
   }, [loadReport]);
+
+  useEffect(() => {
+    startInitialReportLoad();
+    return () => {
+      reportRequestRef.current?.abort();
+      reportRequestRef.current = null;
+    };
+  }, [startInitialReportLoad]);
 
   const completionPolling = useCompletionPolling({
     active: Boolean(data && ["completing", "scoring", "reporting"].includes(data.interview.status)),
@@ -572,6 +582,21 @@ export default function ReportPage() {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <Loader2 className="size-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (loadError || !data) {
+    return (
+      <div className="flex min-h-screen items-center justify-center px-6">
+        <div className="flex max-w-md flex-col items-center gap-4 text-center">
+          <AlertCircle className="size-8 text-destructive" />
+          <p className="text-sm text-muted-foreground">{t.report.loadFailed}</p>
+          <Button variant="outline" onClick={startInitialReportLoad}>
+            <RefreshCw />
+            {t.common.retry}
+          </Button>
+        </div>
       </div>
     );
   }
