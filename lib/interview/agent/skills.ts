@@ -55,10 +55,9 @@ export function resolveRunSkills(mode: "opening" | "answer") {
     ? ["resume-grounding", "coverage-planning"]
     : ["resume-grounding", "coverage-planning", "answer-planning"];
   const active = names.map((name) => catalog.get(name)!);
-  return {
-    skills: active,
-    toolNames: new Set(active.flatMap((skill) => skill.toolNames as InterviewToolName[])),
-  };
+  const toolNames = new Set(active.flatMap((skill) => skill.toolNames as InterviewToolName[]));
+  if (mode === "opening") toolNames.delete("get_interview_history");
+  return { skills: active, toolNames };
 }
 
 export function renderSkillInstructions(active: readonly InterviewSkill[]) {

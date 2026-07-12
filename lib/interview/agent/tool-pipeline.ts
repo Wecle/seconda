@@ -69,15 +69,12 @@ export async function executeInterviewTool<TInput, TOutput>(options: {
 }): Promise<ToolExecutionResult<TOutput>> {
   const parsed = options.definition.inputSchema.safeParse(options.rawInput);
   if (!parsed.success) {
-    return {
-      ok: false,
-      error: {
+    return rejectTool(options.context, options.definition.name, {
         code: "INVALID_TOOL_INPUT",
         message: "工具参数格式无效。",
         retryable: true,
         suggestion: parsed.error.issues.map((issue) => issue.path.join(".")).filter(Boolean).join(", "),
-      },
-    };
+    });
   }
 
   let input = options.definition.normalize(parsed.data);
@@ -85,7 +82,9 @@ export async function executeInterviewTool<TInput, TOutput>(options: {
     input,
     options.context,
   );
-  if (businessError) return { ok: false, error: businessError };
+  if (businessError) {
+    return rejectTool(options.context, options.definition.name, businessError);
+  }
 
   for (const hook of options.hooks ?? []) {
     if (hook.phase !== "before") continue;
@@ -95,38 +94,29 @@ export async function executeInterviewTool<TInput, TOutput>(options: {
       context: options.context,
     });
     if (result.action === "stop") {
-      return {
-        ok: false,
-        error: {
+      return rejectTool(options.context, options.definition.name, {
           code: "HOOK_STOPPED",
           message: result.message,
           retryable: false,
-        },
-      };
+      });
     }
     const reparsed = options.definition.inputSchema.safeParse(result.input);
     if (!reparsed.success) {
-      return {
-        ok: false,
-        error: {
+      return rejectTool(options.context, options.definition.name, {
           code: "INVALID_HOOK_INPUT",
           message: "前置 Hook 返回了无效参数。",
           retryable: false,
-        },
-      };
+      });
     }
     input = options.definition.normalize(reparsed.data);
   }
 
   if (!(await options.definition.authorize(input, options.context))) {
-    return {
-      ok: false,
-      error: {
+    return rejectTool(options.context, options.definition.name, {
         code: "TOOL_PERMISSION_DENIED",
         message: "当前 Agent Run 无权执行该工具。",
         retryable: false,
-      },
-    };
+    });
   }
 
   await options.context.repository.appendEvent(options.context.runId, {
@@ -186,4 +176,14 @@ function persistToolCompletion(
     type: "tool_call_completed",
     payload: { toolName, result },
   });
+}
+
+async function rejectTool(
+  context: InterviewToolContext,
+  toolName: string,
+  error: ToolError,
+): Promise<ToolExecutionResult<never>> {
+  const result = { ok: false, error } as const;
+  await persistToolCompletion(context, toolName, result);
+  return result;
 }

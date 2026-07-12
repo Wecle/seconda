@@ -79,6 +79,10 @@ test("rejects malformed enum input before business logic", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.ok ? "" : result.error.code, "INVALID_TOOL_INPUT");
   assert.deepEqual(order, []);
+  const events = await repository.listEvents(run.id, 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]?.type, "tool_call_completed");
+  assert.equal((events[0]?.payload as { result?: { error?: { code?: string } } }).result?.error?.code, "INVALID_TOOL_INPUT");
 });
 
 test("returns structured business errors without authorization or execution", async () => {
@@ -87,6 +91,7 @@ test("returns structured business errors without authorization or execution", as
   const result = await executeInterviewTool({ definition, rawInput: { value: "x" }, context: { interviewId: "interview", runId: run.id, repository } });
   assert.deepEqual(result, { ok: false, error: { code: "BUSINESS", message: "blocked", retryable: false } });
   assert.deepEqual(order, ["normalize", "validateBusiness"]);
+  assert.equal(repository.inspectRun(run.id)?.eventSequence, 1);
 });
 
 test("stops at a before hook", async () => {
@@ -110,6 +115,7 @@ test("denies unauthorized tools before execution", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.ok ? "" : result.error.code, "TOOL_PERMISSION_DENIED");
   assert.deepEqual(order, ["normalize", "validateBusiness", "authorize"]);
+  assert.equal(repository.inspectRun(run.id)?.eventSequence, 1);
 });
 
 test("sanitizes executor failures before returning and persisting", async () => {
