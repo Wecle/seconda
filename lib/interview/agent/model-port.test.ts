@@ -16,6 +16,26 @@ test("provider output requires a tool call", () => {
   }).success, false);
 });
 
+test("streaming model port rejects a provider final response", async () => {
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "fast" }],
+    classifyError: () => "fatal",
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => ({
+      partialOutputStream: (async function* () {})(),
+      output: Promise.resolve({ type: "final", content: "请自我介绍" }),
+    }),
+  });
+  await assert.rejects(port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: [],
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onProvisionalDelta: async () => {},
+  }));
+});
+
 test("emits only growing question suffixes with one provisional identity", async () => {
   const deltas: Array<{ messageId: string; attemptId: string; text: string }> = [];
   const port = createStreamingInterviewAgentModelPort({

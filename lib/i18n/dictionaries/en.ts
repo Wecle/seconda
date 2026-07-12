@@ -249,6 +249,7 @@ export const en = {
   },
   report: {
     title: "Interview Evaluation",
+    loadFailed: "Failed to load the report. Please try again.",
     aiMockInterviewer: "AI Mock Interviewer",
     dashboard: "Dashboard",
     history: "History",
