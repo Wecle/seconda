@@ -13,6 +13,7 @@ const base: AgentRunRecord = {
   resumeCount: 0,
   checkpoint: null,
   trigger: { mode: "answer", instruction: "continue" },
+  lastEventSequence: 0,
 };
 
 test("reports a live lease as already running", () => {

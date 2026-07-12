@@ -20,11 +20,10 @@ export async function executeClaimedRun(options: {
   );
   if (!claimed.claimed || !claimed.run) return { status: "not_claimed" as const };
   if (!claimed.run.trigger) {
-    await options.repository.failRun(
-      options.runId,
-      "aborted_tools",
-      new Error("Agent run trigger is missing"),
-    );
+    await options.repository.terminateRun(options.runId, {
+      exitReason: "aborted_tools",
+      error: new Error("Agent run trigger is missing"),
+    });
     return { status: "failed" as const };
   }
 
@@ -60,13 +59,12 @@ export async function executeClaimedRun(options: {
   } catch (error) {
     const current = await options.repository.getRun(options.runId);
     if (current?.status === "running") {
-      await options.repository.failRun(
-        options.runId,
-        leaseLost
+      await options.repository.terminateRun(options.runId, {
+        exitReason: leaseLost
           ? "aborted_tools"
           : isPromptTooLong(error) ? "prompt_too_long" : "aborted_streaming",
         error,
-      );
+      });
     }
     return { status: "failed" as const };
   } finally {

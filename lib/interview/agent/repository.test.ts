@@ -54,6 +54,30 @@ test("allows only one terminal transition", async () => {
   await assert.rejects(repository.failRun(run.id, "aborted_tools", new Error("late")), /already terminal/);
 });
 
+test("commits one completed terminal event", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  const first = await repository.terminateRun(run.id, { exitReason: "completed" });
+  const second = await repository.terminateRun(run.id, { exitReason: "completed" });
+  assert.equal(first.created, true);
+  assert.equal(second.created, false);
+  assert.deepEqual((await repository.listEvents(run.id, 0)).map((event) => event.type), ["run_completed"]);
+});
+
+test("persists run_failed before exposing failed status", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  await repository.terminateRun(run.id, {
+    exitReason: "blocking_limit",
+    error: new Error("no progress"),
+    retryable: false,
+    userMessage: "本轮处理未能继续，请重试。",
+  });
+  const events = await repository.listEvents(run.id, 0);
+  assert.equal(events.at(-1)?.type, "run_failed");
+  assert.equal((await repository.getRun(run.id))?.status, "failed");
+});
+
 test("persists and reloads checkpoints and interview state", async () => {
   const repository = createInMemoryInterviewAgentRepository({
     interviewId: "interview-1",
