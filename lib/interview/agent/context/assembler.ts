@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import {
+  interviewAnswerAssessments,
   interviewContextSnapshots,
   interviewCoverage,
   interviewMessages,
@@ -24,6 +25,7 @@ export function assembleAgentContext(input: {
   recentMessages: Array<{ sequence: number; role: string; kind: string; content: string }>;
   currentInstruction: string;
   runId: string;
+  latestAssessment?: { id: string; publicSummary: string; followUpNeeded: boolean } | null;
   contextWindow?: number;
   outputReserve?: number;
 }) {
@@ -69,6 +71,14 @@ export function assembleAgentContext(input: {
         },
       ],
       tailSegments: [
+        ...(input.latestAssessment ? [{
+          id: "latest-assessment",
+          version: input.latestAssessment.id,
+          priority: 90,
+          cacheScope: "turn" as const,
+          trimPolicy: "never" as const,
+          content: canonicalJson(input.latestAssessment),
+        }] : []),
         {
           id: "recent-messages",
           version: "1",
@@ -101,7 +111,7 @@ export async function loadAgentContext(
   database: AgentDatabase,
   input: { interviewId: string; runId: string; currentInstruction: string },
 ) {
-  const [interviewRows, coverage, messages, snapshots] = await Promise.all([
+  const [interviewRows, coverage, messages, snapshots, assessments] = await Promise.all([
     database.select({
       language: interviews.language,
       persona: interviews.persona,
@@ -135,6 +145,14 @@ export async function loadAgentContext(
       .where(eq(interviewContextSnapshots.interviewId, input.interviewId))
       .orderBy(desc(interviewContextSnapshots.cacheEpoch))
       .limit(1),
+    database.select({
+      id: interviewAnswerAssessments.id,
+      publicSummary: interviewAnswerAssessments.publicSummary,
+      followUpNeeded: interviewAnswerAssessments.followUpNeeded,
+    }).from(interviewAnswerAssessments)
+      .where(eq(interviewAnswerAssessments.interviewId, input.interviewId))
+      .orderBy(desc(interviewAnswerAssessments.createdAt))
+      .limit(1),
   ]);
   const interview = interviewRows[0];
   if (!interview) throw new Error("Interview context not found");
@@ -155,6 +173,11 @@ export async function loadAgentContext(
     ),
     currentInstruction: input.currentInstruction,
     runId: input.runId,
+    latestAssessment: assessments[0] ? {
+      id: assessments[0].id,
+      publicSummary: assessments[0].publicSummary,
+      followUpNeeded: assessments[0].followUpNeeded === 1,
+    } : null,
     contextWindow: readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000),
     outputReserve: readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000),
   });

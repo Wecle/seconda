@@ -23,6 +23,7 @@ import { completeInterviewReport } from "@/lib/interview/report-completion";
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
+import { ensureLatestAnswerAssessment } from "./assessment-service";
 
 export function createProductionAgentDependencies() {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -48,6 +49,12 @@ export function createProductionAgentDependencies() {
   });
   const executor: AgentRunExecutor = {
     async run(input) {
+      if (input.mode === "answer") {
+        await ensureLatestAnswerAssessment(db, {
+          interviewId: input.interviewId,
+          signal: input.signal,
+        });
+      }
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
       await compactInterviewContextIfNeeded(db, {
