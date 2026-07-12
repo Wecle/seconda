@@ -84,6 +84,13 @@ function isSupported(claim: string, sourceText: string) {
   const normalizedClaim = normalize(claim);
   const normalizedSource = normalize(sourceText);
   if (normalizedSource.includes(normalizedClaim)) return true;
+  const requiredTerms = [
+    "前端", "后端", "领导", "主导", "负责", "参与",
+    "架构设计", "开发", "获奖", "三等奖",
+  ];
+  if (requiredTerms.some((term) =>
+    normalizedClaim.includes(term) && !normalizedSource.includes(term)
+  )) return false;
   const numbers = canonicalClaim.match(/\d+(?:\.\d+)?/g) ?? [];
   if (numbers.some((number) => !normalizedSource.includes(number))) return false;
   const latin = canonicalClaim.match(/[a-z][a-z0-9.+#-]{2,}/g) ?? [];

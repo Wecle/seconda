@@ -186,3 +186,80 @@ test("commits the same message identity used by provisional deltas", async () =>
   assert.ok(types.indexOf("response_started") < types.indexOf("text_delta"));
   assert.ok(types.indexOf("text_delta") < types.indexOf("message_committed"));
 });
+
+test("caps actual provider attempts across logical model calls", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "attempt-cap" });
+  let attempts = 0;
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() { throw new Error("unused"); },
+      async nextStepStream(input) {
+        for (let index = 0; index < 3; index += 1) {
+          attempts += 1;
+          await input.onAttemptStarted?.({
+            model: "fast",
+            attemptId: `attempt-${attempts}`,
+            attemptNumber: attempts,
+            provisionalMessageId: `message-${index}`,
+          });
+        }
+        return {
+          step: { type: "final" as const, content: "internal" },
+          attemptId: "selected",
+          provisionalMessageId: null,
+        };
+      },
+    },
+    tools: new Map([["get_coverage_state", tool("get_coverage_state")]]),
+    initialMessages: [],
+    signal: new AbortController().signal,
+    progressHash: () => "same",
+  });
+  assert.equal(result.exitReason, "max_turns");
+  assert.equal(attempts, 11);
+});
+
+test("attributes synthesized response deltas to the selected attempt", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "selected-attempt" });
+  const definition = tool("ask_interview_question");
+  definition.execute = async (_input, context) => {
+    const message = await context.repository.appendMessage({
+      id: context.provisionalMessageId,
+      interviewId: context.interviewId,
+      runId: context.runId,
+      role: "assistant",
+      kind: "question",
+      content: "请自我介绍？",
+    });
+    return { messageId: message.id, messageSequence: message.sequence, responseText: "请自我介绍？" };
+  };
+  await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() { throw new Error("unused"); },
+      async nextStepStream(input) {
+        await input.onProvisionalDelta({ messageId: "failed-message", attemptId: "failed-attempt", text: "失败" });
+        await input.onProvisionalDelta({ messageId: "selected-message", attemptId: "selected-attempt", text: "成功" });
+        return {
+          step: { type: "tool_call" as const, callId: "call", toolName: "ask_interview_question", args: {} },
+          attemptId: "selected-attempt",
+          provisionalMessageId: "selected-message",
+        };
+      },
+    },
+    tools: new Map([[definition.name, definition]]),
+    initialMessages: [],
+    signal: new AbortController().signal,
+    progressHash: () => "same",
+  });
+  const deltas = (await repository.listEvents(run.id, 0)).filter((event) => event.type === "text_delta");
+  assert.ok(deltas.length > 0);
+  assert.ok(deltas.every((event) => (event.payload as { attemptId: string }).attemptId === "selected-attempt"));
+});
