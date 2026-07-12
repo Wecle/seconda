@@ -12,6 +12,7 @@ import {
 } from "./tool-pipeline";
 import type { InterviewSkill } from "./skills";
 import { renderSkillInstructions } from "./skills";
+import { publicArtifactFromToolCompletion } from "./public-events";
 
 const MAX_MODEL_TURNS = 8;
 const TERMINAL_TOOLS = new Set([
@@ -31,6 +32,8 @@ export async function runInterviewAgent(options: {
   progressHash: () => string;
   activeSkills?: readonly InterviewSkill[];
   phaseProgressId?: string;
+  publicThinkingSummary?: string;
+  thinkingAlreadyStarted?: boolean;
   promptContext?: {
     stablePrefix: string;
     incrementalTail: string;
@@ -48,6 +51,22 @@ export async function runInterviewAgent(options: {
     type: "run_started",
     payload: { interviewId: options.interviewId },
   })).sequence;
+  if (!options.thinkingAlreadyStarted) {
+    lastEventSequence = (await options.repository.appendEvent(options.runId, {
+      type: "thinking_started",
+      payload: { runId: options.runId },
+    })).sequence;
+  }
+  if (options.publicThinkingSummary) {
+    lastEventSequence = (await options.repository.appendEvent(options.runId, {
+      type: "thinking_summary",
+      payload: {
+        entryId: `assessment:${options.phaseProgressId ?? options.runId}`,
+        stage: "assessment",
+        summary: options.publicThinkingSummary,
+      },
+    })).sequence;
+  }
 
   for (let turn = 1; turn <= MAX_MODEL_TURNS; turn += 1) {
     if (options.signal.aborted) {
@@ -174,6 +193,19 @@ export async function runInterviewAgent(options: {
       phase: TERMINAL_TOOLS.has(step.toolName) ? "acting" : "planning",
       phaseProgressId: options.phaseProgressId,
     });
+    if (result.ok) {
+      const artifact = publicArtifactFromToolCompletion({
+        toolName: step.toolName,
+        runId: options.runId,
+        callId: step.callId,
+      });
+      if (artifact) {
+        lastEventSequence = (await options.repository.appendEvent(options.runId, {
+          type: "artifact_committed",
+          payload: artifact,
+        })).sequence;
+      }
+    }
     const handled = await handleLoopDecision(options, loop, messages);
     if (handled) return { exitReason: handled, turnCount: turn };
 

@@ -18,10 +18,13 @@ export type AgentRunStreamEvent = {
 
 const eventTypes = [
   "run_started",
+  "thinking_started",
+  "thinking_summary",
+  "artifact_committed",
+  "scoring_progress",
+  "reporting_started",
   "model_started",
   "text_delta",
-  "tool_call_started",
-  "tool_call_completed",
   "warning",
   "checkpoint",
   "compacted",
@@ -42,6 +45,7 @@ export function useAgentRunStream(options: {
   >(options.run?.status === "running" ? "connecting" : "idle");
   const [retryVersion, setRetryVersion] = useState(0);
   const cursorRef = useRef(options.afterSequence ?? 0);
+  const cursorRunRef = useRef<string | undefined>(options.run?.id);
   const callbacksRef = useRef({ onEvent: options.onEvent, onTerminal: options.onTerminal });
   callbacksRef.current = { onEvent: options.onEvent, onTerminal: options.onTerminal };
   const runId = options.run?.id;
@@ -55,6 +59,10 @@ export function useAgentRunStream(options: {
 
   useEffect(() => {
     if (!runId || runStatus !== "running") return;
+    if (cursorRunRef.current !== runId) {
+      cursorRunRef.current = runId;
+      cursorRef.current = options.afterSequence ?? 0;
+    }
     let disposed = false;
     let source: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -121,7 +129,7 @@ export function useAgentRunStream(options: {
       source?.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [options.interviewId, retryVersion, runId, runStatus]);
+  }, [options.afterSequence, options.interviewId, retryVersion, runId, runStatus]);
 
   return { connectionState, retry, lastSequence: cursorRef };
 }

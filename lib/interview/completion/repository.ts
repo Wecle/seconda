@@ -19,8 +19,8 @@ export interface CompletionJobRepository {
   claimJob(jobId: string, owner: string, now: Date, leaseMs: number): Promise<CompletionJobRecord | null>;
   renewLease(jobId: string, owner: string, now: Date, leaseMs: number): Promise<boolean>;
   releaseLease(jobId: string, owner: string): Promise<void>;
-  completeJob(jobId: string): Promise<void>;
-  failJob(jobId: string, error: unknown): Promise<void>;
+  completeJob(jobId: string, owner: string): Promise<boolean>;
+  failJob(jobId: string, owner: string, error: unknown): Promise<boolean>;
 }
 
 type Database = typeof import("@/lib/db").db;
@@ -96,15 +96,19 @@ export function createDrizzleCompletionJobRepository(database: Database): Comple
       await database.update(interviewCompletionJobs).set({ leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
         .where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner)));
     },
-    async completeJob(jobId) {
-      await database.update(interviewCompletionJobs).set({
+    async completeJob(jobId, owner) {
+      const rows = await database.update(interviewCompletionJobs).set({
         status: "completed", completedAt: new Date(), errorJson: null, updatedAt: new Date(),
-      }).where(eq(interviewCompletionJobs.id, jobId));
+      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner), eq(interviewCompletionJobs.status, "running")))
+        .returning({ id: interviewCompletionJobs.id });
+      return rows.length > 0;
     },
-    async failJob(jobId, error) {
-      await database.update(interviewCompletionJobs).set({
+    async failJob(jobId, owner, error) {
+      const rows = await database.update(interviewCompletionJobs).set({
         status: "failed", errorJson: serializeError(error), updatedAt: new Date(),
-      }).where(eq(interviewCompletionJobs.id, jobId));
+      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner), eq(interviewCompletionJobs.status, "running")))
+        .returning({ id: interviewCompletionJobs.id });
+      return rows.length > 0;
     },
   };
 }
@@ -141,7 +145,7 @@ export function createInMemoryCompletionJobRepository(): CompletionJobRepository
       return true;
     },
     async releaseLease(id, owner) { const job = jobs.get(id); if (job?.leaseOwner === owner) Object.assign(job, { leaseOwner: null, leaseExpiresAt: null }); },
-    async completeJob(id) { const job = jobs.get(id); if (job) job.status = "completed"; },
-    async failJob(id) { const job = jobs.get(id); if (job) job.status = "failed"; },
+    async completeJob(id, owner) { const job = jobs.get(id); if (!job || job.leaseOwner !== owner || job.status !== "running") return false; job.status = "completed"; return true; },
+    async failJob(id, owner) { const job = jobs.get(id); if (!job || job.leaseOwner !== owner || job.status !== "running") return false; job.status = "failed"; return true; },
   };
 }

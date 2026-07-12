@@ -65,14 +65,14 @@ export function createDrizzleAgentInterviewStore(
     async acceptCandidateMessage(input) {
       return database.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.interviewId}))`);
-        const [existing] = await tx.select({ id: interviewMessages.id })
+        const [existing] = await tx.select({ id: interviewMessages.id, sequence: interviewMessages.sequence, content: interviewMessages.content })
           .from(interviewMessages)
           .where(and(
             eq(interviewMessages.interviewId, input.interviewId),
             eq(interviewMessages.idempotencyKey, input.idempotencyKey),
           ))
           .limit(1);
-        if (existing) return false;
+        if (existing) return { ...existing, created: false };
 
         const [sequenceRow] = await tx.select({
           sequence: sql<number>`coalesce(max(${interviewMessages.sequence}), 0) + 1`,
@@ -101,7 +101,7 @@ export function createDrizzleAgentInterviewStore(
           answerText: input.content,
           answeredAt: new Date(),
         }).where(eq(interviewQuestions.id, question.id));
-        await tx.insert(interviewMessages).values({
+        const [message] = await tx.insert(interviewMessages).values({
           interviewId: input.interviewId,
           runId: input.runId,
           sequence: Number(sequenceRow.sequence),
@@ -110,8 +110,8 @@ export function createDrizzleAgentInterviewStore(
           kind: "answer",
           content: input.content,
           questionId: question.id,
-        });
-        return true;
+        }).returning({ id: interviewMessages.id, sequence: interviewMessages.sequence, content: interviewMessages.content });
+        return { ...message, created: true };
       });
     },
     async markCompleting(interviewId) {

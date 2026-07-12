@@ -30,14 +30,23 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
   }).from(interviews).innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
     .where(eq(interviews.id, interviewId)).limit(1);
   if (!context) throw new Error("Interview not found");
+  const resume = context.parsedJson as ParsedResume | null;
+  const resumeContext = resume ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}` : "";
+  await database.update(interviewQuestions).set({ scoreStatus: "pending", scoreAttemptCount: 0 }).where(and(
+    eq(interviewQuestions.interviewId, interviewId),
+    eq(interviewQuestions.scoreStatus, "failed"),
+    sql`${interviewQuestions.scoreAttemptCount} >= ${maxAttempts}`,
+  ));
+  await database.update(interviewQuestions).set({ scoreStatus: "pending" }).where(and(
+    eq(interviewQuestions.interviewId, interviewId),
+    eq(interviewQuestions.scoreStatus, "scoring"),
+  ));
   const questions = await database.select().from(interviewQuestions).where(and(
     eq(interviewQuestions.interviewId, interviewId),
     isNotNull(interviewQuestions.answeredAt),
-    inArray(interviewQuestions.scoreStatus, ["pending", "failed", "scoring"]),
+    inArray(interviewQuestions.scoreStatus, ["pending", "failed"]),
     lt(interviewQuestions.scoreAttemptCount, maxAttempts),
   )).orderBy(asc(interviewQuestions.questionIndex));
-  const resume = context.parsedJson as ParsedResume | null;
-  const resumeContext = resume ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}` : "";
   const failures: unknown[] = [];
   await mapWithConcurrency(questions, concurrency, async (question) => {
     if (options?.signal?.aborted) throw options.signal.reason;
@@ -47,7 +56,7 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
       scoreErrorJson: null,
     }).where(and(
       eq(interviewQuestions.id, question.id),
-      inArray(interviewQuestions.scoreStatus, ["pending", "failed", "scoring"]),
+      inArray(interviewQuestions.scoreStatus, ["pending", "failed"]),
       lt(interviewQuestions.scoreAttemptCount, maxAttempts),
     )).returning({ attemptCount: interviewQuestions.scoreAttemptCount });
     if (!claimed[0]) return;
@@ -62,9 +71,7 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
         resumeContext,
       });
       await database.transaction(async (tx) => {
-        await tx.insert(questionScores).values({ questionId: question.id, ...result.scores })
-          .onConflictDoNothing({ target: questionScores.questionId });
-        await tx.update(interviewQuestions).set({
+        const committed = await tx.update(interviewQuestions).set({
           feedbackJson: {
             strengths: result.strengths,
             improvements: result.improvements,
@@ -73,14 +80,25 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
           },
           scoreStatus: "scored",
           scoreErrorJson: null,
-        }).where(eq(interviewQuestions.id, question.id));
+        }).where(and(
+          eq(interviewQuestions.id, question.id),
+          eq(interviewQuestions.scoreStatus, "scoring"),
+          eq(interviewQuestions.scoreAttemptCount, claimed[0].attemptCount),
+        )).returning({ id: interviewQuestions.id });
+        if (committed.length === 0) return;
+        await tx.insert(questionScores).values({ questionId: question.id, ...result.scores })
+          .onConflictDoNothing({ target: questionScores.questionId });
       });
     } catch (error) {
       failures.push(error);
       await database.update(interviewQuestions).set({
         scoreStatus: claimed[0].attemptCount >= maxAttempts ? "failed" : "pending",
         scoreErrorJson: sanitizeAIError(error),
-      }).where(eq(interviewQuestions.id, question.id));
+      }).where(and(
+        eq(interviewQuestions.id, question.id),
+        eq(interviewQuestions.scoreStatus, "scoring"),
+        eq(interviewQuestions.scoreAttemptCount, claimed[0].attemptCount),
+      ));
     }
   });
   const remaining = await database.select({ id: interviewQuestions.id }).from(interviewQuestions).where(and(

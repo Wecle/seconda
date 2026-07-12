@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewAgentEvents, interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
 import { and, eq, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
@@ -35,7 +35,7 @@ export async function GET(
       );
     }
 
-    const [rows, agentMessages, latestRuns, completionJobs] = await Promise.all([db
+    const [rows, agentMessages, artifactEvents, latestRuns, completionJobs] = await Promise.all([db
       .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
       .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
@@ -44,6 +44,12 @@ export async function GET(
       interview.configVersion === 2
         ? db.select({ id: interviewMessages.id, sequence: interviewMessages.sequence, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
           .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
+        : Promise.resolve([]),
+      interview.configVersion === 2
+        ? db.select({ payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
+          .innerJoin(interviewAgentRuns, eq(interviewAgentRuns.id, interviewAgentEvents.runId))
+          .where(and(eq(interviewAgentRuns.interviewId, id), eq(interviewAgentEvents.type, "artifact_committed")))
+          .orderBy(asc(interviewAgentEvents.createdAt))
         : Promise.resolve([]),
       interview.configVersion === 2
         ? db.select({ id: interviewAgentRuns.id, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, lastEventSequence: interviewAgentRuns.lastEventSequence })
@@ -83,6 +89,7 @@ export async function GET(
           if (key in progress) progress[key] += 1;
           return progress;
         }, { total: 0, pending: 0, scoring: 0, scored: 0, failed: 0 }),
+        artifacts: artifactEvents.map((event) => event.payload),
       } : null,
       resumeSnapshot: resumeVersion
         ? {

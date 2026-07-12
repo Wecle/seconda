@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { ReportOverviewGrid } from "@/components/interview/report/report-overview-grid";
+import { InterviewCompletionProgress, type ScoringProgress } from "@/components/interview/interview-completion-progress";
 import type { ReportPdfQuestionItem } from "@/components/interview/report/report-pdf-document";
 import {
   Dialog,
@@ -147,6 +148,7 @@ interface QuestionData {
 interface InterviewApiResponse {
   interview: InterviewData;
   questions: QuestionData[];
+  agentState?: { scoringProgress?: ScoringProgress } | null;
 }
 
 type FilterTab = "All" | "Behavioral" | "Technical";
@@ -226,12 +228,18 @@ export default function ReportPage() {
   const { t } = useTranslation();
 
   useEffect(() => {
-    fetch(`/api/interviews/${interviewId}`)
-      .then((r) => r.json())
-      .then((d) => {
-        setData(d);
-        setLoading(false);
-      });
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const load = async () => {
+      const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store" });
+      const next = await response.json() as InterviewApiResponse;
+      if (cancelled) return;
+      setData(next);
+      setLoading(false);
+      if (["completing", "scoring", "reporting"].includes(next.interview.status)) timer = setTimeout(load, 1500);
+    };
+    void load();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
   }, [interviewId]);
 
   useEffect(() => {
@@ -552,6 +560,22 @@ export default function ReportPage() {
         <Loader2 className="size-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (interview && interview.status !== "completed") {
+    return <div className="mx-auto flex min-h-screen max-w-2xl items-center px-6">
+      <div className="w-full space-y-4">
+        <InterviewCompletionProgress
+          status={interview.status}
+          progress={data?.agentState?.scoringProgress}
+          onRetry={interview.status === "failed" ? async () => {
+            await fetch(`/api/interviews/${interviewId}/completion/resume`, { method: "POST" });
+            window.location.reload();
+          } : undefined}
+        />
+        <Button variant="outline" onClick={() => router.push(`/interviews/${interviewId}/room`)}>返回面试</Button>
+      </div>
+    </div>;
   }
 
   const filteredQuestions = questions.filter((q: QuestionData) => {
