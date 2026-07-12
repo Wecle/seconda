@@ -112,6 +112,8 @@ export const agentCheckpointSchema = z.object({
   lastEventSequence: z.number().int().min(0),
   progressHash: z.string(),
   activeSkillNames: z.array(z.string()),
+  phase: z.enum(["assessing", "planning", "acting"]).optional(),
+  phaseProgressId: z.string().optional(),
 });
 
 export const textDeltaPayloadSchema = z.object({

@@ -48,11 +48,13 @@ export function createProductionAgentDependencies() {
   });
   const executor: AgentRunExecutor = {
     async run(input) {
+      let phaseProgressId: string | undefined;
       if (input.mode === "answer") {
-        await ensureLatestAnswerAssessment(db, {
+        const assessment = await ensureLatestAnswerAssessment(db, {
           interviewId: input.interviewId,
           signal: input.signal,
         });
+        phaseProgressId = assessment.id;
       }
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
@@ -106,6 +108,7 @@ export function createProductionAgentDependencies() {
         model,
         tools: deferredTools,
         activeSkills: active.skills,
+        phaseProgressId,
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
         progressHash: () => String(progressVersion),

@@ -30,6 +30,7 @@ export async function runInterviewAgent(options: {
   signal: AbortSignal;
   progressHash: () => string;
   activeSkills?: readonly InterviewSkill[];
+  phaseProgressId?: string;
   promptContext?: {
     stablePrefix: string;
     incrementalTail: string;
@@ -59,6 +60,8 @@ export async function runInterviewAgent(options: {
       lastEventSequence,
       progressHash: options.progressHash(),
       activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
+      phase: "planning",
+      phaseProgressId: options.phaseProgressId,
     });
     lastEventSequence = (await options.repository.appendEvent(options.runId, {
       type: "model_started",
@@ -128,6 +131,8 @@ export async function runInterviewAgent(options: {
         result: { code: "UNKNOWN_TOOL" },
         progressHash: options.progressHash(),
         unknownTool: true,
+        phase: "planning",
+        phaseProgressId: options.phaseProgressId,
       });
       messages.push({
         role: "tool",
@@ -166,6 +171,8 @@ export async function runInterviewAgent(options: {
       args: step.args,
       result,
       progressHash: options.progressHash(),
+      phase: TERMINAL_TOOLS.has(step.toolName) ? "acting" : "planning",
+      phaseProgressId: options.phaseProgressId,
     });
     const handled = await handleLoopDecision(options, loop, messages);
     if (handled) return { exitReason: handled, turnCount: turn };
@@ -184,6 +191,8 @@ export async function runInterviewAgent(options: {
         lastEventSequence,
         progressHash: options.progressHash(),
         activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
+        phase: "acting",
+        phaseProgressId: options.phaseProgressId,
       });
       await options.repository.terminateRun(options.runId, { exitReason: "completed" });
       return { exitReason: "completed", turnCount: turn };
