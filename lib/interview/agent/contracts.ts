@@ -73,6 +73,17 @@ export const coverageStatusSchema = z.enum([
   "exhausted",
 ]);
 
+export const answerAssessmentSchema = z.object({
+  completeness: z.enum(["low", "medium", "high"]),
+  specificity: z.enum(["low", "medium", "high"]),
+  evidenceStrength: z.enum(["weak", "partial", "strong"]),
+  reflectionDepth: z.enum(["none", "surface", "deep"]),
+  followUpNeeded: z.boolean(),
+  missingPoints: z.array(z.string().min(1).max(200)).max(5),
+  extractedEvidence: z.array(z.string().min(1).max(300)).max(5),
+  publicSummary: z.string().min(1).max(500),
+}).strict();
+
 export const interviewDecisionSchema = z.object({
   action: z.enum(["ask", "finish", "clarify"]),
   category: questionCategorySchema,
@@ -170,6 +181,7 @@ export type AgentEventType = z.infer<typeof agentEventTypeSchema>;
 export type InterviewMessageRole = z.infer<typeof interviewMessageRoleSchema>;
 export type InterviewMessageKind = z.infer<typeof interviewMessageKindSchema>;
 export type CoverageStatus = z.infer<typeof coverageStatusSchema>;
+export type AnswerAssessment = z.infer<typeof answerAssessmentSchema>;
 export type InterviewDecision = z.infer<typeof interviewDecisionSchema>;
 export type AgentModelStep = z.infer<typeof agentModelStepSchema>;
 export type AgentCheckpoint = z.infer<typeof agentCheckpointSchema>;

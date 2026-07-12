@@ -208,6 +208,9 @@ export const interviewQuestions = pgTable("interview_questions", {
   answerText: text("answer_text"),
   answeredAt: timestamp("answered_at", { withTimezone: true }),
   feedbackJson: jsonb("feedback_json"),
+  scoreStatus: text("score_status").notNull().default("pending"),
+  scoreAttemptCount: integer("score_attempt_count").notNull().default(0),
+  scoreErrorJson: jsonb("score_error_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique().on(table.interviewId, table.questionIndex),
@@ -227,6 +230,38 @@ export const questionScores = pgTable("question_scores", {
   reflection: integer("reflection").notNull(),
   overall: integer("overall").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const interviewAnswerAssessments = pgTable("interview_answer_assessments", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id").notNull().references(() => interviews.id, { onDelete: "cascade" }),
+  questionId: uuid("question_id").notNull().references(() => interviewQuestions.id, { onDelete: "cascade" }),
+  answerMessageId: uuid("answer_message_id").notNull().unique().references(() => interviewMessages.id, { onDelete: "cascade" }),
+  completeness: text("completeness").notNull(),
+  specificity: text("specificity").notNull(),
+  evidenceStrength: text("evidence_strength").notNull(),
+  reflectionDepth: text("reflection_depth").notNull(),
+  followUpNeeded: integer("follow_up_needed").notNull(),
+  missingPoints: jsonb("missing_points").$type<string[]>().notNull(),
+  extractedEvidence: jsonb("extracted_evidence").$type<string[]>().notNull(),
+  publicSummary: text("public_summary").notNull(),
+  model: text("model"),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const interviewCompletionJobs = pgTable("interview_completion_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id").notNull().unique().references(() => interviews.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
 
 export const deepDiveSessions = pgTable("deep_dive_sessions", {

@@ -166,6 +166,24 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_output_tokens INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS cache_metrics_available INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS compaction_failure_count INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS score_status TEXT NOT NULL DEFAULT 'pending'`;
+  await sql`ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS score_attempt_count INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS score_error_json JSONB`;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_completion_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL UNIQUE REFERENCES interviews(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      error_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS interview_context_snapshots (
@@ -197,6 +215,27 @@ async function migrate() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (interview_id, sequence),
       UNIQUE (interview_id, idempotency_key)
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_answer_assessments (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      question_id UUID NOT NULL REFERENCES interview_questions(id) ON DELETE CASCADE,
+      answer_message_id UUID NOT NULL UNIQUE REFERENCES interview_messages(id) ON DELETE CASCADE,
+      completeness TEXT NOT NULL,
+      specificity TEXT NOT NULL,
+      evidence_strength TEXT NOT NULL,
+      reflection_depth TEXT NOT NULL,
+      follow_up_needed INTEGER NOT NULL,
+      missing_points JSONB NOT NULL,
+      extracted_evidence JSONB NOT NULL,
+      public_summary TEXT NOT NULL,
+      model TEXT,
+      input_tokens INTEGER NOT NULL DEFAULT 0,
+      output_tokens INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
 
@@ -241,6 +280,13 @@ async function migrate() {
       reflection INTEGER NOT NULL,
       overall INTEGER NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    UPDATE interview_questions
+    SET score_status = 'scored'
+    WHERE EXISTS (
+      SELECT 1 FROM question_scores WHERE question_scores.question_id = interview_questions.id
     )
   `;
 
