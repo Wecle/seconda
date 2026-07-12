@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createInMemoryInterviewAgentRepository } from "./repository";
-import { createInterviewToolRegistry } from "./tool-registry";
+import {
+  createAgentProviderStepSchema,
+  createInterviewToolRegistry,
+} from "./tool-registry";
+
+test("provider schema constrains active tools and their arguments", () => {
+  const schema = createAgentProviderStepSchema([
+    "get_coverage_state",
+    "ask_interview_question",
+  ]);
+  assert.equal(schema.safeParse({
+    type: "tool_call",
+    callId: "call-1",
+    toolName: "get_coverage_state",
+    args: {},
+  }).success, true);
+  assert.equal(schema.safeParse({
+    type: "tool_call",
+    callId: "call-2",
+    toolName: "ask_interview_question",
+    args: { question: "请自我介绍？" },
+  }).success, false);
+  assert.equal(schema.safeParse({
+    type: "tool_call",
+    callId: "call-3",
+    toolName: "get_interview_history",
+    args: { limit: 10 },
+  }).success, false);
+});
 
 test("rejects another question when deterministic policy requires completion", async () => {
   const repository = createInMemoryInterviewAgentRepository();

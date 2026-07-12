@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { questionCategorySchema } from "./contracts";
+import { questionCategorySchema, type AgentModelStep } from "./contracts";
 import {
   authorizeInterviewAction,
   type InterviewActionInput,
@@ -34,7 +34,7 @@ export type InterviewToolRegistry = Map<
   InterviewToolDefinition<unknown, unknown>
 >;
 
-const schemas = {
+export const interviewToolInputSchemas = {
   get_resume_evidence: z.object({ evidenceIds: z.array(z.string().min(1)).min(1).max(10) }).strict(),
   get_interview_history: z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict(),
   get_coverage_state: z.object({}).strict(),
@@ -60,10 +60,25 @@ const schemas = {
   }).strict(),
 } satisfies Record<InterviewToolName, z.ZodType>;
 
+export function createAgentProviderStepSchema(
+  toolNames: readonly InterviewToolName[],
+): z.ZodType<AgentModelStep> {
+  if (toolNames.length === 0) throw new Error("Agent requires at least one tool");
+  const branches = toolNames.map((toolName) => z.object({
+    type: z.literal("tool_call"),
+    callId: z.string().min(1),
+    toolName: z.literal(toolName),
+    args: interviewToolInputSchemas[toolName],
+  }).strict());
+  return z.union(
+    branches as unknown as [z.ZodObject, ...z.ZodObject[]],
+  ) as unknown as z.ZodType<AgentModelStep>;
+}
+
 export function createInterviewToolRegistry(options: {
   handlers: ToolHandlers;
   loadActionInput: (
-    input: z.infer<typeof schemas.ask_interview_question>,
+    input: z.infer<typeof interviewToolInputSchemas.ask_interview_question>,
     context: InterviewToolContext,
   ) => Promise<InterviewActionInput>;
   validateEvidenceIds?: (
@@ -71,14 +86,14 @@ export function createInterviewToolRegistry(options: {
     context: InterviewToolContext,
   ) => Promise<string[]>;
   validateGroundedResponse?: (
-    input: z.infer<typeof schemas.ask_interview_question>,
+    input: z.infer<typeof interviewToolInputSchemas.ask_interview_question>,
     context: InterviewToolContext,
   ) => Promise<string[]>;
 }): InterviewToolRegistry {
   return new Map(interviewToolNames.map((name) => {
     const definition: InterviewToolDefinition<unknown, unknown> = {
       name,
-      inputSchema: schemas[name],
+      inputSchema: interviewToolInputSchemas[name],
       normalize: normalizeToolInput,
       async validateBusiness(input, context) {
         if (
@@ -102,7 +117,7 @@ export function createInterviewToolRegistry(options: {
           }
         }
         if (name !== "ask_interview_question") return null;
-        const questionInput = input as z.infer<typeof schemas.ask_interview_question>;
+        const questionInput = input as z.infer<typeof interviewToolInputSchemas.ask_interview_question>;
         if (options.validateGroundedResponse) {
           const unsupported = await options.validateGroundedResponse(questionInput, context);
           if (unsupported.length > 0) {

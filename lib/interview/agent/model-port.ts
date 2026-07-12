@@ -14,9 +14,13 @@ import {
 } from "@/lib/ai/provider-registry";
 import { runAgentAttempts } from "./attempt-controller";
 import {
-  agentProviderStepSchema,
   type AgentModelStep,
 } from "./contracts";
+import {
+  createAgentProviderStepSchema,
+  interviewToolNames,
+  type InterviewToolName,
+} from "./tool-registry";
 import { normalizeModelUsage, type NormalizedModelUsage } from "./context/telemetry";
 
 export type AgentRuntimeMessage = {
@@ -95,15 +99,17 @@ export function createStreamingInterviewAgentModelPort(options: {
 }): InterviewAgentModelPort {
   return {
     nextStep(input) {
+      const providerSchema = createAgentProviderStepSchema(activeToolNames(input.tools));
       return generateStructured({
         task: "interview.agent",
-        schema: agentProviderStepSchema,
+        schema: providerSchema,
         abortSignal: input.signal,
         system: AGENT_SYSTEM_PROMPT,
         prompt: buildPrompt(input),
       });
     },
     async nextStepStream(input) {
+      const providerSchema = createAgentProviderStepSchema(activeToolNames(input.tools));
       const messageIds = new Map<string, string>();
       const result = await runAgentAttempts({
         candidates: options.candidates,
@@ -167,7 +173,7 @@ export function createStreamingInterviewAgentModelPort(options: {
               usage: normalizeModelUsage(await Promise.resolve(stream.usage)),
             });
           }
-          return agentProviderStepSchema.parse(output);
+          return providerSchema.parse(output);
         },
       });
       return {
@@ -218,17 +224,18 @@ function createProviderAgentStream(
   const apiKey = process.env[keyName]?.trim();
   if (!apiKey) throw new Error(`${keyName} must be configured`);
   const provider = createProviderModel({ ...candidate, apiKey });
+  const providerSchema = createAgentProviderStepSchema(activeToolNames(input.tools));
   return streamText({
     model: provider.model,
     system: applyStructuredOutputInstructions(
       AGENT_SYSTEM_PROMPT,
-      agentProviderStepSchema,
+      providerSchema,
       provider.metadata,
     ),
     prompt: buildPrompt(input),
     abortSignal: input.signal,
     maxRetries: 0,
-    output: createProviderOutput(agentProviderStepSchema, provider.metadata),
+    output: createProviderOutput(providerSchema, provider.metadata),
   });
 }
 
@@ -291,6 +298,15 @@ function buildPrompt(input: {
 
 const AGENT_SYSTEM_PROMPT =
   "你是 Seconda 面试 Agent。每一步必须返回且只返回一个符合 Schema 的工具调用，禁止返回最终文本或内部状态。候选人可见内容必须通过 ask_interview_question 或 finish_interview 工具提交。最新回答的轻量评估已经由系统提交，请基于评估、覆盖度和简历证据选择一个追问、一个新主题或结束；追问必须先简短评价已确认的回答内容，再只问一个问题。评价中的每项事实都要提供简历证据ID或answer:消息ID，无法确认时改成询问句。不得生成或写入正式分数，不得虚构简历经历，不得绕过题型和轮次限制。";
+
+function activeToolNames(tools: readonly AgentToolDescriptor[]) {
+  const available = new Set<string>(interviewToolNames);
+  const names = tools.map((tool) => tool.name).filter(
+    (name): name is InterviewToolName => available.has(name),
+  );
+  if (names.length !== tools.length) throw new Error("Unknown Agent tool descriptor");
+  return names;
+}
 
 function readPositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number(value);
