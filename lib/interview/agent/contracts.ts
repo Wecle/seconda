@@ -39,6 +39,7 @@ export const agentEventTypeSchema = z.enum([
   "run_started",
   "thinking_started",
   "thinking_summary",
+  "response_started",
   "artifact_committed",
   "scoring_progress",
   "reporting_started",
@@ -122,6 +123,7 @@ export const agentCheckpointSchema = z.object({
 });
 
 export const textDeltaPayloadSchema = z.object({
+  runId: z.string().min(1),
   messageId: z.string().min(1),
   attemptId: z.string().min(1),
   text: z.string().min(1),
@@ -129,8 +131,14 @@ export const textDeltaPayloadSchema = z.object({
 }).strict();
 
 export const messageCommittedPayloadSchema = z.object({
+  runId: z.string().min(1),
   messageId: z.string().min(1),
   messageSequence: z.number().int().min(1),
+}).strict();
+
+export const responseStartedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  messageId: z.string().min(1),
 }).strict();
 
 export const thinkingSummaryPayloadSchema = z.object({
