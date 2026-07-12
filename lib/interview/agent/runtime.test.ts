@@ -118,7 +118,7 @@ test("commits the same message identity used by provisional deltas", async () =>
       kind: "question",
       content: "请自我介绍",
     });
-    return { messageId: message.id, messageSequence: message.sequence };
+    return { messageId: message.id, messageSequence: message.sequence, responseText: "你的回答说明了缓存策略。\n\n请介绍一次缓存失效问题？" };
   };
   const result = await runInterviewAgent({
     interviewId: "interview",

@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { composeCandidateResponse, groundedResponsePlanSchema, validateGroundedClaims } from "./grounding";
+
+const sources = new Map([
+  ["answer:12", "我将查询键设计为列表、详情、关联三层，并统一失效关联键。"],
+  ["resume:project", "负责智能审批项目的前端开发。"],
+]);
+
+test("rejects an unsupported team-size attribution", () => {
+  const result = validateGroundedClaims({
+    acknowledgement: "你提到团队有四人。",
+    question: "你如何与后端协作？",
+    claims: [{ text: "团队有4人", sourceIds: ["resume:project"] }],
+  }, sources);
+  assert.deepEqual(result, { ok: false, unsupportedClaims: ["团队有4人"] });
+});
+
+test("accepts grounded acknowledgement followed by exactly one question", () => {
+  const plan = groundedResponsePlanSchema.parse({
+    acknowledgement: "你说明了查询键分层和统一失效策略。",
+    question: "回滚失败时你如何保证最终一致性？",
+    claims: [{ text: "查询键设计为列表、详情、关联三层", sourceIds: ["answer:12"] }],
+  });
+  assert.deepEqual(validateGroundedClaims(plan, sources), { ok: true });
+  assert.equal(composeCandidateResponse(plan).endsWith("最终一致性？"), true);
+});
+
+test("rejects multiple questions and acknowledgement without sources", () => {
+  assert.equal(groundedResponsePlanSchema.safeParse({ acknowledgement: "回答很好。", question: "为什么？怎么做？", claims: [] }).success, false);
+});

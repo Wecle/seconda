@@ -9,6 +9,7 @@ import type {
   InterviewToolDefinition,
   ToolError,
 } from "./tool-pipeline";
+import { acknowledgementSchema, groundedClaimsSchema, singleQuestionSchema } from "./grounding";
 
 export const interviewToolNames = [
   "get_resume_evidence",
@@ -47,7 +48,9 @@ const schemas = {
     action: z.enum(["ask", "clarify"]).default("ask"),
     category: questionCategorySchema,
     intent: z.enum(["new_topic", "follow_up", "verify_evidence"]),
-    question: z.string().trim().min(1).max(2000),
+    acknowledgement: acknowledgementSchema,
+    question: singleQuestionSchema,
+    claims: groundedClaimsSchema,
     topic: z.string().trim().min(1).max(200),
     resumeEvidenceIds: z.array(z.string().min(1)).max(20),
   }).strict(),
@@ -65,6 +68,10 @@ export function createInterviewToolRegistry(options: {
   ) => Promise<InterviewActionInput>;
   validateEvidenceIds?: (
     evidenceIds: readonly string[],
+    context: InterviewToolContext,
+  ) => Promise<string[]>;
+  validateGroundedResponse?: (
+    input: z.infer<typeof schemas.ask_interview_question>,
     context: InterviewToolContext,
   ) => Promise<string[]>;
 }): InterviewToolRegistry {
@@ -95,9 +102,21 @@ export function createInterviewToolRegistry(options: {
           }
         }
         if (name !== "ask_interview_question") return null;
+        const questionInput = input as z.infer<typeof schemas.ask_interview_question>;
+        if (options.validateGroundedResponse) {
+          const unsupported = await options.validateGroundedResponse(questionInput, context);
+          if (unsupported.length > 0) {
+            return {
+              code: "UNSUPPORTED_FACT",
+              message: `候选人可见内容包含无来源事实：${unsupported.join("；")}`,
+              retryable: true,
+              suggestion: "删除无来源陈述，或改成询问句；只引用已加载简历证据或候选人回答原文。",
+            };
+          }
+        }
         const authorization = authorizeInterviewAction(
           await options.loadActionInput(
-            input as z.infer<typeof schemas.ask_interview_question>,
+            questionInput,
             context,
           ),
         );
