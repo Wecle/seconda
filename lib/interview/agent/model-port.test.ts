@@ -3,6 +3,18 @@ import test from "node:test";
 import { agentProviderStepSchema } from "./contracts";
 import { createStreamingInterviewAgentModelPort } from "./model-port";
 
+const askTool = [{ name: "ask_interview_question", description: "ask" }];
+const askArgs = {
+  action: "ask",
+  category: "introduction",
+  intent: "new_topic",
+  acknowledgement: "",
+  question: "请介绍一下自己？",
+  claims: [],
+  topic: "自我介绍",
+  resumeEvidenceIds: [],
+};
+
 test("provider output requires a tool call", () => {
   assert.equal(agentProviderStepSchema.safeParse({
     type: "tool_call",
@@ -29,7 +41,7 @@ test("streaming model port rejects a provider final response", async () => {
   await assert.rejects(port.nextStepStream!({
     runId: "run",
     messages: [],
-    tools: [],
+    tools: askTool,
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onProvisionalDelta: async () => {},
@@ -54,14 +66,14 @@ test("emits only growing question suffixes with one provisional identity", async
         type: "tool_call",
         callId: "call-1",
         toolName: "ask_interview_question",
-        args: { question: "请介绍" },
+        args: askArgs,
       }),
     }),
   });
   const result = await port.nextStepStream!({
     runId: "run",
     messages: [],
-    tools: [],
+    tools: askTool,
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onProvisionalDelta: async (delta) => { deltas.push(delta); },
@@ -87,7 +99,7 @@ test("aborts an idle provider stream", async () => {
   await assert.rejects(port.nextStepStream!({
     runId: "run",
     messages: [],
-    tools: [],
+    tools: askTool,
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onProvisionalDelta: async () => {},
@@ -117,7 +129,7 @@ test("does not fall back after a provisional delta", async () => {
   await assert.rejects(port.nextStepStream!({
     runId: "run",
     messages: [],
-    tools: [],
+    tools: askTool,
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onProvisionalDelta: async () => {},
