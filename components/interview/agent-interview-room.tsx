@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, FileText, Loader2, LogOut, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -9,9 +9,14 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
 import type { ParsedResume } from "@/lib/resume/types";
+import {
+  useAgentRunStream,
+  type AgentRunStreamEvent,
+  type AgentRunStreamStatus,
+} from "./use-agent-run-stream";
 
 type AgentMessage = { id: string; sequence: number; role: string; kind: string; content: string };
-type AgentRun = { id: string; status: string; exitReason: string | null; lastEventSequence: number };
+type AgentRun = AgentRunStreamStatus;
 type ResumeSnapshot = { id: string; versionNumber: number; originalFilename: string; originalFileUrl: string | null; parseStatus: string; parsedData: ParsedResume | null };
 
 export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, resumeSnapshot, status }: {
@@ -31,9 +36,6 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const [resumeOpen, setResumeOpen] = useState(false);
   const [interviewStatus, setInterviewStatus] = useState(status);
   const [error, setError] = useState<string | null>(null);
-  const cursorRef = useRef(0);
-  const runId = run?.id;
-  const runStatus = run?.status;
 
   const refresh = useCallback(async () => {
     const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store" });
@@ -46,41 +48,45 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     return latest as AgentRun | null;
   }, [interviewId]);
 
-  useEffect(() => {
-    if (!runId || runStatus !== "running") return;
-    const source = new EventSource(`/api/interviews/${interviewId}/runs/${runId}/events?after=${cursorRef.current}`);
-    const advance = (event: MessageEvent) => {
-      const sequence = Number(event.lastEventId);
-      if (Number.isInteger(sequence)) cursorRef.current = Math.max(cursorRef.current, sequence);
-    };
-    source.addEventListener("text_delta", (raw) => {
-      const event = raw as MessageEvent;
-      advance(event);
-      const payload = JSON.parse(event.data) as { text?: string };
-      if (payload.text) setProvisional((value) => value + payload.text);
-    });
-    source.addEventListener("message_committed", async (raw) => {
-      advance(raw as MessageEvent);
+  const handleRunEvent = useCallback(async (event: AgentRunStreamEvent) => {
+    if (event.type === "text_delta") {
+      const payload = event.payload as { text?: unknown };
+      if (typeof payload?.text === "string") setProvisional((value) => value + payload.text);
+      return;
+    }
+    if (event.type === "message_committed") {
       setProvisional("");
       await refresh();
-    });
-    const finish = async (raw: Event) => {
-      advance(raw as MessageEvent);
-      source.close();
+      return;
+    }
+    if (event.type === "run_completed" || event.type === "run_failed") {
       setProvisional("");
       setBusy(false);
+      if (event.type === "run_failed") {
+        const payload = event.payload as { userMessage?: unknown };
+        setError(typeof payload?.userMessage === "string"
+          ? payload.userMessage
+          : "本轮生成未完成，请重新提交或稍后重试。");
+      }
       await refresh();
-    };
-    source.addEventListener("run_completed", finish);
-    source.addEventListener("run_failed", async (raw) => {
-      await finish(raw);
-      setError("本轮生成未完成，请重新提交或稍后重试。");
-    });
-    source.onerror = () => {
-      setError("连接正在恢复，已接收的正式消息不会丢失。");
-    };
-    return () => source.close();
-  }, [interviewId, refresh, runId, runStatus]);
+    }
+  }, [refresh]);
+
+  const handleTerminalRun = useCallback(async (terminal: AgentRunStreamStatus) => {
+    setProvisional("");
+    setBusy(false);
+    if (terminal.status === "failed") {
+      setError(`本轮处理已终止${terminal.exitReason ? `（${terminal.exitReason}）` : ""}。`);
+    }
+    await refresh();
+  }, [refresh]);
+
+  const { connectionState, retry: retryConnection } = useAgentRunStream({
+    interviewId,
+    run,
+    onEvent: handleRunEvent,
+    onTerminal: handleTerminalRun,
+  });
 
   const submit = async () => {
     const content = draft.trim();
@@ -100,7 +106,6 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     setDraft("");
     const data = await response.json() as { runId: string };
     await refresh();
-    cursorRef.current = 0;
     setRun({ id: data.runId, status: "running", exitReason: null, lastEventSequence: 0 });
   };
 
@@ -126,6 +131,8 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
           {messages.map((message) => <div key={message.id} className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}><div className={message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"}><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></div>)}
           {provisional && <div className="max-w-[86%] rounded-2xl rounded-bl-md border bg-card px-5 py-4 opacity-80"><ReactMarkdown remarkPlugins={[remarkGfm]}>{provisional}</ReactMarkdown></div>}
           {busy && !provisional && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
+          {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接正在恢复，已接收的正式消息不会丢失。</p>}
+          {connectionState === "manual_retry" && <Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button>}
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 

@@ -78,20 +78,19 @@ export function abortableWait(delayMs: number, signal: AbortSignal) {
       return;
     }
     let settled = false;
-    let timeout: ReturnType<typeof setTimeout>;
-    const finish = (action: () => void) => {
+    function finish(action: () => void) {
       if (settled) return;
       settled = true;
       signal.removeEventListener("abort", onAbort);
       action();
-    };
-    const onAbort = () => {
+    }
+    function onAbort() {
       finish(() => {
         clearTimeout(timeout);
         reject(signal.reason);
       });
-    };
+    }
+    const timeout = setTimeout(() => finish(resolve), delayMs);
     signal.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => finish(resolve), delayMs);
   });
 }
