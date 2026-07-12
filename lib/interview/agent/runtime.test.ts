@@ -144,4 +144,7 @@ test("commits the same message identity used by provisional deltas", async () =>
   const events = await repository.listEvents(run.id, 0);
   assert.equal((events.find((event) => event.type === "text_delta")?.payload as { messageId: string }).messageId, "message-stable");
   assert.equal((events.find((event) => event.type === "message_committed")?.payload as { messageId: string }).messageId, "message-stable");
+  const types = events.map((event) => event.type);
+  assert.ok(types.indexOf("response_started") < types.indexOf("text_delta"));
+  assert.ok(types.indexOf("text_delta") < types.indexOf("message_committed"));
 });
