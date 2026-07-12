@@ -30,6 +30,7 @@ import {
   ShieldOff,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
+import { isAbortError } from "@/lib/interview/completion/request-error";
 import { ReportOverviewGrid } from "@/components/interview/report/report-overview-grid";
 import { InterviewCompletionProgress, type ScoringProgress } from "@/components/interview/interview-completion-progress";
 import { useCompletionPolling } from "@/components/interview/use-completion-polling";
@@ -237,8 +238,16 @@ export default function ReportPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadReport(controller.signal);
-    return () => controller.abort();
+    let active = true;
+    void loadReport(controller.signal).catch((error: unknown) => {
+      if (!active || isAbortError(error)) return;
+      setLoading(false);
+      setActionMessage("报告加载失败，请重试。");
+    });
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, [loadReport]);
 
   const completionPolling = useCompletionPolling({
