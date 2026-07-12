@@ -36,10 +36,10 @@ export async function executeClaimedCompletionJob(options: {
   try {
     await options.executor.run({ interviewId: job.interviewId, jobId: job.id, signal: controller.signal });
     if (leaseLost) throw new Error("Completion job lease was lost");
-    await options.repository.completeJob(job.id);
+    if (!await options.repository.completeJob(job.id, options.owner)) throw new Error("Completion lease was lost before commit");
     return { status: "completed" as const };
   } catch (error) {
-    await options.repository.failJob(job.id, error);
+    await options.repository.failJob(job.id, options.owner, error);
     return { status: "failed" as const };
   } finally {
     clearInterval(interval);

@@ -51,7 +51,20 @@ interface InterviewApiResponse {
   agentState?: {
     messages: Array<{ id: string; sequence: number; role: string; kind: string; content: string }>;
     latestRun: { id: string; status: "running" | "completed" | "failed"; exitReason: string | null; lastEventSequence: number } | null;
+    scoringProgress: { total: number; pending: number; scoring: number; scored: number; failed: number };
+    artifacts: Array<{ artifactId: string; type: "answer_extracted" | "resume_evidence_linked" | "background_saved" | "coverage_updated" | "direction_updated" | "scoring_created" | "reporting_started"; title: string; summary: string; details: string[] }>;
   } | null;
+}
+
+const interviewSnapshotRequests = new Map<string, { expiresAt: number; promise: Promise<InterviewApiResponse> }>();
+
+function fetchInterviewSnapshot(interviewId: string) {
+  const now = Date.now();
+  const cached = interviewSnapshotRequests.get(interviewId);
+  if (cached && cached.expiresAt > now) return cached.promise;
+  const promise = fetch(`/api/interviews/${interviewId}`, { cache: "no-store" }).then((response) => response.json() as Promise<InterviewApiResponse>);
+  interviewSnapshotRequests.set(interviewId, { expiresAt: now + 250, promise });
+  return promise;
 }
 
 interface CurrentQuestionData {
@@ -141,10 +154,7 @@ export default function InterviewRoomPage() {
   const questionRequestRef = useRef(0);
 
   const refreshInterview = useCallback(async () => {
-    const data = (await fetch(`/api/interviews/${interviewId}`, {
-      cache: "no-store",
-    }).then((r) => r.json(),
-    )) as InterviewApiResponse;
+    const data = await fetchInterviewSnapshot(String(interviewId));
     setInterview(data.interview);
     setAgentState(data.agentState ?? null);
     setResumeSnapshot(data.resumeSnapshot ?? null);
@@ -638,7 +648,7 @@ export default function InterviewRoomPage() {
   }
 
   if (interview?.configVersion === 2) {
-    return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} />;
+    return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} initialScoringProgress={agentState?.scoringProgress ?? null} initialArtifacts={agentState?.artifacts ?? []} />;
   }
 
   if (interview?.configVersion === 1 && interview.status === "active") {

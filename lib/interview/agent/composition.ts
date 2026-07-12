@@ -50,12 +50,18 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
   const executor: AgentRunExecutor = {
     async run(input) {
       let phaseProgressId: string | undefined;
+      let publicThinkingSummary: string | undefined;
       if (input.mode === "answer") {
+        await repository.appendEvent(input.runId, {
+          type: "thinking_started",
+          payload: { runId: input.runId },
+        });
         const assessment = await ensureLatestAnswerAssessment(db, {
           interviewId: input.interviewId,
           signal: input.signal,
         });
         phaseProgressId = assessment.id;
+        publicThinkingSummary = assessment.value.publicSummary;
       }
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
@@ -110,6 +116,8 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         tools: deferredTools,
         activeSkills: active.skills,
         phaseProgressId,
+        publicThinkingSummary,
+        thinkingAlreadyStarted: input.mode === "answer",
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
         progressHash: () => String(progressVersion),

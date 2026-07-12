@@ -57,6 +57,7 @@ export async function GET(
             10_000,
           ),
         })) {
+          if ("type" in event && !PUBLIC_STREAM_EVENTS.has(event.type)) continue;
           controller.enqueue(encoder.encode(encodeSseEvent(event)));
         }
       } finally {
@@ -73,6 +74,12 @@ export async function GET(
     },
   });
 }
+
+const PUBLIC_STREAM_EVENTS = new Set([
+  "heartbeat", "thinking_started", "thinking_summary", "artifact_committed",
+  "text_delta", "warning", "message_committed", "run_completed", "run_failed",
+  "scoring_progress", "reporting_started",
+]);
 
 function readPositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number(value);

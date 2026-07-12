@@ -20,7 +20,7 @@ export interface AgentInterviewStore {
     runId: string;
     content: string;
     idempotencyKey: string;
-  }): Promise<boolean>;
+  }): Promise<{ id: string; sequence: number; content: string; created: boolean }>;
   markCompleting(interviewId: string): Promise<boolean>;
 }
 
@@ -100,8 +100,8 @@ export async function submitCandidateMessage(options: {
     runId: existingOrNewRun.id,
   });
 
-  if (!accepted && !existingOrNewRun.created) {
-    return { runId: existingOrNewRun.id, status: "accepted" as const };
+  if (!accepted.created && !existingOrNewRun.created) {
+    return { runId: existingOrNewRun.id, status: "accepted" as const, message: publicMessage(accepted) };
   }
 
   await options.repository.saveRunTrigger(existingOrNewRun.id, {
@@ -110,7 +110,11 @@ export async function submitCandidateMessage(options: {
       "评估候选人的最新回答，更新覆盖度，然后选择一个深入追问、一个新主题或结束面试。一次只提交一个候选人可见结果。",
   });
   await options.scheduler.schedule(existingOrNewRun.id);
-  return { runId: existingOrNewRun.id, status: "accepted" as const };
+  return { runId: existingOrNewRun.id, status: "accepted" as const, message: publicMessage(accepted) };
+}
+
+function publicMessage(message: { id: string; sequence: number; content: string }) {
+  return { id: message.id, sequence: message.sequence, content: message.content };
 }
 
 export async function endAgentInterview(options: {

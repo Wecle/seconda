@@ -15,7 +15,7 @@ function fixture(options?: { status?: string; configVersion?: number }) {
   let rounds = 0;
   let status = options?.status ?? "active";
   const configVersion = options?.configVersion ?? 2;
-  const messages = new Set<string>();
+  const messages = new Map<string, { id: string; sequence: number; content: string; created: boolean }>();
   const store: AgentInterviewStore = {
     async createInterview() {
       calls.push("createInterview");
@@ -24,11 +24,13 @@ function fixture(options?: { status?: string; configVersion?: number }) {
     async initializeCoverage() { calls.push("initializeCoverage"); },
     async loadInterview() { return { id: "interview", status, configVersion, candidateRoundCount: rounds }; },
     async acceptCandidateMessage(input) {
-      if (messages.has(input.idempotencyKey)) return false;
-      messages.add(input.idempotencyKey);
+      const existing = messages.get(input.idempotencyKey);
+      if (existing) return { ...existing, created: false };
       rounds += 1;
       calls.push("acceptCandidateMessage");
-      return true;
+      const message = { id: `message-${messages.size + 1}`, sequence: messages.size + 1, content: input.content, created: true };
+      messages.set(input.idempotencyKey, message);
+      return message;
     },
     async markCompleting() { status = "completing"; calls.push("markCompleting"); return true; },
   };
@@ -64,6 +66,7 @@ test("accepts a candidate answer exactly once for a repeated idempotency key", a
   const first = await submitCandidateMessage({ input, store: f.store, repository: f.repository, scheduler: f.scheduler, signal: new AbortController().signal });
   const second = await submitCandidateMessage({ input, store: f.store, repository: f.repository, scheduler: f.scheduler, signal: new AbortController().signal });
   assert.equal(first.runId, second.runId);
+  assert.deepEqual(first.message, second.message);
   assert.equal(f.getRounds(), 1);
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 1);
 });

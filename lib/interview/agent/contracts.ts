@@ -37,6 +37,11 @@ export const terminalRunPayloadSchema = z.object({
 
 export const agentEventTypeSchema = z.enum([
   "run_started",
+  "thinking_started",
+  "thinking_summary",
+  "artifact_committed",
+  "scoring_progress",
+  "reporting_started",
   "model_started",
   "text_delta",
   "tool_call_started",
@@ -128,6 +133,20 @@ export const messageCommittedPayloadSchema = z.object({
   messageSequence: z.number().int().min(1),
 }).strict();
 
+export const thinkingSummaryPayloadSchema = z.object({
+  entryId: z.string().min(1).max(200),
+  stage: z.enum(["assessment", "evidence", "coverage", "planning", "scoring", "reporting"]),
+  summary: z.string().min(1).max(500),
+}).strict();
+
+export const artifactCommittedPayloadSchema = z.object({
+  artifactId: z.string().min(1).max(200),
+  type: z.enum(["answer_extracted", "resume_evidence_linked", "background_saved", "coverage_updated", "direction_updated", "scoring_created", "reporting_started"]),
+  title: z.string().min(1).max(100),
+  summary: z.string().min(1).max(500),
+  details: z.array(z.string().min(1).max(300)).max(10).default([]),
+}).strict();
+
 export const persistedAgentStreamEventSchema = z.object({
   type: agentEventTypeSchema,
   sequence: z.number().int().min(1),
@@ -189,6 +208,8 @@ export type AgentModelStep = z.infer<typeof agentModelStepSchema>;
 export type AgentCheckpoint = z.infer<typeof agentCheckpointSchema>;
 export type TextDeltaPayload = z.infer<typeof textDeltaPayloadSchema>;
 export type MessageCommittedPayload = z.infer<typeof messageCommittedPayloadSchema>;
+export type PublicThinkingEntry = z.infer<typeof thinkingSummaryPayloadSchema>;
+export type CommittedArtifact = z.infer<typeof artifactCommittedPayloadSchema>;
 export type AgentStreamEvent = z.infer<typeof agentStreamEventSchema>;
 export type RunLease = z.infer<typeof runLeaseSchema>;
 export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
