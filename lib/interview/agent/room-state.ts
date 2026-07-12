@@ -20,6 +20,7 @@ export type RoomTurn = {
 };
 
 export type AgentRoomState = { messages: RoomMessage[]; turns: Record<string, RoomTurn> };
+export type PublicRoomEvent = { runId: string; type: string; payload: unknown };
 export type AgentRoomAction =
   | { type: "candidate_submitted"; localId: string; content: string }
   | { type: "candidate_committed"; localId: string; runId: string; message: { id: string; sequence: number; content: string } }
@@ -34,9 +35,18 @@ export type AgentRoomAction =
   | { type: "message_committed"; runId: string }
   | { type: "run_failed"; runId: string };
 
-export function initialAgentRoomState(messages: RoomMessage[] = [], artifacts: CommittedArtifact[] = []): AgentRoomState {
+export function initialAgentRoomState(messages: RoomMessage[] = [], artifacts: CommittedArtifact[] = [], events: PublicRoomEvent[] = []): AgentRoomState {
   let state: AgentRoomState = { messages, turns: {} };
   for (const artifact of artifacts) state = agentRoomReducer(state, { type: "artifact_committed", artifact });
+  for (const event of events) {
+    if (event.type === "thinking_started") state = agentRoomReducer(state, { type: "run_accepted", runId: event.runId });
+    if (event.type === "thinking_summary") state = agentRoomReducer(state, { type: "thinking_summary", entry: { ...(event.payload as PublicThinkingEntry), runId: event.runId } });
+    if (event.type === "response_started") {
+      const payload = event.payload as { messageId?: unknown };
+      if (typeof payload.messageId === "string") state = agentRoomReducer(state, { type: "response_started", runId: event.runId, messageId: payload.messageId });
+    }
+    if (event.type === "run_failed") state = agentRoomReducer(state, { type: "run_failed", runId: event.runId });
+  }
   return state;
 }
 
