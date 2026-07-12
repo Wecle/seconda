@@ -32,6 +32,7 @@ import {
 import { useTranslation } from "@/lib/i18n/context";
 import { ReportOverviewGrid } from "@/components/interview/report/report-overview-grid";
 import { InterviewCompletionProgress, type ScoringProgress } from "@/components/interview/interview-completion-progress";
+import { useCompletionPolling } from "@/components/interview/use-completion-polling";
 import type { ReportPdfQuestionItem } from "@/components/interview/report/report-pdf-document";
 import {
   Dialog,
@@ -227,20 +228,24 @@ export default function ReportPage() {
   const [shareDialogMessage, setShareDialogMessage] = useState<string | null>(null);
   const { t } = useTranslation();
 
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const load = async () => {
-      const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store" });
-      const next = await response.json() as InterviewApiResponse;
-      if (cancelled) return;
-      setData(next);
-      setLoading(false);
-      if (["completing", "scoring", "reporting"].includes(next.interview.status)) timer = setTimeout(load, 1500);
-    };
-    void load();
-    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  const loadReport = useCallback(async (signal: AbortSignal) => {
+    const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
+    const next = await response.json() as InterviewApiResponse;
+    setData(next);
+    setLoading(false);
   }, [interviewId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void loadReport(controller.signal);
+    return () => controller.abort();
+  }, [loadReport]);
+
+  const completionPolling = useCompletionPolling({
+    active: Boolean(data && ["completing", "scoring", "reporting"].includes(data.interview.status)),
+    status: data?.interview.status ?? "loading",
+    refresh: loadReport,
+  });
 
   useEffect(() => {
     let mounted = true;
@@ -573,6 +578,7 @@ export default function ReportPage() {
             window.location.reload();
           } : undefined}
         />
+        {completionPolling.timedOut && <Button variant="outline" onClick={() => void completionPolling.refreshNow()}>手动刷新状态</Button>}
         <Button variant="outline" onClick={() => router.push(`/interviews/${interviewId}/room`)}>返回面试</Button>
       </div>
     </div>;
