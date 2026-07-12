@@ -1,14 +1,13 @@
 "use client";
 
 import { Brain, ChevronDown, Loader2 } from "lucide-react";
-import type { AgentRoomState } from "@/lib/interview/agent/room-state";
+import type { RoomTurn } from "@/lib/interview/agent/room-state";
 
 export function AgentThinkingPanel({ thinking, active, onToggle }: {
-  thinking: AgentRoomState["thinking"];
+  thinking: RoomTurn["thinking"];
   active: boolean;
   onToggle: (expanded: boolean) => void;
 }) {
-  if (!thinking.runId) return null;
   const label = thinking.failed ? "本轮思考未能完成" : active ? "面试官思考中" : "查看思考过程";
   return <div className="max-w-[86%] border-l-2 border-primary/20 pl-4 text-sm text-muted-foreground">
     <button type="button" aria-expanded={thinking.expanded} onClick={() => onToggle(!thinking.expanded)} className="flex items-center gap-2 py-1 font-medium hover:text-foreground">

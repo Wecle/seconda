@@ -49,10 +49,10 @@ interface InterviewApiResponse {
   interview: InterviewData;
   resumeSnapshot: ResumeSnapshotData | null;
   agentState?: {
-    messages: Array<{ id: string; sequence: number; role: string; kind: string; content: string }>;
+    messages: Array<{ id: string; runId: string | null; sequence: number; role: string; kind: string; content: string }>;
     latestRun: { id: string; status: "running" | "completed" | "failed"; exitReason: string | null; lastEventSequence: number } | null;
     scoringProgress: { total: number; pending: number; scoring: number; scored: number; failed: number };
-    artifacts: Array<{ artifactId: string; type: "answer_extracted" | "resume_evidence_linked" | "background_saved" | "coverage_updated" | "direction_updated" | "scoring_created" | "reporting_started"; title: string; summary: string; details: string[] }>;
+    artifacts: Array<{ runId: string; artifactId: string; type: "answer_extracted" | "resume_evidence_linked" | "background_saved" | "coverage_updated" | "direction_updated" | "scoring_created" | "reporting_started"; title: string; summary: string; details: string[] }>;
   } | null;
 }
 

@@ -4,7 +4,7 @@ import { artifactCommittedPayloadSchema, thinkingSummaryPayloadSchema } from "./
 import { publicArtifactFromToolCompletion } from "./public-events";
 
 test("accepts bounded public thinking without raw reasoning", () => {
-  const value = thinkingSummaryPayloadSchema.parse({ entryId: "a", stage: "assessment", summary: "正在判断回答证据。" });
+  const value = thinkingSummaryPayloadSchema.parse({ runId: "r", entryId: "a", stage: "assessment", summary: "正在判断回答证据。" });
   assert.equal("reasoning" in value, false);
 });
 
