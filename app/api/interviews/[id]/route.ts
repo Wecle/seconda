@@ -42,11 +42,11 @@ export async function GET(
       .where(eq(interviewQuestions.interviewId, id))
       .orderBy(asc(interviewQuestions.questionIndex)),
       interview.configVersion === 2
-        ? db.select({ id: interviewMessages.id, sequence: interviewMessages.sequence, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
+        ? db.select({ id: interviewMessages.id, runId: interviewMessages.runId, sequence: interviewMessages.sequence, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
           .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
         : Promise.resolve([]),
       interview.configVersion === 2
-        ? db.select({ payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
+        ? db.select({ runId: interviewAgentEvents.runId, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
           .innerJoin(interviewAgentRuns, eq(interviewAgentRuns.id, interviewAgentEvents.runId))
           .where(and(eq(interviewAgentRuns.interviewId, id), eq(interviewAgentEvents.type, "artifact_committed")))
           .orderBy(asc(interviewAgentEvents.createdAt))
@@ -89,7 +89,14 @@ export async function GET(
           if (key in progress) progress[key] += 1;
           return progress;
         }, { total: 0, pending: 0, scoring: 0, scored: 0, failed: 0 }),
-        artifacts: artifactEvents.map((event) => event.payload),
+        artifacts: artifactEvents.map((event) => {
+          const payload = event.payload as { type?: string };
+          return {
+            ...(payload as object),
+            runId: event.runId,
+            ...(payload.type === "background_saved" ? { artifactId: `coverage:${event.runId}` } : {}),
+          };
+        }),
       } : null,
       resumeSnapshot: resumeVersion
         ? {

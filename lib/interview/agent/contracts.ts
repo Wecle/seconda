@@ -142,12 +142,14 @@ export const responseStartedPayloadSchema = z.object({
 }).strict();
 
 export const thinkingSummaryPayloadSchema = z.object({
+  runId: z.string().min(1),
   entryId: z.string().min(1).max(200),
   stage: z.enum(["assessment", "evidence", "coverage", "planning", "scoring", "reporting"]),
   summary: z.string().min(1).max(500),
 }).strict();
 
 export const artifactCommittedPayloadSchema = z.object({
+  runId: z.string().min(1),
   artifactId: z.string().min(1).max(200),
   type: z.enum(["answer_extracted", "resume_evidence_linked", "background_saved", "coverage_updated", "direction_updated", "scoring_created", "reporting_started"]),
   title: z.string().min(1).max(100),

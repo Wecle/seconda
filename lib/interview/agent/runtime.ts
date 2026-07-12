@@ -61,6 +61,7 @@ export async function runInterviewAgent(options: {
     lastEventSequence = (await options.repository.appendEvent(options.runId, {
       type: "thinking_summary",
       payload: {
+        runId: options.runId,
         entryId: `assessment:${options.phaseProgressId ?? options.runId}`,
         stage: "assessment",
         summary: options.publicThinkingSummary,

@@ -20,7 +20,7 @@ import {
   type AgentRunStreamStatus,
 } from "./use-agent-run-stream";
 
-type AgentMessage = { id: string; sequence: number; role: string; kind: string; content: string };
+type AgentMessage = { id: string; runId?: string | null; sequence: number; role: string; kind: string; content: string };
 type AgentRun = AgentRunStreamStatus;
 type ResumeSnapshot = { id: string; versionNumber: number; originalFilename: string; originalFileUrl: string | null; parseStatus: string; parsedData: ParsedResume | null };
 
@@ -73,8 +73,17 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       return;
     }
     if (event.type === "text_delta") {
-      const payload = event.payload as { text?: unknown };
-      if (typeof payload?.text === "string") dispatch({ type: "provisional_delta", text: payload.text });
+      const payload = event.payload as { runId?: unknown; messageId?: unknown; text?: unknown };
+      if (typeof payload.runId === "string" && typeof payload.messageId === "string" && typeof payload.text === "string") {
+        dispatch({ type: "provisional_delta", runId: payload.runId, messageId: payload.messageId, text: payload.text });
+      }
+      return;
+    }
+    if (event.type === "response_started") {
+      const payload = event.payload as { runId?: unknown; messageId?: unknown };
+      if (typeof payload.runId === "string" && typeof payload.messageId === "string") {
+        dispatch({ type: "response_started", runId: payload.runId, messageId: payload.messageId });
+      }
       return;
     }
     if (event.type === "thinking_summary") {
@@ -86,14 +95,15 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       return;
     }
     if (event.type === "message_committed") {
-      dispatch({ type: "message_committed" });
+      const payload = event.payload as { runId?: unknown };
+      if (typeof payload.runId === "string") dispatch({ type: "message_committed", runId: payload.runId });
       await refresh();
       return;
     }
     if (event.type === "run_completed" || event.type === "run_failed") {
       setBusy(false);
       if (event.type === "run_failed") {
-        dispatch({ type: "run_failed" });
+        if (run?.id) dispatch({ type: "run_failed", runId: run.id });
         const payload = event.payload as { userMessage?: unknown };
         setError(typeof payload?.userMessage === "string"
           ? payload.userMessage
@@ -106,7 +116,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const handleTerminalRun = useCallback(async (terminal: AgentRunStreamStatus) => {
     setBusy(false);
     if (terminal.status === "failed") {
-      dispatch({ type: "run_failed" });
+      dispatch({ type: "run_failed", runId: terminal.id });
       setError(`本轮处理已终止${terminal.exitReason ? `（${terminal.exitReason}）` : ""}。`);
     }
     await refresh();
@@ -140,7 +150,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       return;
     }
     const data = await response.json() as { runId: string; message: { id: string; sequence: number; content: string } };
-    dispatch({ type: "candidate_committed", localId, message: data.message });
+    dispatch({ type: "candidate_committed", localId, runId: data.runId, message: data.message });
     dispatch({ type: "run_accepted", runId: data.runId });
     setRun({ id: data.runId, status: "running", exitReason: null, lastEventSequence: 0 });
   };
@@ -155,6 +165,16 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   };
 
   const completed = ["completing", "scoring", "reporting", "completed", "failed"].includes(interviewStatus);
+  const userRunIds = new Set(room.messages.filter((message) => message.role === "user" && message.runId).map((message) => message.runId));
+  const renderTurn = (runId: string) => {
+    const turn = room.turns[runId];
+    if (!turn) return null;
+    return <div className="space-y-4" key={`turn:${runId}`}>
+      <AgentThinkingPanel thinking={turn.thinking} active={busy && run?.id === runId && !turn.responseStarted} onToggle={(expanded) => dispatch({ type: "thinking_toggled", runId, expanded })} />
+      {turn.artifacts.map((artifact) => <AgentArtifactCard key={artifact.artifactId} artifact={artifact} />)}
+      {turn.provisional && <div className="max-w-[86%] rounded-2xl rounded-bl-md border bg-card px-5 py-4 opacity-80"><ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.provisional}</ReactMarkdown></div>}
+    </div>;
+  };
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex h-16 items-center justify-between border-b px-6">
@@ -164,11 +184,13 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
 
       <main className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col">
         <div className="flex-1 space-y-6 overflow-y-auto px-6 py-8">
-          {room.messages.map((message) => <div key={message.id} className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}><div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></div>)}
-          <AgentThinkingPanel thinking={room.thinking} active={busy} onToggle={(expanded) => dispatch({ type: "thinking_toggled", expanded })} />
-          {room.artifacts.map((artifact) => <AgentArtifactCard key={artifact.artifactId} artifact={artifact} />)}
-          {room.provisional && <div className="max-w-[86%] rounded-2xl rounded-bl-md border bg-card px-5 py-4 opacity-80"><ReactMarkdown remarkPlugins={[remarkGfm]}>{room.provisional}</ReactMarkdown></div>}
-          {busy && !room.thinking.runId && !room.provisional && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
+          {room.messages.map((message) => <div className="contents" key={message.id}>
+            {message.role === "assistant" && message.runId && !userRunIds.has(message.runId) ? renderTurn(message.runId) : null}
+            <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}><div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></div>
+            {message.role === "user" && message.runId ? renderTurn(message.runId) : null}
+          </div>)}
+          {busy && run?.id && !room.messages.some((message) => message.runId === run.id) ? renderTurn(run.id) : null}
+          {busy && !run?.id && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
           {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接正在恢复，已接收的正式消息不会丢失。</p>}
           {connectionState === "manual_retry" && <Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button>}
           {error && <p className="text-sm text-destructive">{error}</p>}
