@@ -111,6 +111,8 @@ Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。消息提交
 
 事件接口使用 SSE，并通过 `after` sequence 重放断线期间的持久化事件。业务空闲 10 秒会发送不落库的 heartbeat。模型流 25 秒没有 token 或工具进展会触发 provider idle timeout。瞬时错误采用 500ms 起始、2 倍增长、8 秒封顶的 full-jitter 退避，每个模型最多重试 2 次。
 
+Run 的成功与失败都会先持久化唯一终态事件。终态连接不会重连；仅网络异常最多自动重连 5 次，之后显示手动重试。`run_failed` 会撤销尚未提交的 provisional 内容，同时保留已提交消息。
+
 `text_delta` 是 provisional 内容；只有收到 `message_committed` 后才是正式消息。一旦 provisional 内容已展示，该 Run 不会静默切换模型或把另一个 attempt 的文本拼接到同一消息。
 
 Agent 上下文采用 cache-stable Prompt Pipe。面试设置、简历概览与证据目录、当前 checkpoint 位于稳定前缀；最近消息和本轮指令只追加在增量尾部。普通轮次不会改变 `cacheEpoch`，每 5 个候选人回答轮次或上下文达到有效预算的 90% 时才生成新 checkpoint。压缩只读取上个 checkpoint 之后的完整消息组，首次超长会截断最旧的完整组重试，连续 3 次失败后以 `prompt_too_long` 终止。
@@ -127,6 +129,7 @@ Dashboard 默认创建 v2 Agent 面试并使用可恢复 SSE 面试室。历史 
 
 ```bash
 INTERVIEW_AGENT_TEST_RESUME_VERSION_ID=<uuid> pnpm test:interview:agent
+pnpm test:interview:failure
 ```
 
 ### 3) 执行数据库迁移
