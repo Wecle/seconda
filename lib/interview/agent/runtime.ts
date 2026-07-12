@@ -178,10 +178,6 @@ export async function runInterviewAgent(options: {
           payload: committed,
         })).sequence;
       }
-      lastEventSequence = (await options.repository.appendEvent(options.runId, {
-        type: "run_completed",
-        payload: { turn, toolName: step.toolName },
-      })).sequence;
       await options.repository.saveCheckpoint(options.runId, {
         turnCount: turn,
         toolCallCount,
@@ -189,16 +185,15 @@ export async function runInterviewAgent(options: {
         progressHash: options.progressHash(),
         activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
       });
-      await options.repository.completeRun(options.runId, "completed");
+      await options.repository.terminateRun(options.runId, { exitReason: "completed" });
       return { exitReason: "completed", turnCount: turn };
     }
   }
 
-  await options.repository.failRun(
-    options.runId,
-    "max_turns",
-    new Error("Agent reached the model turn limit"),
-  );
+  await options.repository.terminateRun(options.runId, {
+    exitReason: "max_turns",
+    error: new Error("Agent reached the model turn limit"),
+  });
   return { exitReason: "max_turns", turnCount: MAX_MODEL_TURNS };
 }
 
@@ -244,11 +239,11 @@ async function handleLoopDecision(
     messages.push({ role: "system", content: decision.message });
     return null;
   }
-  await options.repository.failRun(
-    options.runId,
-    decision.reason,
-    new Error(decision.message),
-  );
+  await options.repository.terminateRun(options.runId, {
+    exitReason: decision.reason,
+    error: new Error(decision.message),
+    userMessage: decision.message,
+  });
   return decision.reason;
 }
 
@@ -258,6 +253,6 @@ async function failRun(
   error: unknown,
   turnCount: number,
 ) {
-  await options.repository.failRun(options.runId, reason, error);
+  await options.repository.terminateRun(options.runId, { exitReason: reason, error });
   return { exitReason: reason, turnCount };
 }

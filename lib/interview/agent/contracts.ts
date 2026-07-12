@@ -28,6 +28,13 @@ export const agentExitReasonSchema = z.enum([
   "prompt_too_long",
 ]);
 
+export const terminalRunPayloadSchema = z.object({
+  runId: z.string().min(1),
+  exitReason: agentExitReasonSchema,
+  retryable: z.boolean(),
+  userMessage: z.string().min(1).max(500),
+}).strict();
+
 export const agentEventTypeSchema = z.enum([
   "run_started",
   "model_started",
@@ -158,6 +165,7 @@ export const contextSnapshotSchema = z.object({
 export type QuestionCategory = z.infer<typeof questionCategorySchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentExitReason = z.infer<typeof agentExitReasonSchema>;
+export type TerminalRunPayload = z.infer<typeof terminalRunPayloadSchema>;
 export type AgentEventType = z.infer<typeof agentEventTypeSchema>;
 export type InterviewMessageRole = z.infer<typeof interviewMessageRoleSchema>;
 export type InterviewMessageKind = z.infer<typeof interviewMessageKindSchema>;

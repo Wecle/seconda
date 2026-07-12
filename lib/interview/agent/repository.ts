@@ -15,6 +15,7 @@ import type {
   InterviewAgentState,
   InterviewMessageKind,
 } from "./contracts";
+import { terminalRunPayloadSchema } from "./contracts";
 
 export interface InterviewAgentRepository {
   createRun(input: {
@@ -50,6 +51,16 @@ export interface InterviewAgentRepository {
   }): Promise<{ id: string; sequence: number }>;
   loadState(interviewId: string): Promise<InterviewAgentState>;
   saveCheckpoint(runId: string, checkpoint: AgentCheckpoint): Promise<void>;
+  terminateRun(runId: string, input: {
+    exitReason: AgentExitReason;
+    error?: unknown;
+    retryable?: boolean;
+    userMessage?: string;
+  }): Promise<{
+    status: "completed" | "failed";
+    eventSequence: number;
+    created: boolean;
+  }>;
   completeRun(runId: string, exitReason: AgentExitReason): Promise<void>;
   failRun(
     runId: string,
@@ -68,6 +79,7 @@ export type AgentRunRecord = {
   resumeCount: number;
   checkpoint: AgentCheckpoint | null;
   trigger: AgentRunTrigger | null;
+  lastEventSequence: number;
 };
 
 export type AgentRunTrigger = {
@@ -219,19 +231,31 @@ export function createInMemoryInterviewAgentRepository(
     async saveCheckpoint(runId, checkpoint) {
       requireMemoryRun(runs, runId).checkpoint = checkpoint;
     },
-    async completeRun(runId) {
-      const run = requireRunningMemoryRun(runs, runId);
-      run.status = "completed";
-      run.exitReason = "completed";
+    async terminateRun(runId, input) {
+      const run = requireMemoryRun(runs, runId);
+      if (run.status !== "running") {
+        return { status: run.status, eventSequence: run.eventSequence, created: false };
+      }
+      const completed = input.exitReason === "completed";
+      run.eventSequence += 1;
+      run.events.push({
+        sequence: run.eventSequence,
+        type: completed ? "run_completed" : "run_failed",
+        payload: buildTerminalPayload(runId, input),
+      });
+      run.status = completed ? "completed" : "failed";
+      run.exitReason = input.exitReason;
       run.leaseOwner = null;
       run.leaseExpiresAt = null;
+      return { status: run.status, eventSequence: run.eventSequence, created: true };
     },
-    async failRun(runId, exitReason) {
-      const run = requireRunningMemoryRun(runs, runId);
-      run.status = "failed";
-      run.exitReason = exitReason;
-      run.leaseOwner = null;
-      run.leaseExpiresAt = null;
+    async completeRun(runId) {
+      const result = await this.terminateRun(runId, { exitReason: "completed" });
+      if (!result.created) throw new Error(`Run ${runId} is already terminal`);
+    },
+    async failRun(runId, exitReason, error) {
+      const result = await this.terminateRun(runId, { exitReason, error });
+      if (!result.created) throw new Error(`Run ${runId} is already terminal`);
     },
     inspectRun(runId) {
       return runs.get(runId);
@@ -251,6 +275,7 @@ function memoryRunRecord(run: MemoryRun): AgentRunRecord {
     resumeCount: run.resumeCount,
     checkpoint: run.checkpoint ?? null,
     trigger: run.trigger,
+    lastEventSequence: run.eventSequence,
   };
 }
 
@@ -338,6 +363,7 @@ export function createDrizzleInterviewAgentRepository(
         resumeCount: interviewAgentRuns.resumeCount,
         checkpoint: interviewAgentRuns.checkpointJson,
         trigger: interviewAgentRuns.triggerJson,
+        lastEventSequence: interviewAgentRuns.lastEventSequence,
       }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
       return run ? parseRunRecord(run) : null;
     },
@@ -376,6 +402,7 @@ export function createDrizzleInterviewAgentRepository(
         resumeCount: interviewAgentRuns.resumeCount,
         checkpoint: interviewAgentRuns.checkpointJson,
         trigger: interviewAgentRuns.triggerJson,
+        lastEventSequence: interviewAgentRuns.lastEventSequence,
       });
       if (claimed) return { claimed: true, run: parseRunRecord(claimed) };
       return { claimed: false, run: await this.getRun(runId) };
@@ -489,28 +516,57 @@ export function createDrizzleInterviewAgentRepository(
         updatedAt: new Date(),
       }).where(eq(interviewAgentRuns.id, runId));
     },
+    async terminateRun(runId, input) {
+      return database.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${runId}))`);
+        const [current] = await tx.select({
+          status: interviewAgentRuns.status,
+          lastEventSequence: interviewAgentRuns.lastEventSequence,
+        }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
+        if (!current) throw new Error(`Unknown run: ${runId}`);
+        if (current.status !== "running") {
+          return {
+            status: current.status as "completed" | "failed",
+            eventSequence: current.lastEventSequence,
+            created: false,
+          };
+        }
+        const completed = input.exitReason === "completed";
+        const now = new Date();
+        const [updated] = await tx.update(interviewAgentRuns).set({
+          status: completed ? "completed" : "failed",
+          exitReason: input.exitReason,
+          errorJson: completed ? null : sanitizeAIError(input.error),
+          lastEventSequence: sql`${interviewAgentRuns.lastEventSequence} + 1`,
+          completedAt: now,
+          updatedAt: now,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+        }).where(and(
+          eq(interviewAgentRuns.id, runId),
+          eq(interviewAgentRuns.status, "running"),
+        )).returning({ sequence: interviewAgentRuns.lastEventSequence });
+        if (!updated) throw new Error(`Run ${runId} termination lost its lock`);
+        await tx.insert(interviewAgentEvents).values({
+          runId,
+          sequence: updated.sequence,
+          type: completed ? "run_completed" : "run_failed",
+          payload: buildTerminalPayload(runId, input),
+        });
+        return {
+          status: completed ? "completed" as const : "failed" as const,
+          eventSequence: updated.sequence,
+          created: true,
+        };
+      });
+    },
     async completeRun(runId, exitReason) {
-      const rows = await database.update(interviewAgentRuns).set({
-        status: "completed",
-        exitReason,
-        completedAt: new Date(),
-        updatedAt: new Date(),
-        leaseOwner: null,
-        leaseExpiresAt: null,
-      }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.status, "running"))).returning({ id: interviewAgentRuns.id });
-      if (rows.length === 0) throw new Error(`Run ${runId} is already terminal`);
+      const result = await this.terminateRun(runId, { exitReason });
+      if (!result.created) throw new Error(`Run ${runId} is already terminal`);
     },
     async failRun(runId, exitReason, error) {
-      const rows = await database.update(interviewAgentRuns).set({
-        status: "failed",
-        exitReason,
-        errorJson: sanitizeAIError(error),
-        completedAt: new Date(),
-        updatedAt: new Date(),
-        leaseOwner: null,
-        leaseExpiresAt: null,
-      }).where(and(eq(interviewAgentRuns.id, runId), eq(interviewAgentRuns.status, "running"))).returning({ id: interviewAgentRuns.id });
-      if (rows.length === 0) throw new Error(`Run ${runId} is already terminal`);
+      const result = await this.terminateRun(runId, { exitReason, error });
+      if (!result.created) throw new Error(`Run ${runId} is already terminal`);
     },
   };
 }
@@ -525,6 +581,7 @@ function parseRunRecord(row: {
   resumeCount: number;
   checkpoint: unknown;
   trigger: unknown;
+  lastEventSequence: number;
 }): AgentRunRecord {
   return {
     ...row,
@@ -533,4 +590,33 @@ function parseRunRecord(row: {
     checkpoint: row.checkpoint as AgentCheckpoint | null,
     trigger: row.trigger as AgentRunTrigger | null,
   };
+}
+
+function buildTerminalPayload(
+  runId: string,
+  input: {
+    exitReason: AgentExitReason;
+    retryable?: boolean;
+    userMessage?: string;
+  },
+) {
+  return terminalRunPayloadSchema.parse({
+    runId,
+    exitReason: input.exitReason,
+    retryable: input.retryable ?? input.exitReason === "aborted_streaming",
+    userMessage: input.userMessage ?? defaultExitMessage(input.exitReason),
+  });
+}
+
+function defaultExitMessage(reason: AgentExitReason) {
+  const messages: Record<AgentExitReason, string> = {
+    completed: "本轮处理已完成。",
+    max_turns: "本轮处理达到最大步骤数，请重试。",
+    aborted_streaming: "模型连接中断，请重试本轮回答。",
+    aborted_tools: "后台操作中断，请重试。",
+    hook_stopped: "本轮处理被安全规则终止。",
+    blocking_limit: "本轮处理持续没有进展，已停止运行。",
+    prompt_too_long: "面试上下文过长，暂时无法继续。",
+  };
+  return messages[reason];
 }
