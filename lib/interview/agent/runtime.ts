@@ -103,6 +103,7 @@ export async function runInterviewAgent(options: {
 
     let step;
     let provisionalMessageId: string | undefined;
+    let selectedAttemptId: string | undefined;
     const bufferedDeltas: Array<{ messageId: string; attemptId: string; text: string }> = [];
     try {
       const modelInput = {
@@ -133,6 +134,7 @@ export async function runInterviewAgent(options: {
           },
         });
         step = streamed.step;
+        selectedAttemptId = streamed.attemptId;
         provisionalMessageId = streamed.provisionalMessageId ?? provisionalMessageId;
       } else {
         step = await options.model.nextStep(modelInput);
@@ -243,7 +245,7 @@ export async function runInterviewAgent(options: {
               attemptId: bufferedDeltas[0]?.attemptId ?? `response:${options.runId}`,
               text,
             }))
-          : bufferedDeltas;
+          : bufferedDeltas.filter((delta) => delta.attemptId === selectedAttemptId);
         if (publicDeltas.length > 0) {
           lastEventSequence = (await options.repository.appendEvent(options.runId, {
             type: "response_started",
@@ -305,7 +307,7 @@ function describeTool(name: string) {
     update_coverage:
       '更新覆盖度。参数：{"category":题型enum,"topic":"主题","status":"uncovered"|"partial"|"sufficient"|"exhausted","resumeEvidenceIds":["证据ID"]}。',
     ask_interview_question:
-      '提交候选人可见的评价与唯一问题。参数：{"action":"ask"|"clarify","category":题型enum,"intent":"new_topic"|"follow_up"|"verify_evidence","acknowledgement":"1到3句基于来源的评价；开场可为空","question":"只含一个问号的单一问题","claims":[{"text":"评价中的原文事实","sourceIds":["简历证据ID或answer:消息ID"]}],"topic":"主题","resumeEvidenceIds":["已加载的稳定证据ID"]}。无法确认的事实必须改成询问句。',
+      '提交候选人可见的评价与唯一问题。参数：{"action":"ask"|"clarify","category":题型enum,"intent":"new_topic"|"follow_up"|"verify_evidence","acknowledgement":"1到3句基于来源的评价；开场可为空","question":"只含一个问号的单一问题","claims":[{"text":"评价中的原文事实","sourceIds":["简历证据ID或answer:消息ID"]}],"topic":"主题","resumeEvidenceIds":["已加载的稳定证据ID"]}。sourceIds 只能写入 claims，禁止出现在候选人可见文本中；无法确认的事实必须改成询问句。',
     finish_interview:
       '结束面试。参数：{"reason":"coverage_sufficient"|"low_information_gain"|"user_requested"|"max_rounds","closingMessage":"结束语"}。',
   };

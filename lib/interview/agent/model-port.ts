@@ -130,7 +130,7 @@ export function createStreamingInterviewAgentModelPort(options: {
             provisionalMessageId: messageId,
           });
         },
-        attempt: async ({ model, attemptId, acceptProvisional }) => {
+        attempt: async ({ model, attemptId }) => {
           const stream = await options.streamCandidate({
             model,
             runId: input.runId,
@@ -154,7 +154,6 @@ export function createStreamingInterviewAgentModelPort(options: {
             const suffix = partialQuestion.slice(question.length);
             question = partialQuestion;
             if (!suffix) continue;
-            acceptProvisional();
             await input.onProvisionalDelta({
               messageId: messageIds.get(attemptId)!,
               attemptId,
@@ -197,7 +196,7 @@ export function createStructuredInterviewAgentModelPort(options?: {
       25_000,
     ),
     classifyError: (error) =>
-      classifyModelError(error) === "transient" ? "transient" : "fatal",
+      classifyModelError(error) === "fatal" ? "fatal" : "transient",
     async onAttemptStarted() {},
     onUsage: options?.onUsage,
     async streamCandidate(input) {

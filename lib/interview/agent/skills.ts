@@ -16,7 +16,7 @@ const skills: InterviewSkill[] = [
     name: "resume-grounding",
     version: "1",
     description: "基于稳定简历证据提问，禁止补全或虚构经历。",
-    instructions: "先从证据目录选择 ID；需要原文时调用 get_resume_evidence。候选人可见评价和问题中的确定性事实必须逐项写入 claims，并关联已加载的证据 ID 或 get_interview_history 返回的 answer:消息ID。不得补全人数、年限、技术栈、职责或成果；无法确认时改成询问句。",
+    instructions: "先从证据目录选择 ID；需要原文时调用 get_resume_evidence。候选人可见评价和问题中的确定性事实必须逐项写入 claims，并关联已加载的证据 ID 或 get_interview_history 返回的 answer:消息ID。sourceIds 只能放在 claims 中，绝不能出现在 acknowledgement 或 question。不得补全人数、年限、技术栈、职责或成果；无法确认时改成询问句。",
     toolNames: ["get_resume_evidence", "get_interview_history"],
   },
   {
