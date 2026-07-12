@@ -71,3 +71,18 @@ test("removes the abort listener after every normal polling wait", async () => {
   for (let index = 0; index < 20; index += 1) await abortableWait(0, controller.signal);
   assert.equal(active, 0);
 });
+
+test("synthesizes run_failed for an old failed run without a terminal event", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  repository.inspectRun(run.id)!.status = "failed";
+  repository.inspectRun(run.id)!.exitReason = "blocking_limit";
+  const events = [];
+  for await (const event of pollAgentEvents({
+    repository,
+    runId: run.id,
+    afterSequence: 0,
+    signal: new AbortController().signal,
+  })) events.push(event);
+  assert.deepEqual(events.map((event) => event.type), ["run_failed"]);
+});

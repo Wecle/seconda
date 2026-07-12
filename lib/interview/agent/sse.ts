@@ -37,7 +37,28 @@ export async function* pollAgentEvents(options: {
       yield event;
     }
     const run = await options.repository.getRun(options.runId);
-    if (!run || run.status !== "running") return;
+    if (!run) return;
+    if (run.status !== "running") {
+      const allEvents = await options.repository.listEvents(options.runId, 0);
+      const hasTerminalEvent = allEvents.some(
+        (event) => event.type === "run_completed" || event.type === "run_failed",
+      );
+      if (!hasTerminalEvent) {
+        yield {
+          type: run.status === "completed" ? "run_completed" : "run_failed",
+          sequence: run.lastEventSequence + 1,
+          payload: {
+            runId: run.id,
+            exitReason: run.exitReason ?? "aborted_streaming",
+            retryable: false,
+            userMessage: run.status === "completed"
+              ? "本轮处理已完成。"
+              : "本轮处理已终止，请重试。",
+          },
+        };
+      }
+      return;
+    }
     if (now().getTime() - lastDeliveryAt >= heartbeatMs) {
       lastDeliveryAt = now().getTime();
       yield { type: "heartbeat", serverTime: now().toISOString() };
