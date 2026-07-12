@@ -91,3 +91,19 @@ test("allows grounded answer acknowledgement and an exploratory project question
   }, sources);
   assert.deepEqual(result, { ok: true });
 });
+
+test("rejects fabricated role, responsibility, and architecture changes", () => {
+  const sources = new Map([["resume:work", "负责智能审批项目的前端开发。"]]);
+  for (const claim of [
+    "候选人负责智能审批项目的后端开发",
+    "候选人领导智能审批项目的前端开发",
+    "候选人负责智能审批项目的架构设计",
+  ]) {
+    const result = validateGroundedClaims({
+      acknowledgement: `${claim}。`,
+      question: "请介绍具体工作？",
+      claims: [{ text: claim, sourceIds: ["resume:work"] }],
+    }, sources);
+    assert.equal(result.ok, false, claim);
+  }
+});

@@ -17,6 +17,7 @@ import { publicArtifactFromToolCompletion } from "./public-events";
 const MAX_MODEL_TURNS = 8;
 const MAX_TOOL_REPAIR_TURNS = 2;
 const MAX_PROVIDER_CALLS = MAX_MODEL_TURNS + MAX_TOOL_REPAIR_TURNS;
+const MAX_PROVIDER_ATTEMPTS = 10;
 const REPAIRABLE_TOOL_ERRORS = new Set([
   "INVALID_TOOL_INPUT",
   "EVIDENCE_NOT_FOUND",
@@ -55,6 +56,7 @@ export async function runInterviewAgent(options: {
   let toolCallCount = 0;
   let productiveTurnCount = 0;
   let repairTurnCount = 0;
+  let providerAttemptCount = 0;
 
   lastEventSequence = (await options.repository.appendEvent(options.runId, {
     type: "run_started",
@@ -98,7 +100,11 @@ export async function runInterviewAgent(options: {
     });
     lastEventSequence = (await options.repository.appendEvent(options.runId, {
       type: "model_started",
-      payload: { turn: providerCall, productiveTurn: productiveTurnCount + 1 },
+      payload: {
+        turn: providerCall,
+        attemptedProductiveTurn: productiveTurnCount + 1,
+        repairAttemptsUsed: repairTurnCount,
+      },
     })).sequence;
 
     let step;
@@ -120,6 +126,12 @@ export async function runInterviewAgent(options: {
         const streamed = await options.model.nextStepStream({
           ...modelInput,
           onAttemptStarted: async (attempt) => {
+            providerAttemptCount += 1;
+            if (providerAttemptCount > MAX_PROVIDER_ATTEMPTS) {
+              throw Object.assign(new Error("Agent reached the provider attempt limit"), {
+                code: "PROVIDER_ATTEMPT_LIMIT",
+              });
+            }
             await options.repository.startAttempt(options.runId, {
               ...attempt,
               now: new Date(),
@@ -140,6 +152,9 @@ export async function runInterviewAgent(options: {
         step = await options.model.nextStep(modelInput);
       }
     } catch (error) {
+      if ((error as { code?: unknown })?.code === "PROVIDER_ATTEMPT_LIMIT") {
+        return failRun(options, "max_turns", error, productiveTurnCount);
+      }
       return failRun(options, "aborted_streaming", error, productiveTurnCount);
     }
 
@@ -242,7 +257,7 @@ export async function runInterviewAgent(options: {
         const publicDeltas = committed.responseText
           ? chunkResponse(committed.responseText).map((text) => ({
               messageId: committed.messageId,
-              attemptId: bufferedDeltas[0]?.attemptId ?? `response:${options.runId}`,
+              attemptId: selectedAttemptId ?? `response:${options.runId}`,
               text,
             }))
           : bufferedDeltas.filter((delta) => delta.attemptId === selectedAttemptId);
