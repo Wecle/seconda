@@ -7,6 +7,8 @@ export type ToolCallObservation = {
   progressHash: string;
   unknownTool?: boolean;
   volatileResultFields?: string[];
+  phase?: "assessing" | "planning" | "acting";
+  phaseProgressId?: string;
 };
 
 export type LoopDecision =
@@ -34,8 +36,17 @@ export class AgentLoopDetector {
   private readonly unknownToolCount = new Map<string, number>();
   private previousProgressHash: string | undefined;
   private noProgressCount = 0;
+  private phaseKey: string | undefined;
 
   record(observation: ToolCallObservation): LoopDecision {
+    const phaseKey = `${observation.phase ?? "planning"}:${observation.phaseProgressId ?? "default"}`;
+    if (this.phaseKey !== undefined && this.phaseKey !== phaseKey) {
+      this.history.length = 0;
+      this.unknownToolCount.clear();
+      this.previousProgressHash = undefined;
+      this.noProgressCount = 0;
+    }
+    this.phaseKey = phaseKey;
     const callHash = stableHash({
       toolName: observation.toolName,
       args: observation.args,

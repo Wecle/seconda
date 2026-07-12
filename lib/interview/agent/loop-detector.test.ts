@@ -91,3 +91,14 @@ test("stable hashing ignores declared volatile result fields", () => {
   })));
   assert.equal(decisions[2].level, "warning");
 });
+
+test("a committed phase transition resets no-progress warnings", () => {
+  const detector = new AgentLoopDetector();
+  detector.record(call("get_coverage_state", { phase: "planning", phaseProgressId: "a1" }));
+  detector.record(call("get_coverage_state", { phase: "planning", phaseProgressId: "a1" }));
+  const decision = detector.record(call("ask_interview_question", {
+    phase: "acting",
+    phaseProgressId: "a1",
+  }));
+  assert.equal(decision.level, "continue");
+});
