@@ -99,13 +99,15 @@ export const interviewDecisionSchema = z.object({
   estimatedInformationGain: z.enum(["low", "medium", "high"]),
 });
 
+export const agentProviderStepSchema = z.object({
+  type: z.literal("tool_call"),
+  callId: z.string().min(1),
+  toolName: z.string().min(1),
+  args: z.unknown(),
+});
+
 export const agentModelStepSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("tool_call"),
-    callId: z.string().min(1),
-    toolName: z.string().min(1),
-    args: z.unknown(),
-  }),
+  agentProviderStepSchema,
   z.object({
     type: z.literal("final"),
     content: z.string().trim().min(1),

@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { agentProviderStepSchema } from "./contracts";
 import { createStreamingInterviewAgentModelPort } from "./model-port";
+
+test("provider output requires a tool call", () => {
+  assert.equal(agentProviderStepSchema.safeParse({
+    type: "tool_call",
+    callId: "call-1",
+    toolName: "ask_interview_question",
+    args: {},
+  }).success, true);
+  assert.equal(agentProviderStepSchema.safeParse({
+    type: "final",
+    content: "请自我介绍",
+  }).success, false);
+});
 
 test("emits only growing question suffixes with one provisional identity", async () => {
   const deltas: Array<{ messageId: string; attemptId: string; text: string }> = [];
