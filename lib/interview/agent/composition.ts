@@ -23,6 +23,7 @@ import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
+import { composeCandidateResponse, validateGroundedClaims } from "./grounding";
 
 export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -90,6 +91,21 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
           const index = await loadInterviewEvidenceIndex(context.interviewId);
           return loadResumeEvidence(index, evidenceIds).missingIds;
         },
+        async validateGroundedResponse(toolInput, context) {
+          const [index, answers] = await Promise.all([
+            loadInterviewEvidenceIndex(context.interviewId),
+            db.select({ id: interviewMessages.id, content: interviewMessages.content })
+              .from(interviewMessages)
+              .where(and(eq(interviewMessages.interviewId, context.interviewId), eq(interviewMessages.role, "user"))),
+          ]);
+          const sources = new Map<string, string>([
+            ...index.records.map((record) => [record.id, record.content] as const),
+            ["resume:raw", index.rawText],
+            ...answers.map((answer) => [`answer:${answer.id}`, answer.content] as const),
+          ]);
+          const result = validateGroundedClaims(toolInput, sources);
+          return result.ok ? [] : result.unsupportedClaims;
+        },
         async loadActionInput(toolInput) {
           const state = await repository.loadState(input.interviewId);
           return {
@@ -150,11 +166,14 @@ function createToolHandlers(
       };
     },
     async get_interview_history(input: { limit: number }, context: { interviewId: string }) {
-      const messages = await db.select({ role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
+      const messages = await db.select({ id: interviewMessages.id, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
         .from(interviewMessages)
         .where(eq(interviewMessages.interviewId, context.interviewId))
         .orderBy(asc(interviewMessages.sequence));
-      return messages.slice(-input.limit);
+      return messages.slice(-input.limit).map((message) => ({
+        ...message,
+        sourceId: message.role === "user" ? `answer:${message.id}` : undefined,
+      }));
     },
     async get_coverage_state(_input: unknown, context: { interviewId: string }) {
       return db.select({
@@ -178,7 +197,8 @@ function createToolHandlers(
       markProgress();
       return { updated: true };
     },
-    async ask_interview_question(input: { category: string; topic: string; question: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; provisionalMessageId?: string }) {
+    async ask_interview_question(input: { category: string; topic: string; acknowledgement: string; question: string; claims: Array<{ text: string; sourceIds: string[] }>; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; provisionalMessageId?: string }) {
+      const responseText = composeCandidateResponse(input);
       const question = await db.transaction(async (tx) => {
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${context.interviewId}))`);
         const [indexRow] = await tx.select({ next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1` })
@@ -210,13 +230,14 @@ function createToolHandlers(
         runId: context.runId,
         role: "assistant",
         kind: "question",
-        content: input.question,
+        content: responseText,
       });
       markProgress();
       return {
         questionId: question.id,
         messageId: message.id,
         messageSequence: message.sequence,
+        responseText,
         committed: true,
       };
     },

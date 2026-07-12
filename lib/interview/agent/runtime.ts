@@ -207,12 +207,19 @@ export async function runInterviewAgent(options: {
     if (result.ok && TERMINAL_TOOLS.has(step.toolName)) {
       const committed = readCommittedMessage(result.output);
       if (committed) {
-        if (bufferedDeltas.length > 0) {
+        const publicDeltas = committed.responseText
+          ? chunkResponse(committed.responseText).map((text) => ({
+              messageId: committed.messageId,
+              attemptId: bufferedDeltas[0]?.attemptId ?? `response:${options.runId}`,
+              text,
+            }))
+          : bufferedDeltas;
+        if (publicDeltas.length > 0) {
           lastEventSequence = (await options.repository.appendEvent(options.runId, {
             type: "response_started",
             payload: { runId: options.runId, messageId: committed.messageId },
           })).sequence;
-          for (const delta of bufferedDeltas) {
+          for (const delta of publicDeltas) {
             lastEventSequence = (await options.repository.appendEvent(options.runId, {
               type: "text_delta",
               payload: { ...delta, runId: options.runId, provisional: true },
@@ -245,12 +252,16 @@ export async function runInterviewAgent(options: {
   return { exitReason: "max_turns", turnCount: MAX_MODEL_TURNS };
 }
 
+function chunkResponse(value: string) {
+  return value.match(/[\s\S]{1,12}/g) ?? [];
+}
+
 function readCommittedMessage(output: unknown) {
   if (!output || typeof output !== "object") return null;
-  const value = output as { messageId?: unknown; messageSequence?: unknown };
+  const value = output as { messageId?: unknown; messageSequence?: unknown; responseText?: unknown };
   return typeof value.messageId === "string" &&
     typeof value.messageSequence === "number"
-    ? { messageId: value.messageId, messageSequence: value.messageSequence }
+    ? { messageId: value.messageId, messageSequence: value.messageSequence, responseText: typeof value.responseText === "string" ? value.responseText : null }
     : null;
 }
 
@@ -264,7 +275,7 @@ function describeTool(name: string) {
     update_coverage:
       '更新覆盖度。参数：{"category":题型enum,"topic":"主题","status":"uncovered"|"partial"|"sufficient"|"exhausted","resumeEvidenceIds":["证据ID"]}。',
     ask_interview_question:
-      '提交唯一候选人可见问题。参数：{"action":"ask"|"clarify","category":题型enum,"intent":"new_topic"|"follow_up"|"verify_evidence","question":"单一问题","topic":"主题","resumeEvidenceIds":["已加载的稳定证据ID"]}。',
+      '提交候选人可见的评价与唯一问题。参数：{"action":"ask"|"clarify","category":题型enum,"intent":"new_topic"|"follow_up"|"verify_evidence","acknowledgement":"1到3句基于来源的评价；开场可为空","question":"只含一个问号的单一问题","claims":[{"text":"评价中的原文事实","sourceIds":["简历证据ID或answer:消息ID"]}],"topic":"主题","resumeEvidenceIds":["已加载的稳定证据ID"]}。无法确认的事实必须改成询问句。',
     finish_interview:
       '结束面试。参数：{"reason":"coverage_sufficient"|"low_information_gain"|"user_requested"|"max_rounds","closingMessage":"结束语"}。',
   };

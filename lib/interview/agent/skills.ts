@@ -16,7 +16,7 @@ const skills: InterviewSkill[] = [
     name: "resume-grounding",
     version: "1",
     description: "基于稳定简历证据提问，禁止补全或虚构经历。",
-    instructions: "先从证据目录选择 ID；需要原文时调用 get_resume_evidence。问题中引用的经历必须能追溯到已加载的证据 ID。",
+    instructions: "先从证据目录选择 ID；需要原文时调用 get_resume_evidence。候选人可见评价和问题中的确定性事实必须逐项写入 claims，并关联已加载的证据 ID 或 get_interview_history 返回的 answer:消息ID。不得补全人数、年限、技术栈、职责或成果；无法确认时改成询问句。",
     toolNames: ["get_resume_evidence", "get_interview_history"],
   },
   {
@@ -30,7 +30,7 @@ const skills: InterviewSkill[] = [
     name: "answer-planning",
     version: "1",
     description: "根据已提交的轻量评估规划下一步面试行动。",
-    instructions: "系统已经完成最新回答的轻量质量判断。读取历史和覆盖度后，只选择一个追问、一个新主题或结束；不得生成或写入正式分数。",
+    instructions: "系统已经完成最新回答的轻量质量判断。读取历史和覆盖度后，只选择一个追问、一个新主题或结束；不得生成或写入正式分数。追问时先用1到3句评价已确认的回答内容，指出一个优势、缺口或含糊点，再自然引出且只引出一个问题。评价必须有 claims 来源，不做人格判断。",
     toolNames: ["get_interview_history", "get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
   },
 ];
