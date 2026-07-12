@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
           { status: 404 },
         );
       }
-      const dependencies = createProductionAgentDependencies();
+      const dependencies = createProductionAgentDependencies({ defer: (task) => after(task) });
       const scheduler = createAgentRunScheduler({
         ...dependencies,
         defer: (task) => after(task),

@@ -122,7 +122,7 @@ export async function endAgentInterview(options: {
   if (!interview || interview.configVersion !== 2) {
     throw new Error("Interview is not a v2 interview");
   }
-  if (interview.status === "completing" || interview.status === "completed") {
+  if (["completing", "scoring", "reporting", "completed", "failed"].includes(interview.status)) {
     return { status: "completing" as const };
   }
   if (interview.status !== "active") {

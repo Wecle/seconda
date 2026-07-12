@@ -35,7 +35,7 @@ export async function POST(
     .limit(1);
   if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
 
-  const dependencies = createProductionAgentDependencies();
+  const dependencies = createProductionAgentDependencies({ defer: (task) => after(task) });
   const run = await dependencies.repository.getRun(parsed.data.runId);
   if (!run || run.interviewId !== parsed.data.id) {
     return NextResponse.json({ error: "Agent run not found" }, { status: 404 });

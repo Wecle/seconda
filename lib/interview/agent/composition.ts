@@ -18,14 +18,15 @@ import {
   loadResumeEvidence,
 } from "./context/resume-evidence";
 import { loadAgentContext } from "./context/assembler";
-import { completeInterviewReport } from "@/lib/interview/report-completion";
+import { createProductionCompletionDependencies, scheduleInterviewCompletion } from "@/lib/interview/completion/composition";
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
 
-export function createProductionAgentDependencies() {
+export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
   const repository = createDrizzleInterviewAgentRepository(db);
+  const completion = createProductionCompletionDependencies(options?.defer ?? ((task) => { void task(); }));
   const model = createStructuredInterviewAgentModelPort({
     async onUsage({ runId, usage }) {
       await db.update(interviewAgentRuns).set({
@@ -74,7 +75,7 @@ export function createProductionAgentDependencies() {
         updatedAt: new Date(),
       }).where(eq(interviewAgentRuns.id, input.runId));
       let progressVersion = 0;
-      const handlers = createToolHandlers(repository, () => {
+      const handlers = createToolHandlers(repository, completion, () => {
         progressVersion += 1;
       });
       const tools = createInterviewToolRegistry({
@@ -129,6 +130,7 @@ function readPositiveInteger(value: string | undefined, fallback: number) {
 
 function createToolHandlers(
   repository: ReturnType<typeof createDrizzleInterviewAgentRepository>,
+  completion: ReturnType<typeof createProductionCompletionDependencies>,
   markProgress: () => void,
 ) {
   return {
@@ -211,9 +213,6 @@ function createToolHandlers(
       };
     },
     async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string }) {
-      await db.update(interviews).set({ status: "completing", updatedAt: new Date() })
-        .where(and(eq(interviews.id, context.interviewId), eq(interviews.status, "active")));
-      await completeInterviewReport(db, context.interviewId);
       await repository.appendMessage({
         interviewId: context.interviewId,
         runId: context.runId,
@@ -221,8 +220,11 @@ function createToolHandlers(
         kind: "finish",
         content: input.closingMessage,
       });
+      await db.update(interviews).set({ status: "scoring", updatedAt: new Date() })
+        .where(and(eq(interviews.id, context.interviewId), eq(interviews.status, "active")));
+      const job = await scheduleInterviewCompletion(completion, context.interviewId);
       markProgress();
-      return { committed: true };
+      return { committed: true, completionJobId: job.id };
     },
   };
 }

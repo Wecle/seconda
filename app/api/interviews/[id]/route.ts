@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviewAgentRuns, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
 import { and, eq, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
@@ -35,7 +35,7 @@ export async function GET(
       );
     }
 
-    const [rows, agentMessages, latestRuns] = await Promise.all([db
+    const [rows, agentMessages, latestRuns, completionJobs] = await Promise.all([db
       .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
       .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
@@ -48,6 +48,10 @@ export async function GET(
       interview.configVersion === 2
         ? db.select({ id: interviewAgentRuns.id, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, lastEventSequence: interviewAgentRuns.lastEventSequence })
           .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt)).limit(1)
+        : Promise.resolve([]),
+      interview.configVersion === 2
+        ? db.select({ id: interviewCompletionJobs.id, status: interviewCompletionJobs.status, attemptCount: interviewCompletionJobs.attemptCount })
+          .from(interviewCompletionJobs).where(eq(interviewCompletionJobs.interviewId, id)).limit(1)
         : Promise.resolve([]),
     ]);
 
@@ -71,6 +75,14 @@ export async function GET(
       agentState: interview.configVersion === 2 ? {
         messages: agentMessages,
         latestRun: latestRuns[0] ?? null,
+        completionJob: completionJobs[0] ?? null,
+        scoringProgress: rows.reduce((progress, { question }) => {
+          if (!question.answeredAt) return progress;
+          progress.total += 1;
+          const key = question.scoreStatus as "pending" | "scoring" | "scored" | "failed";
+          if (key in progress) progress[key] += 1;
+          return progress;
+        }, { total: 0, pending: 0, scoring: 0, scored: 0, failed: 0 }),
       } : null,
       resumeSnapshot: resumeVersion
         ? {

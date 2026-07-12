@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
@@ -8,7 +8,7 @@ import { createProductionAgentDependencies } from "@/lib/interview/agent/composi
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { endAgentInterview } from "@/lib/interview/agent/service";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
-import { completeInterviewReport } from "@/lib/interview/report-completion";
+import { createProductionCompletionDependencies, scheduleInterviewCompletion } from "@/lib/interview/completion/composition";
 
 export async function POST(
   _request: Request,
@@ -28,14 +28,15 @@ export async function POST(
       .limit(1);
     if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
 
-    const dependencies = createProductionAgentDependencies();
+    const dependencies = createProductionAgentDependencies({ defer: (task) => after(task) });
     const result = await endAgentInterview({
       interviewId: id,
       store: createDrizzleAgentInterviewStore(db),
       repository: dependencies.repository,
     });
-    const report = await completeInterviewReport(db, id);
-    return NextResponse.json({ ...result, status: "completed", report });
+    const completion = createProductionCompletionDependencies((task) => after(task));
+    const job = await scheduleInterviewCompletion(completion, id);
+    return NextResponse.json({ ...result, status: "scoring", completionJobId: job.id }, { status: 202 });
   } catch (error) {
     console.error("Error ending Agent interview:", sanitizeAIError(error));
     return NextResponse.json({ error: "Failed to end interview" }, { status: 500 });
