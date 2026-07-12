@@ -76,7 +76,7 @@ export async function GET(
 }
 
 const PUBLIC_STREAM_EVENTS = new Set([
-  "heartbeat", "thinking_started", "thinking_summary", "artifact_committed",
+  "heartbeat", "thinking_started", "thinking_summary", "response_started", "artifact_committed",
   "text_delta", "warning", "message_committed", "run_completed", "run_failed",
   "scoring_progress", "reporting_started",
 ]);

@@ -20,6 +20,7 @@ const eventTypes = [
   "run_started",
   "thinking_started",
   "thinking_summary",
+  "response_started",
   "artifact_committed",
   "scoring_progress",
   "reporting_started",
