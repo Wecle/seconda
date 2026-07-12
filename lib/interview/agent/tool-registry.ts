@@ -9,13 +9,11 @@ import type {
   InterviewToolDefinition,
   ToolError,
 } from "./tool-pipeline";
-import { scoreResultSchema } from "@/lib/interview/schemas";
 
 export const interviewToolNames = [
   "get_resume_evidence",
   "get_interview_history",
   "get_coverage_state",
-  "record_answer_evaluation",
   "update_coverage",
   "ask_interview_question",
   "finish_interview",
@@ -39,7 +37,6 @@ const schemas = {
   get_resume_evidence: z.object({ evidenceIds: z.array(z.string().min(1)).min(1).max(10) }).strict(),
   get_interview_history: z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict(),
   get_coverage_state: z.object({}).strict(),
-  record_answer_evaluation: z.object({ evaluation: scoreResultSchema }).strict(),
   update_coverage: z.object({
     category: questionCategorySchema,
     topic: z.string().trim().min(1).max(200),
