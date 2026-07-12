@@ -250,11 +250,13 @@ async function migrate() {
       depth INTEGER NOT NULL DEFAULT 0,
       evidence_quality INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'uncovered',
+      last_assessment_id UUID,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (interview_id, category, topic)
     )
   `;
+  await sql`ALTER TABLE interview_coverage ADD COLUMN IF NOT EXISTS last_assessment_id UUID`;
 
   await sql`
     CREATE TABLE IF NOT EXISTS interview_shares (

@@ -42,3 +42,18 @@ test("keeps only the latest eight raw messages", () => {
   assert.equal(context.incrementalTail.includes("message-5"), true);
   assert.equal(context.incrementalTail.includes("message-12"), true);
 });
+
+test("keeps the latest assessment in the incremental tail", () => {
+  const context = assembleAgentContext({
+    ...base,
+    currentInstruction: "继续",
+    runId: "run",
+    latestAssessment: {
+      id: "assessment-1",
+      publicSummary: "需要追问结果",
+      followUpNeeded: true,
+    },
+  });
+  assert.equal(context.stablePrefix.includes("assessment-1"), false);
+  assert.equal(context.incrementalTail.includes("assessment-1"), true);
+});

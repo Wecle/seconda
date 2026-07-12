@@ -159,6 +159,7 @@ export const interviewCoverage = pgTable("interview_coverage", {
   depth: integer("depth").notNull().default(0),
   evidenceQuality: integer("evidence_quality").notNull().default(0),
   status: text("status").notNull().default("uncovered"),
+  lastAssessmentId: uuid("last_assessment_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
