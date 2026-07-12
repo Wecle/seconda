@@ -13,7 +13,7 @@ test("rejects an unsupported team-size attribution", () => {
     question: "你如何与后端协作？",
     claims: [{ text: "团队有4人", sourceIds: ["resume:project"] }],
   }, sources);
-  assert.deepEqual(result, { ok: false, unsupportedClaims: ["团队有4人"] });
+  assert.deepEqual(result, { ok: false, unsupportedClaims: ["团队有4人", "你提到团队有四人"] });
 });
 
 test("accepts grounded acknowledgement followed by exactly one question", () => {
@@ -36,4 +36,18 @@ test("rejects undeclared facts even when claims is empty", () => {
     ok: false,
     unsupportedClaims: ["你负责了一个四人 React 团队"],
   });
+});
+
+test("rejects unsupported facts piggybacking on a valid technology claim", () => {
+  const result = validateGroundedClaims({
+    acknowledgement: "你领导了一个四人 React 团队。",
+    question: "请介绍一次协作冲突？",
+    claims: [{ text: "React", sourceIds: ["resume:project"] }],
+  }, new Map([["resume:project", "使用 React 开发智能审批项目。"]]));
+  assert.equal(result.ok, false);
+});
+
+test("rejects unsupported company and responsibility presuppositions in questions", () => {
+  const result = validateGroundedClaims({ acknowledgement: "", question: "你在 Google 负责支付平台时遇到的最大挑战是什么？", claims: [] }, sources);
+  assert.equal(result.ok, false);
 });

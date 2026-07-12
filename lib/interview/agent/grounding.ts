@@ -35,10 +35,12 @@ export function validateGroundedClaims(
     .map((id) => sources.get(id)).filter((value): value is string => Boolean(value)).join("\n");
   const unsupportedSentences = plan.acknowledgement
     ? plan.acknowledgement.split(/[。；;！!\n]+/).map((value) => value.trim()).filter(Boolean)
-      .filter((sentence) => !plan.claims.some((claim) => hasSharedFactToken(sentence, claim.text)))
+      .filter((sentence) => hasSensitiveAttribution(sentence)
+        ? !isSupported(sentence, declaredSources)
+        : !plan.claims.some((claim) => hasSharedFactToken(sentence, claim.text)))
     : [];
-  const questionNumbers = plan.question.match(/\d+(?:\.\d+)?/g) ?? [];
-  const unsupportedQuestion = questionNumbers.some((number) => !declaredSources.includes(number))
+  const questionFacts = extractQuestionFacts(plan.question);
+  const unsupportedQuestion = questionFacts.some((fact) => !isSupported(fact, declaredSources))
     ? [plan.question]
     : [];
   const unsupported = [...new Set([...unsupportedClaims, ...unsupportedSentences, ...unsupportedQuestion])];
@@ -78,6 +80,22 @@ function hasSharedFactToken(sentence: string, claim: string) {
   const tokens = significantTokens(claim).filter((token) => token.length >= 2);
   const chineseBigrams = Array.from({ length: Math.max(0, right.length - 1) }, (_, index) => right.slice(index, index + 2));
   return tokens.some((token) => left.includes(token)) || chineseBigrams.filter((token) => left.includes(token)).length >= 2;
+}
+
+function hasSensitiveAttribution(value: string) {
+  return /\d|团队|领导|主导|负责|担任|就职|任职|获得|获奖|提升|降低|超过|达到|公司|项目|[A-Za-z][A-Za-z0-9.+#-]{2,}/.test(value);
+}
+
+function extractQuestionFacts(question: string) {
+  const facts = new Set<string>();
+  for (const value of question.match(/\d+(?:\.\d+)?/g) ?? []) facts.add(value);
+  for (const value of question.match(/[A-Za-z][A-Za-z0-9.+#-]{2,}/g) ?? []) facts.add(value);
+  const attribution = question.match(/你(?:曾)?(?:在|负责|领导|主导|担任|就职于|任职于)([^，。；？！?]{2,60})/);
+  if (attribution?.[1]) {
+    const premise = attribution[1].split(/时|期间|中|如何|为什么|怎样|遇到|做了什么/)[0]?.trim();
+    if (premise) facts.add(premise);
+  }
+  return [...facts];
 }
 
 function significantTokens(value: string) {
