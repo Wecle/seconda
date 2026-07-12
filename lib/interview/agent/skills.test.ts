@@ -7,12 +7,14 @@ test("loads only opening skills and their required tools", () => {
   assert.deepEqual(resolved.skills.map((skill) => skill.name), ["resume-grounding", "coverage-planning"]);
   assert.equal(resolved.toolNames.has("record_answer_evaluation" as never), false);
   assert.equal(resolved.toolNames.has("ask_interview_question"), true);
+  assert.equal(resolved.toolNames.has("get_interview_history"), false);
 });
 
 test("loads answer planning without formal scoring tools", () => {
   const resolved = resolveRunSkills("answer");
   assert.equal(resolved.skills.some((skill) => skill.name === "answer-planning"), true);
   assert.equal(resolved.toolNames.has("record_answer_evaluation" as never), false);
+  assert.equal(resolved.toolNames.has("get_interview_history"), true);
 });
 
 test("rejects duplicate skills and missing tool declarations", () => {
