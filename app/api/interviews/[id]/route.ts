@@ -46,10 +46,10 @@ export async function GET(
           .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
         : Promise.resolve([]),
       interview.configVersion === 2
-        ? db.select({ runId: interviewAgentEvents.runId, type: interviewAgentEvents.type, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
+        ? db.select({ runId: interviewAgentEvents.runId, sequence: interviewAgentEvents.sequence, runCreatedAt: interviewAgentRuns.createdAt, type: interviewAgentEvents.type, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
           .innerJoin(interviewAgentRuns, eq(interviewAgentRuns.id, interviewAgentEvents.runId))
           .where(and(eq(interviewAgentRuns.interviewId, id), inArray(interviewAgentEvents.type, ["thinking_started", "thinking_summary", "artifact_committed", "response_started", "run_failed"])))
-          .orderBy(asc(interviewAgentEvents.createdAt))
+          .orderBy(asc(interviewAgentRuns.createdAt), asc(interviewAgentRuns.id), asc(interviewAgentEvents.sequence))
         : Promise.resolve([]),
       interview.configVersion === 2
         ? db.select({ id: interviewAgentRuns.id, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, lastEventSequence: interviewAgentRuns.lastEventSequence })

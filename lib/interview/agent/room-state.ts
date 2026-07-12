@@ -20,7 +20,7 @@ export type RoomTurn = {
 };
 
 export type AgentRoomState = { messages: RoomMessage[]; turns: Record<string, RoomTurn> };
-export type PublicRoomEvent = { runId: string; type: string; payload: unknown };
+export type PublicRoomEvent = { runId: string; sequence: number; type: string; payload: unknown };
 export type AgentRoomAction =
   | { type: "candidate_submitted"; localId: string; content: string }
   | { type: "candidate_committed"; localId: string; runId: string; message: { id: string; sequence: number; content: string } }
