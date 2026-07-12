@@ -27,11 +27,11 @@ const skills: InterviewSkill[] = [
     toolNames: ["get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
   },
   {
-    name: "answer-evaluation",
+    name: "answer-planning",
     version: "1",
-    description: "按既定六维评分模型评估最新回答。",
-    instructions: "使用 record_answer_evaluation 写入理解力、表达力、逻辑性、深度、真实性、反思力及综合分，并提供优点、改进、建议和深挖材料。",
-    toolNames: ["get_interview_history", "record_answer_evaluation"],
+    description: "根据已提交的轻量评估规划下一步面试行动。",
+    instructions: "系统已经完成最新回答的轻量质量判断。读取历史和覆盖度后，只选择一个追问、一个新主题或结束；不得生成或写入正式分数。",
+    toolNames: ["get_interview_history", "get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
   },
 ];
 
@@ -53,7 +53,7 @@ const catalog = createSkillCatalog(skills, new Set(interviewToolNames));
 export function resolveRunSkills(mode: "opening" | "answer") {
   const names = mode === "opening"
     ? ["resume-grounding", "coverage-planning"]
-    : ["resume-grounding", "coverage-planning", "answer-evaluation"];
+    : ["resume-grounding", "coverage-planning", "answer-planning"];
   const active = names.map((name) => catalog.get(name)!);
   return {
     skills: active,

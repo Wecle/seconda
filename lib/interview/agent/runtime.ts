@@ -213,8 +213,6 @@ function describeTool(name: string) {
     get_interview_history:
       '读取近期面试消息。参数：{"limit":1到20的整数}。',
     get_coverage_state: "读取当前题型覆盖度。参数：{}。",
-    record_answer_evaluation:
-      '记录最新回答的严格六维评估。参数：{"evaluation":{"scores":{"understanding":0到10整数,"expression":0到10整数,"logic":0到10整数,"depth":0到10整数,"authenticity":0到10整数,"reflection":0到10整数,"overall":0到10整数},"strengths":[字符串],"improvements":[字符串],"advice":[字符串],"deepDive":{"coreConcepts":{"items":[{"name":"名称","description":"说明"}]},"pitfalls":[字符串],"modelAnswer":{"steps":[{"title":"步骤","description":"说明"}]}}}}。',
     update_coverage:
       '更新覆盖度。参数：{"category":题型enum,"topic":"主题","status":"uncovered"|"partial"|"sufficient"|"exhausted","resumeEvidenceIds":["证据ID"]}。',
     ask_interview_question:
