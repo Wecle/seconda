@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createInMemoryInterviewAgentRepository } from "./repository";
-import { encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "./sse";
+import { abortableWait, encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "./sse";
 
 test("encodes persisted events with sequence ids", () => {
   assert.equal(encodeSseEvent({
@@ -29,7 +29,7 @@ test("replays ordered events after a cursor and closes after terminal", async ()
     afterSequence: 1,
     signal: new AbortController().signal,
   })) events.push(event);
-  assert.deepEqual(events.map((event) => event.type), ["warning"]);
+  assert.deepEqual(events.map((event) => event.type), ["warning", "run_completed"]);
 });
 
 test("emits a non-persisted heartbeat after ten idle seconds", async () => {
@@ -53,4 +53,21 @@ test("emits a non-persisted heartbeat after ten idle seconds", async () => {
   assert.equal(events[0].type, "heartbeat");
   assert.equal("sequence" in events[0], false);
   assert.deepEqual(await repository.listEvents(run.id, 0), []);
+});
+
+test("removes the abort listener after every normal polling wait", async () => {
+  const controller = new AbortController();
+  let active = 0;
+  const add = controller.signal.addEventListener.bind(controller.signal);
+  const remove = controller.signal.removeEventListener.bind(controller.signal);
+  controller.signal.addEventListener = ((...args: Parameters<typeof add>) => {
+    active += 1;
+    return add(...args);
+  }) as typeof controller.signal.addEventListener;
+  controller.signal.removeEventListener = ((...args: Parameters<typeof remove>) => {
+    active -= 1;
+    return remove(...args);
+  }) as typeof controller.signal.removeEventListener;
+  for (let index = 0; index < 20; index += 1) await abortableWait(0, controller.signal);
+  assert.equal(active, 0);
 });

@@ -50,16 +50,27 @@ export async function* pollAgentEvents(options: {
   }
 }
 
-function abortableWait(delayMs: number, signal: AbortSignal) {
+export function abortableWait(delayMs: number, signal: AbortSignal) {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
       reject(signal.reason);
       return;
     }
-    const timeout = setTimeout(resolve, delayMs);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timeout);
-      reject(signal.reason);
-    }, { once: true });
+    let settled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      action();
+    };
+    const onAbort = () => {
+      finish(() => {
+        clearTimeout(timeout);
+        reject(signal.reason);
+      });
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => finish(resolve), delayMs);
   });
 }
