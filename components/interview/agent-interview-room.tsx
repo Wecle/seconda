@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, FileText, Loader2, LogOut, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -11,6 +11,7 @@ import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
 import { AgentThinkingPanel } from "./agent-thinking-panel";
 import { AgentArtifactCard } from "./agent-artifact-card";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
+import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState } from "@/lib/interview/agent/room-state";
 import type { CommittedArtifact, PublicThinkingEntry } from "@/lib/interview/agent/contracts";
 import type { ParsedResume } from "@/lib/resume/types";
@@ -44,8 +45,8 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const [scoringProgress, setScoringProgress] = useState<ScoringProgress | null>(initialScoringProgress ?? null);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store" });
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
     if (!response.ok) throw new Error("面试状态加载失败");
     const data = await response.json();
     dispatch({ type: "messages_refreshed", messages: data.agentState?.messages ?? [] });
@@ -56,11 +57,11 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     return latest as AgentRun | null;
   }, [interviewId]);
 
-  useEffect(() => {
-    if (!["completing", "scoring", "reporting"].includes(interviewStatus)) return;
-    const timer = setInterval(() => { void refresh(); }, 1500);
-    return () => clearInterval(timer);
-  }, [interviewStatus, refresh]);
+  const completionPolling = useCompletionPolling({
+    active: ["completing", "scoring", "reporting"].includes(interviewStatus),
+    status: interviewStatus,
+    refresh: (signal) => refresh(signal).then(() => undefined),
+  });
 
   const retryCompletion = async () => {
     const response = await fetch(`/api/interviews/${interviewId}/completion/resume`, { method: "POST" });
@@ -197,7 +198,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
         </div>
 
         <div className="border-t bg-background p-5">
-          {completed ? <div className="space-y-3"><InterviewCompletionProgress status={interviewStatus} progress={scoringProgress} onRetry={() => void retryCompletion()} />{interviewStatus === "completed" && <Button className="w-full" onClick={() => router.push(`/interviews/${interviewId}/report`)}>查看报告</Button>}</div> : <div className="relative"><Textarea value={draft} onChange={(event) => setDraft(event.target.value)} disabled={busy} rows={4} placeholder="输入你的回答。你也可以说明希望结束面试。" className="resize-none pr-14" onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void submit(); }} /><Button size="icon" className="absolute bottom-3 right-3" onClick={submit} disabled={busy || !draft.trim()}><Send className="size-4" /></Button><p className="mt-2 text-xs text-muted-foreground">⌘ / Ctrl + Enter 提交</p></div>}
+          {completed ? <div className="space-y-3"><InterviewCompletionProgress status={interviewStatus} progress={scoringProgress} onRetry={() => void retryCompletion()} />{completionPolling.timedOut && <Button variant="outline" className="w-full" onClick={() => void completionPolling.refreshNow()}>手动刷新状态</Button>}{interviewStatus === "completed" && <Button className="w-full" onClick={() => router.push(`/interviews/${interviewId}/report`)}>查看报告</Button>}</div> : <div className="relative"><Textarea value={draft} onChange={(event) => setDraft(event.target.value)} disabled={busy} rows={4} placeholder="输入你的回答。你也可以说明希望结束面试。" className="resize-none pr-14" onKeyDown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void submit(); }} /><Button size="icon" className="absolute bottom-3 right-3" onClick={submit} disabled={busy || !draft.trim()}><Send className="size-4" /></Button><p className="mt-2 text-xs text-muted-foreground">⌘ / Ctrl + Enter 提交</p></div>}
         </div>
       </main>
       <InterviewResumeContextSheet open={resumeOpen} onOpenChange={setResumeOpen} snapshot={resumeSnapshot} currentQuestion={room.messages.filter((message) => message.role === "assistant").at(-1)?.content ?? ""} />
