@@ -5,7 +5,9 @@ export const groundedClaimSchema = z.object({
   sourceIds: z.array(z.string().min(1)).min(1).max(5),
 }).strict();
 
-export const acknowledgementSchema = z.string().trim().max(600).default("");
+export const acknowledgementSchema = z.string().trim().max(600)
+  .refine((value) => !/[？?]/.test(value), "评价中不能包含问题")
+  .default("");
 export const singleQuestionSchema = z.string().trim().min(1).max(500).refine(hasExactlyOneQuestion, "必须只包含一个问题");
 export const groundedClaimsSchema = z.array(groundedClaimSchema).max(10).default([]);
 
@@ -27,17 +29,21 @@ export function validateGroundedClaims(
 ) {
   const unsupportedClaims = plan.claims.filter((claim) => {
     const sourceText = claim.sourceIds.map((id) => sources.get(id)).filter(Boolean).join("\n");
-    if (!sourceText) return true;
-    const normalizedClaim = normalize(claim.text);
-    const normalizedSource = normalize(sourceText);
-    if (normalizedSource.includes(normalizedClaim)) return false;
-    const numbers = claim.text.match(/\d+(?:\.\d+)?/g) ?? [];
-    if (numbers.some((number) => !sourceText.includes(number))) return true;
-    const tokens = significantTokens(claim.text);
-    return tokens.length === 0 || !tokens.every((token) => normalizedSource.includes(token));
+    return !isSupported(claim.text, sourceText);
   }).map((claim) => claim.text);
-  return unsupportedClaims.length > 0
-    ? { ok: false as const, unsupportedClaims }
+  const declaredSources = plan.claims.flatMap((claim) => claim.sourceIds)
+    .map((id) => sources.get(id)).filter((value): value is string => Boolean(value)).join("\n");
+  const unsupportedSentences = plan.acknowledgement
+    ? plan.acknowledgement.split(/[。；;！!\n]+/).map((value) => value.trim()).filter(Boolean)
+      .filter((sentence) => !plan.claims.some((claim) => hasSharedFactToken(sentence, claim.text)))
+    : [];
+  const questionNumbers = plan.question.match(/\d+(?:\.\d+)?/g) ?? [];
+  const unsupportedQuestion = questionNumbers.some((number) => !declaredSources.includes(number))
+    ? [plan.question]
+    : [];
+  const unsupported = [...new Set([...unsupportedClaims, ...unsupportedSentences, ...unsupportedQuestion])];
+  return unsupported.length > 0
+    ? { ok: false as const, unsupportedClaims: unsupported }
     : { ok: true as const };
 }
 
@@ -52,6 +58,26 @@ function hasExactlyOneQuestion(value: string) {
 
 function normalize(value: string) {
   return value.toLowerCase().replace(/[\s，。、“”‘’：；（）()\-_/]/g, "");
+}
+
+function isSupported(claim: string, sourceText: string) {
+  if (!sourceText) return false;
+  const normalizedClaim = normalize(claim);
+  const normalizedSource = normalize(sourceText);
+  if (normalizedSource.includes(normalizedClaim)) return true;
+  const numbers = claim.match(/\d+(?:\.\d+)?/g) ?? [];
+  if (numbers.some((number) => !sourceText.includes(number))) return false;
+  const tokens = significantTokens(claim);
+  return tokens.length > 0 && tokens.every((token) => normalizedSource.includes(token));
+}
+
+function hasSharedFactToken(sentence: string, claim: string) {
+  const left = normalize(sentence);
+  const right = normalize(claim);
+  if (left.includes(right) || right.includes(left)) return true;
+  const tokens = significantTokens(claim).filter((token) => token.length >= 2);
+  const chineseBigrams = Array.from({ length: Math.max(0, right.length - 1) }, (_, index) => right.slice(index, index + 2));
+  return tokens.some((token) => left.includes(token)) || chineseBigrams.filter((token) => left.includes(token)).length >= 2;
 }
 
 function significantTokens(value: string) {

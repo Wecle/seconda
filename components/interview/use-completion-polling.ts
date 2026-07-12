@@ -9,6 +9,7 @@ export function useCompletionPolling(options: {
   refresh: (signal: AbortSignal) => Promise<void>;
 }) {
   const [timedOut, setTimedOut] = useState(false);
+  const [restartVersion, setRestartVersion] = useState(0);
   const refreshRef = useRef(options.refresh);
   const inFlightRef = useRef<Promise<void> | null>(null);
 
@@ -26,10 +27,17 @@ export function useCompletionPolling(options: {
     return task;
   }, []);
 
+  const resumePolling = useCallback(() => {
+    setTimedOut(false);
+    setRestartVersion((value) => value + 1);
+  }, []);
+
   useEffect(() => {
     if (!options.active) return;
     const controller = new AbortController();
     const startedAt = Date.now();
+    let pausedAt: number | null = null;
+    let pausedMs = 0;
     let attempt = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let disposed = false;
@@ -38,7 +46,7 @@ export function useCompletionPolling(options: {
       if (disposed) return;
       const decision = nextCompletionPoll({
         attempt,
-        elapsedMs: Date.now() - startedAt,
+        elapsedMs: Date.now() - startedAt - pausedMs,
         status: options.status,
         visible: document.visibilityState === "visible",
         online: navigator.onLine,
@@ -55,18 +63,33 @@ export function useCompletionPolling(options: {
         schedule();
       }, decision);
     };
-    const resume = () => { if (!timer) schedule(); };
+    const syncAvailability = () => {
+      const paused = document.visibilityState !== "visible" || !navigator.onLine;
+      if (paused) {
+        if (timer) clearTimeout(timer);
+        timer = null;
+        pausedAt ??= Date.now();
+        return;
+      }
+      if (pausedAt !== null) {
+        pausedMs += Date.now() - pausedAt;
+        pausedAt = null;
+      }
+      if (!timer) schedule();
+    };
     schedule();
-    document.addEventListener("visibilitychange", resume);
-    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", syncAvailability);
+    window.addEventListener("online", syncAvailability);
+    window.addEventListener("offline", syncAvailability);
     return () => {
       disposed = true;
       controller.abort();
       if (timer) clearTimeout(timer);
-      document.removeEventListener("visibilitychange", resume);
-      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", syncAvailability);
+      window.removeEventListener("online", syncAvailability);
+      window.removeEventListener("offline", syncAvailability);
     };
-  }, [options.active, options.status, refreshNow]);
+  }, [options.active, options.status, refreshNow, restartVersion]);
 
-  return { timedOut: options.active && timedOut, refreshNow };
+  return { timedOut: options.active && timedOut, refreshNow, resumePolling };
 }

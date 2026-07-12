@@ -578,7 +578,7 @@ export default function ReportPage() {
             window.location.reload();
           } : undefined}
         />
-        {completionPolling.timedOut && <Button variant="outline" onClick={() => void completionPolling.refreshNow()}>手动刷新状态</Button>}
+        {completionPolling.timedOut && <div className="flex gap-2"><Button variant="outline" onClick={() => void completionPolling.refreshNow()}>手动刷新状态</Button><Button variant="outline" onClick={completionPolling.resumePolling}>继续自动检查</Button></div>}
         <Button variant="outline" onClick={() => router.push(`/interviews/${interviewId}/room`)}>返回面试</Button>
       </div>
     </div>;

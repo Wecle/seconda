@@ -53,6 +53,7 @@ interface InterviewApiResponse {
     latestRun: { id: string; status: "running" | "completed" | "failed"; exitReason: string | null; lastEventSequence: number } | null;
     scoringProgress: { total: number; pending: number; scoring: number; scored: number; failed: number };
     artifacts: Array<{ runId: string; artifactId: string; type: "answer_extracted" | "resume_evidence_linked" | "background_saved" | "coverage_updated" | "direction_updated" | "scoring_created" | "reporting_started"; title: string; summary: string; details: string[] }>;
+    publicEvents: Array<{ runId: string; type: string; payload: unknown }>;
   } | null;
 }
 
@@ -648,7 +649,7 @@ export default function InterviewRoomPage() {
   }
 
   if (interview?.configVersion === 2) {
-    return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} initialScoringProgress={agentState?.scoringProgress ?? null} initialArtifacts={agentState?.artifacts ?? []} />;
+    return <AgentInterviewRoom interviewId={String(interviewId)} initialMessages={agentState?.messages ?? []} initialRun={agentState?.latestRun ?? null} resumeSnapshot={resumeSnapshot} status={interview.status} initialScoringProgress={agentState?.scoringProgress ?? null} initialArtifacts={agentState?.artifacts ?? []} initialEvents={agentState?.publicEvents ?? []} />;
   }
 
   if (interview?.configVersion === 1 && interview.status === "active") {

@@ -28,4 +28,12 @@ test("accepts grounded acknowledgement followed by exactly one question", () => 
 
 test("rejects multiple questions and acknowledgement without sources", () => {
   assert.equal(groundedResponsePlanSchema.safeParse({ acknowledgement: "回答很好。", question: "为什么？怎么做？", claims: [] }).success, false);
+  assert.equal(groundedResponsePlanSchema.safeParse({ acknowledgement: "你为什么这样做？", question: "请说明原因？", claims: [{ text: "这样做", sourceIds: ["answer:12"] }] }).success, false);
+});
+
+test("rejects undeclared facts even when claims is empty", () => {
+  assert.deepEqual(validateGroundedClaims({ acknowledgement: "你负责了一个四人 React 团队。", question: "你如何协作？", claims: [] }, sources), {
+    ok: false,
+    unsupportedClaims: ["你负责了一个四人 React 团队"],
+  });
 });

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { interviewAgentEvents, interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
-import { and, eq, asc, desc } from "drizzle-orm";
+import { and, eq, asc, desc, inArray } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
@@ -35,7 +35,7 @@ export async function GET(
       );
     }
 
-    const [rows, agentMessages, artifactEvents, latestRuns, completionJobs] = await Promise.all([db
+    const [rows, agentMessages, publicEvents, latestRuns, completionJobs] = await Promise.all([db
       .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
       .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
@@ -46,9 +46,9 @@ export async function GET(
           .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
         : Promise.resolve([]),
       interview.configVersion === 2
-        ? db.select({ runId: interviewAgentEvents.runId, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
+        ? db.select({ runId: interviewAgentEvents.runId, type: interviewAgentEvents.type, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
           .innerJoin(interviewAgentRuns, eq(interviewAgentRuns.id, interviewAgentEvents.runId))
-          .where(and(eq(interviewAgentRuns.interviewId, id), eq(interviewAgentEvents.type, "artifact_committed")))
+          .where(and(eq(interviewAgentRuns.interviewId, id), inArray(interviewAgentEvents.type, ["thinking_started", "thinking_summary", "artifact_committed", "response_started", "run_failed"])))
           .orderBy(asc(interviewAgentEvents.createdAt))
         : Promise.resolve([]),
       interview.configVersion === 2
@@ -89,7 +89,7 @@ export async function GET(
           if (key in progress) progress[key] += 1;
           return progress;
         }, { total: 0, pending: 0, scoring: 0, scored: 0, failed: 0 }),
-        artifacts: artifactEvents.map((event) => {
+        artifacts: publicEvents.filter((event) => event.type === "artifact_committed").map((event) => {
           const payload = event.payload as { type?: string };
           return {
             ...(payload as object),
@@ -97,6 +97,7 @@ export async function GET(
             ...(payload.type === "background_saved" ? { artifactId: `coverage:${event.runId}` } : {}),
           };
         }),
+        publicEvents: publicEvents.filter((event) => event.type !== "artifact_committed"),
       } : null,
       resumeSnapshot: resumeVersion
         ? {
