@@ -31,7 +31,7 @@ async function fixture(steps: AgentModelStep[], tools = [tool("get_coverage_stat
     signal: new AbortController().signal,
     progressHash: () => "same",
   });
-  return { result, repository, run };
+  return { result, repository, run, modelCalls: index };
 }
 
 test("completes after a domain tool commits a candidate-visible outcome", async () => {
@@ -50,6 +50,44 @@ test("exits after eight model turns without a committed outcome", async () => {
   }));
   const { result } = await fixture(steps);
   assert.equal(result.exitReason, "max_turns");
+});
+
+test("allows two retryable tool argument repairs outside the productive turn budget", async () => {
+  const strictTool = tool("get_coverage_state");
+  strictTool.inputSchema = z.object({ required: z.string() });
+  const steps = [
+    { type: "tool_call" as const, callId: "bad-1", toolName: "get_coverage_state", args: {} },
+    { type: "tool_call" as const, callId: "bad-2", toolName: "get_coverage_state", args: {} },
+    ...Array.from({ length: 8 }, (_, index) => ({ type: "final" as const, content: `final-${index}` })),
+  ];
+  const { result, modelCalls } = await fixture(steps, [strictTool]);
+  assert.equal(result.exitReason, "max_turns");
+  assert.equal(result.turnCount, 8);
+  assert.equal(modelCalls, 10);
+});
+
+test("breaks after a third retryable tool argument failure", async () => {
+  const strictTool = tool("get_coverage_state");
+  strictTool.inputSchema = z.object({ required: z.string() });
+  const steps = Array.from({ length: 3 }, (_, index) => ({
+    type: "tool_call" as const,
+    callId: `bad-${index}`,
+    toolName: "get_coverage_state",
+    args: {},
+  }));
+  const { result, modelCalls } = await fixture(steps, [strictTool]);
+  assert.equal(result.exitReason, "blocking_limit");
+  assert.equal(modelCalls, 3);
+});
+
+test("completes a grounded opening after bounded evidence reads", async () => {
+  const { result, modelCalls } = await fixture([
+    { type: "tool_call", callId: "coverage", toolName: "get_coverage_state", args: {} },
+    { type: "tool_call", callId: "evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["profile:1"] } },
+    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: { question: "请自我介绍？" } },
+  ], [tool("get_coverage_state"), tool("get_resume_evidence"), tool("ask_interview_question")]);
+  assert.equal(result.exitReason, "completed");
+  assert.equal(modelCalls, 3);
 });
 
 test("feeds loop warnings back to the model and then breaks", async () => {
