@@ -109,14 +109,26 @@ test("aborts an idle provider stream", async () => {
   });
 });
 
-test("does not fall back after a provisional delta", async () => {
+test("retries buffered provisional output before any response is published", async () => {
   const calls: string[] = [];
   const port = createStreamingInterviewAgentModelPort({
     candidates: [{ model: "fast" }, { model: "quality" }],
     classifyError: () => "transient",
+    sleep: async () => {},
     onAttemptStarted: async () => {},
     streamCandidate: async ({ model }) => {
       calls.push(model);
+      if (model === "quality") {
+        return {
+          partialOutputStream: (async function* () {})(),
+          output: Promise.resolve({
+            type: "tool_call",
+            callId: "quality-call",
+            toolName: "ask_interview_question",
+            args: askArgs,
+          }),
+        };
+      }
       return {
         partialOutputStream: (async function* () {
           yield { type: "tool_call", args: { question: "已经展示" } };
@@ -126,13 +138,14 @@ test("does not fall back after a provisional delta", async () => {
       };
     },
   });
-  await assert.rejects(port.nextStepStream!({
+  const result = await port.nextStepStream!({
     runId: "run",
     messages: [],
     tools: askTool,
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onProvisionalDelta: async () => {},
-  }), (error: unknown) => (error as { code?: string }).code === "PROVISIONAL_STREAM_ABORTED");
-  assert.deepEqual(calls, ["fast"]);
+  });
+  assert.equal(result.step.type, "tool_call");
+  assert.deepEqual(calls, ["fast", "fast", "fast", "quality"]);
 });
