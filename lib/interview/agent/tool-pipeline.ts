@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import type { InterviewAgentRepository } from "./repository";
+import type { RunLeaseToken } from "./repository";
 
 export type ToolError = {
   code: string;
@@ -13,6 +14,8 @@ export type InterviewToolContext = {
   interviewId: string;
   runId: string;
   repository: InterviewAgentRepository;
+  toolCallId?: string;
+  lease?: RunLeaseToken;
   provisionalMessageId?: string;
 };
 
@@ -122,7 +125,10 @@ export async function executeInterviewTool<TInput, TOutput>(options: {
   await options.context.repository.appendEvent(options.context.runId, {
     type: "tool_call_started",
     payload: { toolName: options.definition.name, input },
-  });
+    ...(options.context.toolCallId
+      ? { dedupeKey: `tool:${options.context.toolCallId}:started` }
+      : {}),
+  }, options.context.lease);
 
   try {
     let output: unknown = await options.definition.execute(input, options.context);
@@ -175,7 +181,10 @@ function persistToolCompletion(
   return context.repository.appendEvent(context.runId, {
     type: "tool_call_completed",
     payload: { toolName, result },
-  });
+    ...(context.toolCallId
+      ? { dedupeKey: `tool:${context.toolCallId}:completed` }
+      : {}),
+  }, context.lease);
 }
 
 async function rejectTool(

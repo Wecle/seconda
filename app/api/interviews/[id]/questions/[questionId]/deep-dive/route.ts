@@ -3,8 +3,7 @@ import { db } from "@/lib/db";
 import {
   interviews,
   interviewQuestions,
-  resumes,
-  resumeVersions,
+  interviewResumeSnapshots,
   deepDiveSessions,
   deepDiveMessages,
 } from "@/lib/db/schema";
@@ -25,9 +24,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const [interviewRow] = await db
       .select({ interview: interviews })
       .from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
     if (!interviewRow) {
       return NextResponse.json({ error: "Interview not found" }, { status: 404 });

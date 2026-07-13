@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviewQuestions, interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewQuestions, interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 
@@ -23,9 +23,8 @@ export async function GET(
     const [interviewRow] = await db
       .select({ id: interviews.id })
       .from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
     if (!interviewRow) {
       return NextResponse.json({ error: "Interview not found" }, { status: 404 });

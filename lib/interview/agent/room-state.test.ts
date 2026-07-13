@@ -27,3 +27,21 @@ test("ignores text before response_started and binds artifacts to their run", ()
   state = agentRoomReducer(state, { type: "artifact_committed", artifact: { runId: "r1", artifactId: "a", type: "background_saved", title: "背景已保存", summary: "ok", details: [] } });
   assert.equal(state.turns.r1.artifacts.length, 1);
 });
+
+test("restores one pending answer and reconciles a response-lost duplicate", () => {
+  let state = initialAgentRoomState([{ id: "durable", sequence: 2, role: "user", kind: "answer", content: "回答", status: "sent" }]);
+  state = agentRoomReducer(state, { type: "candidate_submitted", localId: "local", content: "回答" });
+  state = agentRoomReducer(state, { type: "candidate_submitted", localId: "local", content: "回答" });
+  assert.equal(state.messages.filter((message) => message.id === "local").length, 1);
+  state = agentRoomReducer(state, { type: "candidate_failed", localId: "local" });
+  state = agentRoomReducer(state, { type: "candidate_retrying", localId: "local" });
+  assert.equal(state.messages.find((message) => message.id === "local")?.status, "sending");
+  state = agentRoomReducer(state, {
+    type: "candidate_committed",
+    localId: "local",
+    runId: "run",
+    message: { id: "durable", sequence: 2, content: "回答" },
+  });
+  assert.equal(state.messages.filter((message) => message.id === "durable").length, 1);
+  assert.equal(state.messages.some((message) => message.id === "local"), false);
+});

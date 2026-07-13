@@ -4,10 +4,9 @@ import { db } from "@/lib/db";
 import {
   interviews,
   interviewQuestions,
+  interviewResumeSnapshots,
   interviewShares,
   questionScores,
-  resumes,
-  resumeVersions,
   users,
 } from "@/lib/db/schema";
 import { verifyInterviewShareToken } from "@/lib/interview/share-token";
@@ -43,9 +42,8 @@ export async function GET(
         sharedByName: users.name,
       })
       .from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .leftJoin(users, eq(users.id, resumes.userId))
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .leftJoin(users, eq(users.id, interviewResumeSnapshots.ownerUserId))
       .where(eq(interviews.id, id));
 
     const interview = interviewRow?.interview;

@@ -7,6 +7,7 @@ import {
 
 test("accepts the strict v2 creation contract", () => {
   assert.equal(createAgentInterviewRequestSchema.safeParse({
+    idempotencyKey: "2e943007-a274-4c5f-bf20-b4ae8e28cfe8",
     resumeVersionId: "4d5e02dd-3bb4-4f0f-afb9-1ddbf4be02f9",
     configVersion: 2,
     language: "zh",
@@ -18,6 +19,7 @@ test("accepts the strict v2 creation contract", () => {
 
 test("rejects removed fixed-question fields from v2 requests", () => {
   assert.equal(createAgentInterviewRequestSchema.safeParse({
+    idempotencyKey: "2e943007-a274-4c5f-bf20-b4ae8e28cfe8",
     resumeVersionId: "4d5e02dd-3bb4-4f0f-afb9-1ddbf4be02f9",
     configVersion: 2,
     language: "zh",

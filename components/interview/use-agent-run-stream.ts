@@ -9,6 +9,7 @@ export type AgentRunStreamStatus = {
   exitReason: string | null;
   userMessage: string | null;
   lastEventSequence: number;
+  recoveryDisposition?: "already_running" | "schedule" | "cooldown" | "exhausted" | "completed" | "failed";
 };
 
 export type AgentRunStreamEvent = {
@@ -33,6 +34,7 @@ const eventTypes = [
   "message_committed",
   "run_completed",
   "run_failed",
+  "heartbeat",
 ];
 
 export function useAgentRunStream(options: {
@@ -41,17 +43,21 @@ export function useAgentRunStream(options: {
   afterSequence?: number;
   onEvent: (event: AgentRunStreamEvent) => void | Promise<void>;
   onTerminal: (run: AgentRunStreamStatus) => void | Promise<void>;
+  resumeRun?: (runId: string, signal: AbortSignal) => Promise<void>;
 }) {
   const [connectionState, setConnectionState] = useState<
-    "idle" | "connecting" | "open" | "reconnecting" | "manual_retry" | "terminal"
-  >(options.run?.status === "running" ? "connecting" : "idle");
+    "idle" | "connecting" | "open" | "reconnecting" | "recovering" | "manual_retry" | "terminal"
+  >(options.run?.status === "running" && options.run.recoveryDisposition !== "exhausted" ? "connecting" : "idle");
   const [retryVersion, setRetryVersion] = useState(0);
   const cursorRef = useRef(options.afterSequence ?? 0);
   const cursorRunRef = useRef<string | undefined>(options.run?.id);
   const callbacksRef = useRef({ onEvent: options.onEvent, onTerminal: options.onTerminal });
+  const resumeRunRef = useRef(options.resumeRun);
+  const recoveryAttemptedRunRef = useRef<string | null>(null);
   callbacksRef.current = { onEvent: options.onEvent, onTerminal: options.onTerminal };
+  resumeRunRef.current = options.resumeRun;
   const runId = options.run?.id;
-  const runStatus = options.run?.status;
+  const runStatus = options.run?.recoveryDisposition === "exhausted" ? "failed" : options.run?.status;
 
   const retry = useCallback(() => {
     cursorRef.current = Math.max(cursorRef.current, options.afterSequence ?? 0);
@@ -69,6 +75,7 @@ export function useAgentRunStream(options: {
     let source: EventSource | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let reconnectAttempt = 0;
+    const recoveryController = new AbortController();
 
     const connect = () => {
       if (disposed) return;
@@ -76,11 +83,11 @@ export function useAgentRunStream(options: {
         `/api/interviews/${options.interviewId}/runs/${runId}/events?after=${cursorRef.current}`,
       );
       source.onopen = () => {
-        reconnectAttempt = 0;
         setConnectionState("open");
       };
       for (const type of eventTypes) {
         source.addEventListener(type, (raw) => {
+          reconnectAttempt = 0;
           const message = raw as MessageEvent;
           const sequence = Number(message.lastEventId);
           if (Number.isInteger(sequence)) cursorRef.current = Math.max(cursorRef.current, sequence);
@@ -117,6 +124,20 @@ export function useAgentRunStream(options: {
         const delay = nextReconnectDelay(reconnectAttempt);
         reconnectAttempt += 1;
         if (delay === null) {
+          if (resumeRunRef.current && recoveryAttemptedRunRef.current !== runId) {
+            recoveryAttemptedRunRef.current = runId;
+            setConnectionState("recovering");
+            try {
+              await resumeRunRef.current(runId, recoveryController.signal);
+              if (disposed) return;
+              reconnectAttempt = 0;
+              setConnectionState("reconnecting");
+              reconnectTimer = setTimeout(connect, 0);
+            } catch {
+              if (!disposed) setConnectionState("manual_retry");
+            }
+            return;
+          }
           setConnectionState("manual_retry");
           return;
         }
@@ -128,6 +149,7 @@ export function useAgentRunStream(options: {
     connect();
     return () => {
       disposed = true;
+      recoveryController.abort();
       source?.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };

@@ -4,9 +4,8 @@ import {
   interviewCoverage,
   interviewAgentRuns,
   interviewMessages,
-  interviewQuestions,
+  interviewResumeSnapshots,
   interviews,
-  resumeVersions,
 } from "@/lib/db/schema";
 import { createStructuredInterviewAgentModelPort } from "./model-port";
 import { createDrizzleInterviewAgentRepository } from "./repository";
@@ -18,47 +17,53 @@ import {
   loadResumeEvidence,
 } from "./context/resume-evidence";
 import { loadAgentContext } from "./context/assembler";
-import { createProductionCompletionDependencies, scheduleInterviewCompletion } from "@/lib/interview/completion/composition";
+import { createProductionCompletionDependencies } from "@/lib/interview/completion/composition";
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
 import { composeCandidateResponse } from "./grounding";
+import { agentRunFence } from "./fencing";
 
 export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
   const repository = createDrizzleInterviewAgentRepository(db);
   const completion = createProductionCompletionDependencies(options?.defer ?? ((task) => { void task(); }));
-  const model = createStructuredInterviewAgentModelPort({
-    async onUsage({ runId, usage }) {
-      await db.update(interviewAgentRuns).set({
-        inputTokens: sql`${interviewAgentRuns.inputTokens} + ${usage.inputTokens}`,
-        outputTokens: sql`${interviewAgentRuns.outputTokens} + ${usage.outputTokens}`,
-        ...(usage.cachedInputTokens === null ? {} : {
-          cachedInputTokens: sql`${interviewAgentRuns.cachedInputTokens} + ${usage.cachedInputTokens}`,
-        }),
-        ...(usage.cacheWriteTokens === null ? {} : {
-          cacheWriteTokens: sql`${interviewAgentRuns.cacheWriteTokens} + ${usage.cacheWriteTokens}`,
-        }),
-        ...(
-          usage.cachedInputTokens === null && usage.cacheWriteTokens === null
-            ? {}
-            : { cacheMetricsAvailable: 1 }
-        ),
-        updatedAt: new Date(),
-      }).where(eq(interviewAgentRuns.id, runId));
-    },
-  });
   const executor: AgentRunExecutor = {
     async run(input) {
+      if (!input.lease) throw new Error("Agent run lease is required");
+      const model = createStructuredInterviewAgentModelPort({
+        async onUsage({ runId, usage }) {
+          const updated = await db.update(interviewAgentRuns).set({
+            inputTokens: sql`${interviewAgentRuns.inputTokens} + ${usage.inputTokens}`,
+            outputTokens: sql`${interviewAgentRuns.outputTokens} + ${usage.outputTokens}`,
+            ...(usage.cachedInputTokens === null ? {} : {
+              cachedInputTokens: sql`${interviewAgentRuns.cachedInputTokens} + ${usage.cachedInputTokens}`,
+            }),
+            ...(usage.cacheWriteTokens === null ? {} : {
+              cacheWriteTokens: sql`${interviewAgentRuns.cacheWriteTokens} + ${usage.cacheWriteTokens}`,
+            }),
+            ...(
+              usage.cachedInputTokens === null && usage.cacheWriteTokens === null
+                ? {}
+                : { cacheMetricsAvailable: 1 }
+            ),
+            updatedAt: new Date(),
+          }).where(agentRunFence(runId, input.lease)).returning({ id: interviewAgentRuns.id });
+          if (updated.length === 0) throw new Error("Agent run lease is stale");
+        },
+      });
       let phaseProgressId: string | undefined;
       let publicThinkingSummary: string | undefined;
       if (input.mode === "answer") {
         await repository.appendEvent(input.runId, {
           type: "thinking_started",
           payload: { runId: input.runId },
-        });
+          dedupeKey: "thinking:started",
+        }, input.lease);
         const assessment = await ensureLatestAnswerAssessment(db, {
           interviewId: input.interviewId,
+          runId: input.runId,
+          lease: input.lease,
           signal: input.signal,
         });
         phaseProgressId = assessment.id;
@@ -68,6 +73,9 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
       await compactInterviewContextIfNeeded(db, {
         interviewId: input.interviewId,
+        runId: input.runId,
+        lease: input.lease,
+        signal: input.signal,
         effectiveBudget: effectiveContextBudget({ contextWindow, outputReserve }),
       });
       const promptContext = await loadAgentContext(db, {
@@ -75,12 +83,13 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         runId: input.runId,
         currentInstruction: input.instruction,
       });
-      await db.update(interviewAgentRuns).set({
+      const contextUpdated = await db.update(interviewAgentRuns).set({
         promptTemplateVersion: promptContext.templateVersion,
         cacheEpoch: promptContext.cacheEpoch,
         contextInputTokens: promptContext.estimatedTokens,
         updatedAt: new Date(),
-      }).where(eq(interviewAgentRuns.id, input.runId));
+      }).where(agentRunFence(input.runId, input.lease)).returning({ id: interviewAgentRuns.id });
+      if (contextUpdated.length === 0) throw new Error("Agent run lease is stale");
       let progressVersion = 0;
       const handlers = createToolHandlers(repository, completion, () => {
         progressVersion += 1;
@@ -115,6 +124,7 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
               intent: toolInput.intent,
               question: toolInput.question,
               resumeEvidenceIds: toolInput.resumeEvidenceIds,
+              finishReason: toolInput.finishReason,
             },
           };
         },
@@ -135,6 +145,7 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         thinkingAlreadyStarted: input.mode === "answer",
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
+        lease: input.lease,
         progressHash: () => String(progressVersion),
         promptContext: {
           stablePrefix: promptContext.stablePrefix,
@@ -182,87 +193,68 @@ function createToolHandlers(
         status: interviewCoverage.status,
       }).from(interviewCoverage).where(eq(interviewCoverage.interviewId, context.interviewId));
     },
-    async update_coverage(input: { category: string; topic: string; status: string; resumeEvidenceIds: string[] }, context: { interviewId: string }) {
-      await db.insert(interviewCoverage).values({
+    async update_coverage(input: { category: string; topic: string; status: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; toolCallId?: string; lease?: import("./repository").RunLeaseToken }) {
+      if (!context.toolCallId) throw new Error("Tool call id is required");
+      const result = await repository.commitCoverageUpdate({
         interviewId: context.interviewId,
+        runId: context.runId,
+        toolCallId: context.toolCallId,
+        lease: context.lease,
         category: input.category,
         topic: input.topic,
         status: input.status,
         resumeEvidenceIds: input.resumeEvidenceIds,
-      }).onConflictDoUpdate({
-        target: [interviewCoverage.interviewId, interviewCoverage.category, interviewCoverage.topic],
-        set: { status: input.status, resumeEvidenceIds: input.resumeEvidenceIds, updatedAt: new Date() },
       });
       markProgress();
-      return { updated: true };
+      return result;
     },
-    async ask_interview_question(input: { category: string; topic: string; acknowledgement: string; question: string; claims: Array<{ text: string; sourceIds: string[] }>; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; provisionalMessageId?: string }) {
+    async ask_interview_question(input: { category: string; topic: string; acknowledgement: string; question: string; claims: Array<{ text: string; sourceIds: string[] }>; resumeEvidenceIds: string[]; targetRole?: { value: string; status: "inferred" | "confirmed"; confidence: "low" | "medium" | "high"; sourceIds: string[] } }, context: { interviewId: string; runId: string; toolCallId: string; provisionalMessageId?: string; lease?: import("./repository").RunLeaseToken }) {
       const responseText = composeCandidateResponse(input);
-      const question = await db.transaction(async (tx) => {
-        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${context.interviewId}))`);
-        const [indexRow] = await tx.select({ next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1` })
-          .from(interviewQuestions)
-          .where(eq(interviewQuestions.interviewId, context.interviewId));
-        const [created] = await tx.insert(interviewQuestions).values({
-          interviewId: context.interviewId,
-          questionIndex: Number(indexRow.next),
-          questionType: input.category,
-          topic: input.topic,
-          question: input.question,
-          tip: "",
-        }).returning({ id: interviewQuestions.id });
-        await tx.update(interviewCoverage).set({
-          questionCount: sql`${interviewCoverage.questionCount} + 1`,
-          resumeEvidenceIds: input.resumeEvidenceIds,
-          status: "partial",
-          updatedAt: new Date(),
-        }).where(and(
-          eq(interviewCoverage.interviewId, context.interviewId),
-          eq(interviewCoverage.category, input.category),
-          eq(interviewCoverage.topic, "__category__"),
-        ));
-        return created;
-      });
-      const message = await repository.appendMessage({
-        id: context.provisionalMessageId,
-        interviewId: context.interviewId,
+      const outcome = await repository.commitQuestionOutcome({
         runId: context.runId,
-        role: "assistant",
-        kind: "question",
-        content: responseText,
-      });
-      markProgress();
-      return {
-        questionId: question.id,
-        messageId: message.id,
-        messageSequence: message.sequence,
+        interviewId: context.interviewId,
+        toolCallId: context.toolCallId,
+        lease: context.lease,
+        category: input.category,
+        topic: input.topic,
+        question: input.question,
         responseText,
-        committed: true,
-      };
+        resumeEvidenceIds: input.resumeEvidenceIds,
+        provisionalMessageId: context.provisionalMessageId,
+        targetRole: input.targetRole,
+      });
+      markProgress();
+      return outcome;
     },
-    async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string }) {
-      await repository.appendMessage({
+    async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string; toolCallId?: string; lease?: import("./repository").RunLeaseToken }) {
+      if (!context.toolCallId) throw new Error("Tool call id is required");
+      const outcome = await repository.commitFinishOutcome({
         interviewId: context.interviewId,
         runId: context.runId,
-        role: "assistant",
-        kind: "finish",
-        content: input.closingMessage,
+        toolCallId: context.toolCallId,
+        lease: context.lease,
+        closingMessage: input.closingMessage,
       });
-      await db.update(interviews).set({ status: "scoring", updatedAt: new Date() })
-        .where(and(eq(interviews.id, context.interviewId), eq(interviews.status, "active")));
-      const job = await scheduleInterviewCompletion(completion, context.interviewId);
       markProgress();
-      return { committed: true, completionJobId: job.id };
+      let completionJobId: string | undefined;
+      try {
+        const job = await completion.repository.getJobByInterview(context.interviewId);
+        if (job) {
+          completionJobId = job.id;
+          await completion.scheduler.schedule(job.id);
+        }
+      } catch {}
+      return { ...outcome, completionJobId };
     },
   };
 }
 
 async function loadInterviewEvidenceIndex(interviewId: string) {
   const [row] = await db.select({
-    parsedJson: resumeVersions.parsedJson,
-    extractedText: resumeVersions.extractedText,
+    parsedJson: interviewResumeSnapshots.parsedJson,
+    extractedText: interviewResumeSnapshots.extractedText,
   }).from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
     .where(eq(interviews.id, interviewId))
     .limit(1);
   if (!row) throw new Error("Interview resume snapshot not found");

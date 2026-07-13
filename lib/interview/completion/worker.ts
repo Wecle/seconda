@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { CompletionJobRecord, CompletionJobRepository } from "./repository";
+import { MAX_COMPLETION_ATTEMPTS, type CompletionJobRecord, type CompletionJobRepository, type CompletionLeaseToken } from "./repository";
 
 export interface CompletionExecutor {
-  run(input: { interviewId: string; jobId: string; signal: AbortSignal }): Promise<void>;
+  run(input: { interviewId: string; jobId: string; signal: AbortSignal; lease: CompletionLeaseToken }): Promise<void>;
 }
 
 export interface CompletionScheduler {
@@ -20,11 +20,12 @@ export async function executeClaimedCompletionJob(options: {
   const leaseMs = options.leaseMs ?? 30_000;
   const job = await options.repository.claimJob(options.jobId, options.owner, new Date(), leaseMs);
   if (!job) return { status: "not_claimed" as const };
+  const lease = { owner: options.owner, generation: job.leaseGeneration };
   const controller = new AbortController();
   let leaseLost = false;
   const interval = setInterval(async () => {
     try {
-      if (!await options.repository.renewLease(job.id, options.owner, new Date(), leaseMs)) {
+      if (!await options.repository.renewLease(job.id, lease, new Date(), leaseMs)) {
         leaseLost = true;
         controller.abort(new Error("Completion job lease was lost"));
       }
@@ -34,16 +35,23 @@ export async function executeClaimedCompletionJob(options: {
     }
   }, options.renewEveryMs ?? 10_000);
   try {
-    await options.executor.run({ interviewId: job.interviewId, jobId: job.id, signal: controller.signal });
+    await options.executor.run({ interviewId: job.interviewId, jobId: job.id, signal: controller.signal, lease });
     if (leaseLost) throw new Error("Completion job lease was lost");
-    if (!await options.repository.completeJob(job.id, options.owner)) throw new Error("Completion lease was lost before commit");
+    if (!await options.repository.completeJob(job.id, lease)) {
+      leaseLost = true;
+      controller.abort(new Error("Completion lease was lost before commit"));
+      throw controller.signal.reason;
+    }
     return { status: "completed" as const };
   } catch (error) {
-    await options.repository.failJob(job.id, options.owner, error);
-    return { status: "failed" as const };
+    if (!leaseLost && !await options.repository.failJob(job.id, lease, error, new Date())) {
+      leaseLost = true;
+      controller.abort(new Error("Completion lease was lost before failure commit"));
+    }
+    return { status: leaseLost ? "lease_lost" as const : "failed" as const };
   } finally {
     clearInterval(interval);
-    await options.repository.releaseLease(job.id, options.owner);
+    await options.repository.releaseLease(job.id, lease);
   }
 }
 
@@ -66,7 +74,10 @@ export function createCompletionScheduler(options: {
 
 export function getCompletionRecoveryDisposition(job: CompletionJobRecord, now: Date) {
   if (job.status === "completed") return "completed" as const;
+  if (job.status === "exhausted") return "exhausted" as const;
   if (job.status === "running" && job.leaseExpiresAt && job.leaseExpiresAt > now) return "already_running" as const;
+  if (job.attemptCount >= MAX_COMPLETION_ATTEMPTS) return "exhausted" as const;
+  if (job.status === "failed" && job.nextAttemptAt && job.nextAttemptAt > now) return "cooldown" as const;
   return "schedule" as const;
 }
 

@@ -3,9 +3,8 @@ import { db } from "@/lib/db";
 import {
   interviews,
   interviewQuestions,
+  interviewResumeSnapshots,
   questionScores,
-  resumes,
-  resumeVersions,
 } from "@/lib/db/schema";
 import { and, eq, asc } from "drizzle-orm";
 import { generateInterviewReport } from "@/lib/interview";
@@ -29,9 +28,8 @@ export async function POST(
     const [interviewRow] = await db
       .select({ interview: interviews })
       .from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
     const interview = interviewRow?.interview;
 
@@ -103,12 +101,12 @@ export async function POST(
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    const [resumeVersion] = await db
+    const [resumeSnapshot] = await db
       .select()
-      .from(resumeVersions)
-      .where(eq(resumeVersions.id, interview.resumeVersionId));
+      .from(interviewResumeSnapshots)
+      .where(eq(interviewResumeSnapshots.interviewId, interview.id));
 
-    const resume = resumeVersion?.parsedJson as ParsedResume | null;
+    const resume = resumeSnapshot?.parsedJson as ParsedResume | null;
     const resumeSummary = resume
       ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}`
       : "";

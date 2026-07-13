@@ -6,6 +6,7 @@ import {
 } from "../settings";
 
 export const createAgentInterviewRequestSchema = z.object({
+  idempotencyKey: z.string().uuid(),
   resumeVersionId: z.string().uuid(),
   configVersion: z.literal(2),
   language: z.enum(interviewLanguageValues),

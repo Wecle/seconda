@@ -1,7 +1,11 @@
-import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, lt, or, sql } from "drizzle-orm";
 import { interviewCompletionJobs } from "@/lib/db/schema";
 
-export type CompletionJobStatus = "pending" | "running" | "completed" | "failed";
+export const MAX_COMPLETION_ATTEMPTS = 3;
+
+export type CompletionJobStatus = "pending" | "running" | "completed" | "failed" | "exhausted";
+
+export type CompletionLeaseToken = { owner: string; generation: number };
 
 export type CompletionJobRecord = {
   id: string;
@@ -9,7 +13,9 @@ export type CompletionJobRecord = {
   status: CompletionJobStatus;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
+  leaseGeneration: number;
   attemptCount: number;
+  nextAttemptAt: Date | null;
 };
 
 export interface CompletionJobRepository {
@@ -17,10 +23,10 @@ export interface CompletionJobRepository {
   getJob(jobId: string): Promise<CompletionJobRecord | null>;
   getJobByInterview(interviewId: string): Promise<CompletionJobRecord | null>;
   claimJob(jobId: string, owner: string, now: Date, leaseMs: number): Promise<CompletionJobRecord | null>;
-  renewLease(jobId: string, owner: string, now: Date, leaseMs: number): Promise<boolean>;
-  releaseLease(jobId: string, owner: string): Promise<void>;
-  completeJob(jobId: string, owner: string): Promise<boolean>;
-  failJob(jobId: string, owner: string, error: unknown): Promise<boolean>;
+  renewLease(jobId: string, lease: CompletionLeaseToken, now: Date, leaseMs: number): Promise<boolean>;
+  releaseLease(jobId: string, lease: CompletionLeaseToken): Promise<void>;
+  completeJob(jobId: string, lease: CompletionLeaseToken): Promise<boolean>;
+  failJob(jobId: string, lease: CompletionLeaseToken, error: unknown, now: Date): Promise<boolean>;
 }
 
 type Database = typeof import("@/lib/db").db;
@@ -32,7 +38,9 @@ export function createDrizzleCompletionJobRepository(database: Database): Comple
     status: interviewCompletionJobs.status,
     leaseOwner: interviewCompletionJobs.leaseOwner,
     leaseExpiresAt: interviewCompletionJobs.leaseExpiresAt,
+    leaseGeneration: interviewCompletionJobs.leaseGeneration,
     attemptCount: interviewCompletionJobs.attemptCount,
+    nextAttemptAt: interviewCompletionJobs.nextAttemptAt,
   };
   const normalize = (row: typeof interviewCompletionJobs.$inferSelect): CompletionJobRecord => ({
     id: row.id,
@@ -40,7 +48,9 @@ export function createDrizzleCompletionJobRepository(database: Database): Comple
     status: row.status as CompletionJobStatus,
     leaseOwner: row.leaseOwner,
     leaseExpiresAt: row.leaseExpiresAt,
+    leaseGeneration: row.leaseGeneration,
     attemptCount: row.attemptCount,
+    nextAttemptAt: row.nextAttemptAt,
   });
   return {
     async createJob(interviewId) {
@@ -62,51 +72,91 @@ export function createDrizzleCompletionJobRepository(database: Database): Comple
       return row ? { ...row, status: row.status as CompletionJobStatus } : null;
     },
     async claimJob(jobId, owner, now, leaseMs) {
+      await database.update(interviewCompletionJobs).set({
+        status: "exhausted",
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: null,
+        updatedAt: now,
+      }).where(and(
+        eq(interviewCompletionJobs.id, jobId),
+        eq(interviewCompletionJobs.status, "running"),
+        sql`${interviewCompletionJobs.attemptCount} >= ${MAX_COMPLETION_ATTEMPTS}`,
+        or(
+          isNull(interviewCompletionJobs.leaseExpiresAt),
+          lte(interviewCompletionJobs.leaseExpiresAt, now),
+        ),
+      ));
       const [row] = await database.update(interviewCompletionJobs).set({
         status: "running",
         leaseOwner: owner,
         leaseExpiresAt: new Date(now.getTime() + leaseMs),
+        leaseGeneration: sql`${interviewCompletionJobs.leaseGeneration} + 1`,
         attemptCount: sql`${interviewCompletionJobs.attemptCount} + 1`,
+        nextAttemptAt: null,
         updatedAt: now,
       }).where(and(
         eq(interviewCompletionJobs.id, jobId),
         or(
-          eq(interviewCompletionJobs.status, "pending"),
-          eq(interviewCompletionJobs.status, "failed"),
-          and(eq(interviewCompletionJobs.status, "running"), or(
-            isNull(interviewCompletionJobs.leaseExpiresAt),
-            lt(interviewCompletionJobs.leaseExpiresAt, now),
-          )),
+          and(
+            eq(interviewCompletionJobs.status, "pending"),
+            lt(interviewCompletionJobs.attemptCount, MAX_COMPLETION_ATTEMPTS),
+          ),
+          and(
+            eq(interviewCompletionJobs.status, "failed"),
+            lt(interviewCompletionJobs.attemptCount, MAX_COMPLETION_ATTEMPTS),
+            or(
+              isNull(interviewCompletionJobs.nextAttemptAt),
+              lte(interviewCompletionJobs.nextAttemptAt, now),
+            ),
+          ),
+          and(
+            eq(interviewCompletionJobs.status, "running"),
+            lt(interviewCompletionJobs.attemptCount, MAX_COMPLETION_ATTEMPTS),
+            or(
+              isNull(interviewCompletionJobs.leaseExpiresAt),
+              lt(interviewCompletionJobs.leaseExpiresAt, now),
+            ),
+          ),
         ),
       )).returning();
       if (!row) return null;
       return normalize(row);
     },
-    async renewLease(jobId, owner, now, leaseMs) {
+    async renewLease(jobId, lease, now, leaseMs) {
       const rows = await database.update(interviewCompletionJobs).set({
         leaseExpiresAt: new Date(now.getTime() + leaseMs), updatedAt: now,
       }).where(and(
         eq(interviewCompletionJobs.id, jobId),
         eq(interviewCompletionJobs.status, "running"),
-        eq(interviewCompletionJobs.leaseOwner, owner),
+        eq(interviewCompletionJobs.leaseOwner, lease.owner),
+        eq(interviewCompletionJobs.leaseGeneration, lease.generation),
+        gt(interviewCompletionJobs.leaseExpiresAt, now),
       )).returning({ id: interviewCompletionJobs.id });
       return rows.length > 0;
     },
-    async releaseLease(jobId, owner) {
+    async releaseLease(jobId, lease) {
       await database.update(interviewCompletionJobs).set({ leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
-        .where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner)));
+        .where(and(
+          eq(interviewCompletionJobs.id, jobId),
+          eq(interviewCompletionJobs.leaseOwner, lease.owner),
+          eq(interviewCompletionJobs.leaseGeneration, lease.generation),
+        ));
     },
-    async completeJob(jobId, owner) {
+    async completeJob(jobId, lease) {
+      const now = new Date();
       const rows = await database.update(interviewCompletionJobs).set({
-        status: "completed", completedAt: new Date(), errorJson: null, updatedAt: new Date(),
-      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner), eq(interviewCompletionJobs.status, "running")))
+        status: "completed", completedAt: now, errorJson: null, updatedAt: now,
+      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, lease.owner), eq(interviewCompletionJobs.leaseGeneration, lease.generation), eq(interviewCompletionJobs.status, "running"), gt(interviewCompletionJobs.leaseExpiresAt, now)))
         .returning({ id: interviewCompletionJobs.id });
       return rows.length > 0;
     },
-    async failJob(jobId, owner, error) {
+    async failJob(jobId, lease, error, now) {
       const rows = await database.update(interviewCompletionJobs).set({
-        status: "failed", errorJson: serializeError(error), updatedAt: new Date(),
-      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, owner), eq(interviewCompletionJobs.status, "running")))
+        status: sql`CASE WHEN ${interviewCompletionJobs.attemptCount} >= ${MAX_COMPLETION_ATTEMPTS} THEN 'exhausted' ELSE 'failed' END`,
+        nextAttemptAt: sql`CASE WHEN ${interviewCompletionJobs.attemptCount} >= ${MAX_COMPLETION_ATTEMPTS} THEN NULL ELSE ${now} + LEAST(300000, 30000 * POWER(2, GREATEST(${interviewCompletionJobs.attemptCount} - 1, 0))) * INTERVAL '1 millisecond' END`,
+        errorJson: serializeError(error), updatedAt: now,
+      }).where(and(eq(interviewCompletionJobs.id, jobId), eq(interviewCompletionJobs.leaseOwner, lease.owner), eq(interviewCompletionJobs.leaseGeneration, lease.generation), eq(interviewCompletionJobs.status, "running"), gt(interviewCompletionJobs.leaseExpiresAt, now)))
         .returning({ id: interviewCompletionJobs.id });
       return rows.length > 0;
     },
@@ -123,7 +173,7 @@ export function createInMemoryCompletionJobRepository(): CompletionJobRepository
     async createJob(interviewId) {
       const existing = [...jobs.values()].find((job) => job.interviewId === interviewId);
       if (existing) return { ...existing };
-      const job = { id: crypto.randomUUID(), interviewId, status: "pending" as const, leaseOwner: null, leaseExpiresAt: null, attemptCount: 0 };
+      const job = { id: crypto.randomUUID(), interviewId, status: "pending" as const, leaseOwner: null, leaseExpiresAt: null, leaseGeneration: 0, attemptCount: 0, nextAttemptAt: null };
       jobs.set(job.id, job);
       return { ...job };
     },
@@ -134,18 +184,21 @@ export function createInMemoryCompletionJobRepository(): CompletionJobRepository
     },
     async claimJob(id, owner, now, leaseMs) {
       const job = jobs.get(id);
-      if (!job || job.status === "completed" || (job.status === "running" && job.leaseExpiresAt && job.leaseExpiresAt > now)) return null;
-      Object.assign(job, { status: "running", leaseOwner: owner, leaseExpiresAt: new Date(now.getTime() + leaseMs), attemptCount: job.attemptCount + 1 });
+      if (job?.status === "running" && job.attemptCount >= MAX_COMPLETION_ATTEMPTS && (!job.leaseExpiresAt || job.leaseExpiresAt <= now)) {
+        Object.assign(job, { status: "exhausted", leaseOwner: null, leaseExpiresAt: null, nextAttemptAt: null });
+      }
+      if (!job || job.status === "completed" || job.status === "exhausted" || job.attemptCount >= MAX_COMPLETION_ATTEMPTS || (job.status === "failed" && job.nextAttemptAt && job.nextAttemptAt > now) || (job.status === "running" && job.leaseExpiresAt && job.leaseExpiresAt > now)) return null;
+      Object.assign(job, { status: "running", leaseOwner: owner, leaseExpiresAt: new Date(now.getTime() + leaseMs), leaseGeneration: job.leaseGeneration + 1, attemptCount: job.attemptCount + 1, nextAttemptAt: null });
       return { ...job };
     },
-    async renewLease(id, owner, now, leaseMs) {
+    async renewLease(id, lease, now, leaseMs) {
       const job = jobs.get(id);
-      if (!job || job.status !== "running" || job.leaseOwner !== owner) return false;
+      if (!job || job.status !== "running" || job.leaseOwner !== lease.owner || job.leaseGeneration !== lease.generation || !job.leaseExpiresAt || job.leaseExpiresAt <= now) return false;
       job.leaseExpiresAt = new Date(now.getTime() + leaseMs);
       return true;
     },
-    async releaseLease(id, owner) { const job = jobs.get(id); if (job?.leaseOwner === owner) Object.assign(job, { leaseOwner: null, leaseExpiresAt: null }); },
-    async completeJob(id, owner) { const job = jobs.get(id); if (!job || job.leaseOwner !== owner || job.status !== "running") return false; job.status = "completed"; return true; },
-    async failJob(id, owner) { const job = jobs.get(id); if (!job || job.leaseOwner !== owner || job.status !== "running") return false; job.status = "failed"; return true; },
+    async releaseLease(id, lease) { const job = jobs.get(id); if (job?.leaseOwner === lease.owner && job.leaseGeneration === lease.generation) Object.assign(job, { leaseOwner: null, leaseExpiresAt: null }); },
+    async completeJob(id, lease) { const job = jobs.get(id); const now = new Date(); if (!job || job.leaseOwner !== lease.owner || job.leaseGeneration !== lease.generation || job.status !== "running" || !job.leaseExpiresAt || job.leaseExpiresAt <= now) return false; job.status = "completed"; return true; },
+    async failJob(id, lease, _error, now) { const job = jobs.get(id); if (!job || job.leaseOwner !== lease.owner || job.leaseGeneration !== lease.generation || job.status !== "running" || !job.leaseExpiresAt || job.leaseExpiresAt <= now) return false; job.status = job.attemptCount >= MAX_COMPLETION_ATTEMPTS ? "exhausted" : "failed"; job.nextAttemptAt = job.status === "failed" ? new Date(now.getTime() + Math.min(300_000, 30_000 * (2 ** Math.max(0, job.attemptCount - 1)))) : null; return true; },
   };
 }

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse, after } from "next/server";
 import { db } from "@/lib/db";
-import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { candidateMessageRequestSchema } from "@/lib/interview/agent/api-contracts";
@@ -53,9 +53,8 @@ export async function POST(
 
 async function ownsInterview(interviewId: string, userId: string) {
   const [row] = await db.select({ id: interviews.id }).from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-    .where(and(eq(interviews.id, interviewId), eq(resumes.userId, userId)))
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .where(and(eq(interviews.id, interviewId), eq(interviewResumeSnapshots.ownerUserId, userId)))
     .limit(1);
   return Boolean(row);
 }

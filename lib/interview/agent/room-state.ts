@@ -25,6 +25,7 @@ export type AgentRoomAction =
   | { type: "candidate_submitted"; localId: string; content: string }
   | { type: "candidate_committed"; localId: string; runId: string; message: { id: string; sequence: number; content: string } }
   | { type: "candidate_failed"; localId: string }
+  | { type: "candidate_retrying"; localId: string }
   | { type: "messages_refreshed"; messages: RoomMessage[] }
   | { type: "run_accepted"; runId: string }
   | { type: "thinking_toggled"; runId: string; expanded: boolean }
@@ -53,16 +54,23 @@ export function initialAgentRoomState(messages: RoomMessage[] = [], artifacts: C
 export function agentRoomReducer(state: AgentRoomState, action: AgentRoomAction): AgentRoomState {
   switch (action.type) {
     case "candidate_submitted":
+      if (state.messages.some((message) => message.id === action.localId)) return state;
       return { ...state, messages: [...state.messages, { id: action.localId, sequence: null, role: "user", kind: "answer", content: action.content, status: "sending" }] };
-    case "candidate_committed":
+    case "candidate_committed": {
+      const alreadyDurable = state.messages.some((message) => message.id === action.message.id && message.id !== action.localId);
       return {
         ...ensureTurn(state, action.runId),
-        messages: state.messages.map((message) => message.id === action.localId
-          ? { ...message, ...action.message, runId: action.runId, status: "sent" }
-          : message),
+        messages: alreadyDurable
+          ? state.messages.filter((message) => message.id !== action.localId)
+          : state.messages.map((message) => message.id === action.localId
+            ? { ...message, ...action.message, runId: action.runId, status: "sent" }
+            : message),
       };
+    }
     case "candidate_failed":
       return { ...state, messages: state.messages.map((message) => message.id === action.localId ? { ...message, status: "failed" } : message) };
+    case "candidate_retrying":
+      return { ...state, messages: state.messages.map((message) => message.id === action.localId ? { ...message, status: "sending" } : message) };
     case "messages_refreshed": {
       const merged = new Map(state.messages.filter((message) => message.sequence !== null).map((message) => [message.id, message]));
       for (const message of action.messages) merged.set(message.id, message);

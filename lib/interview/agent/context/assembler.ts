@@ -4,8 +4,8 @@ import {
   interviewContextSnapshots,
   interviewCoverage,
   interviewMessages,
+  interviewResumeSnapshots,
   interviews,
-  resumeVersions,
 } from "@/lib/db/schema";
 import { indexResumeEvidence } from "./resume-evidence";
 import { buildPromptPipe, canonicalJson } from "./prompt-pipe";
@@ -17,6 +17,9 @@ export function assembleAgentContext(input: {
   persona: string;
   preference: string | null;
   targetRole: string | null;
+  targetRoleStatus?: string | null;
+  targetRoleConfidence?: string | null;
+  targetRoleSourceIds?: string[] | null;
   resumeOverview: string;
   evidenceDirectory: unknown;
   cacheEpoch: number;
@@ -52,6 +55,9 @@ export function assembleAgentContext(input: {
             persona: input.persona,
             preference: input.preference ?? "",
             targetRole: input.targetRole ?? "",
+            targetRoleStatus: input.targetRoleStatus ?? "",
+            targetRoleConfidence: input.targetRoleConfidence ?? "",
+            targetRoleSourceIds: input.targetRoleSourceIds ?? [],
           }),
         },
         {
@@ -124,10 +130,13 @@ export async function loadAgentContext(
       persona: interviews.persona,
       preference: interviews.preference,
       targetRole: interviews.targetRole,
-      parsedJson: resumeVersions.parsedJson,
-      extractedText: resumeVersions.extractedText,
+      targetRoleStatus: interviews.targetRoleStatus,
+      targetRoleConfidence: interviews.targetRoleConfidence,
+      targetRoleSourceIds: interviews.targetRoleSourceIds,
+      parsedJson: interviewResumeSnapshots.parsedJson,
+      extractedText: interviewResumeSnapshots.extractedText,
     }).from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
       .where(eq(interviews.id, input.interviewId))
       .limit(1),
     database.select({
@@ -171,6 +180,9 @@ export async function loadAgentContext(
     persona: interview.persona,
     preference: interview.preference,
     targetRole: interview.targetRole,
+    targetRoleStatus: interview.targetRoleStatus,
+    targetRoleConfidence: interview.targetRoleConfidence,
+    targetRoleSourceIds: interview.targetRoleSourceIds,
     resumeOverview: evidence.overview,
     evidenceDirectory: evidence.directory,
     cacheEpoch: snapshot?.cacheEpoch ?? 0,

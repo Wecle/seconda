@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { del } from "@vercel/blob";
-import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { deleteResumePreservingSnapshots } from "@/lib/interview/resume-snapshot";
 
 export async function DELETE(
   _request: NextRequest,
@@ -17,31 +16,18 @@ export async function DELETE(
 
     const { id } = await params;
 
-    const [resume] = await db
-      .select({ id: resumes.id })
-      .from(resumes)
-      .where(and(eq(resumes.id, id), eq(resumes.userId, userId)));
+    const deletion = await deleteResumePreservingSnapshots(db, {
+      resumeId: id,
+      ownerUserId: userId,
+    });
 
-    if (!resume) {
+    if (!deletion) {
       return NextResponse.json({ error: "Resume not found" }, { status: 404 });
     }
 
-    const versions = await db
-      .select({ storedPath: resumeVersions.storedPath })
-      .from(resumeVersions)
-      .where(eq(resumeVersions.resumeId, id));
-
-    await db
-      .delete(resumes)
-      .where(and(eq(resumes.id, id), eq(resumes.userId, userId)));
-
-    const blobUrls = versions
-      .map((version) => version.storedPath)
-      .filter((url): url is string => Boolean(url));
-
-    if (blobUrls.length > 0) {
+    if (deletion.length > 0) {
       try {
-        await del(blobUrls);
+        await del(deletion);
       } catch (error) {
         console.error(
           "Resume deleted from database but blob cleanup failed:",

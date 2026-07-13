@@ -7,6 +7,9 @@ const base = {
   persona: "standard",
   preference: "项目深挖",
   targetRole: "前端工程师",
+  targetRoleStatus: "inferred",
+  targetRoleConfidence: "high",
+  targetRoleSourceIds: ["project:0:abc"],
   resumeOverview: '{"title":"Frontend Engineer"}',
   evidenceDirectory: [{ id: "project:0:abc", kind: "project", label: "Seconda" }],
   cacheEpoch: 1,
@@ -28,6 +31,7 @@ test("keeps preference, checkpoint and compact coverage", () => {
   assert.equal(context.stablePrefix.includes("项目深挖"), true);
   assert.equal(context.stablePrefix.includes("此前已讨论项目背景"), true);
   assert.equal(context.stablePrefix.includes('"questionCount":2'), true);
+  assert.equal(context.stablePrefix.includes('"targetRoleStatus":"inferred"'), true);
 });
 
 test("keeps only the latest eight raw messages", () => {

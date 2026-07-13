@@ -79,6 +79,22 @@ test("requires resume evidence for resume-grounded questions", () => {
   );
 });
 
+test("allows an opening clarification without resume evidence", () => {
+  assert.deepEqual(
+    authorizeInterviewAction({
+      ...base,
+      candidateRoundCount: 0,
+      proposal: {
+        ...base.proposal,
+        action: "clarify",
+        question: "你希望重点面试前端还是全栈岗位？",
+        resumeEvidenceIds: [],
+      },
+    }),
+    { allowed: true, action: "ask" },
+  );
+});
+
 test("allows a valid follow-up in its original category", () => {
   assert.deepEqual(authorizeInterviewAction(base), {
     allowed: true,
@@ -90,13 +106,63 @@ test("authorizes an agent completion proposal", () => {
   assert.deepEqual(
     authorizeInterviewAction({
       ...base,
+      candidateRoundCount: 6,
+      categoryCounts: {
+        technical_depth: 2,
+        resume_project: 1,
+        problem_solving: 1,
+      },
+      categoryStatuses: {
+        technical_depth: "sufficient",
+        resume_project: "exhausted",
+        problem_solving: "sufficient",
+      },
       proposal: {
         action: "finish",
         category: "reflection",
         intent: "new_topic",
         resumeEvidenceIds: [],
+        finishReason: "coverage_sufficient",
       },
     }),
-    { allowed: true, action: "finish", reason: "agent_completed" },
+    { allowed: true, action: "finish", reason: "coverage_sufficient" },
   );
+});
+
+test("authorizes low information gain only after two consecutive no-follow-up assessments", () => {
+  const input: InterviewActionInput = {
+    ...base,
+    candidateRoundCount: 6,
+    categoryCounts: { introduction: 1, resume_project: 2, technical_depth: 2 },
+    consecutiveNoFollowUpAssessments: 2,
+    proposal: {
+      action: "finish",
+      category: "reflection",
+      intent: "new_topic",
+      resumeEvidenceIds: [],
+      finishReason: "low_information_gain",
+    },
+  };
+  assert.deepEqual(authorizeInterviewAction(input), {
+    allowed: true,
+    action: "finish",
+    reason: "low_information_gain",
+  });
+  assert.deepEqual(authorizeInterviewAction({
+    ...input,
+    consecutiveNoFollowUpAssessments: 1,
+  }), { allowed: false, reason: "completion_not_ready" });
+});
+
+test("rejects forged finish reasons and opening completion", () => {
+  assert.deepEqual(authorizeInterviewAction({
+    ...base,
+    requestedUserEnd: true,
+    proposal: { ...base.proposal, action: "finish", finishReason: "max_rounds" },
+  }), { allowed: false, reason: "invalid_finish_reason" });
+  assert.deepEqual(authorizeInterviewAction({
+    ...base,
+    candidateRoundCount: 0,
+    proposal: { ...base.proposal, action: "finish", finishReason: "coverage_sufficient" },
+  }), { allowed: false, reason: "opening_cannot_finish" });
 });

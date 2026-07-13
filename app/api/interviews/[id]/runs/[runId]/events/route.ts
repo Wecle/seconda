@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
 import { encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "@/lib/interview/agent/sse";
@@ -31,9 +31,8 @@ export async function GET(
   }
 
   const [owned] = await db.select({ id: interviews.id }).from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-    .where(and(eq(interviews.id, parsedParams.data.id), eq(resumes.userId, userId)))
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .where(and(eq(interviews.id, parsedParams.data.id), eq(interviewResumeSnapshots.ownerUserId, userId)))
     .limit(1);
   if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
 

@@ -30,6 +30,27 @@ test("provider schema constrains active tools and their arguments", () => {
     toolName: "get_interview_history",
     args: { limit: 10 },
   }).success, false);
+  assert.equal(schema.safeParse({
+    type: "tool_call",
+    callId: "call-4",
+    toolName: "ask_interview_question",
+    args: {
+      action: "clarify",
+      category: "introduction",
+      intent: "new_topic",
+      acknowledgement: "",
+      question: "你希望面试前端还是全栈岗位？",
+      claims: [],
+      topic: "岗位澄清",
+      resumeEvidenceIds: [],
+      targetRole: {
+        value: "前端工程师",
+        status: "inferred",
+        confidence: "low",
+        sourceIds: ["resume:raw"],
+      },
+    },
+  }).success, false);
 });
 
 test("rejects another question when deterministic policy requires completion", async () => {
@@ -82,6 +103,45 @@ test("does not expose formal scoring in the Agent tool registry", () => {
   assert.equal(registry.has("record_answer_evaluation" as never), false);
 });
 
+test("authorizes finish reasons from persisted state instead of model claims", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "finish-policy" });
+  let requestedUserEnd = false;
+  let candidateRoundCount = 0;
+  const registry = createInterviewToolRegistry({
+    handlers: Object.fromEntries(interviewToolNames.map((name) => [name, async () => ({})])) as never,
+    async loadActionInput(input) {
+      return {
+        candidateRoundCount,
+        categoryCounts: {},
+        recentQuestions: [],
+        requestedUserEnd,
+        proposal: input,
+      };
+    },
+  });
+  const definition = registry.get("finish_interview")!;
+  const context = { interviewId: "interview", runId: run.id, repository };
+  const opening = await definition.validateBusiness({
+    reason: "coverage_sufficient",
+    closingMessage: "结束",
+  }, context);
+  assert.equal(opening?.code, "OPENING_CANNOT_FINISH");
+
+  requestedUserEnd = true;
+  candidateRoundCount = 3;
+  const forged = await definition.validateBusiness({
+    reason: "max_rounds",
+    closingMessage: "结束",
+  }, context);
+  assert.equal(forged?.code, "INVALID_FINISH_REASON");
+  const valid = await definition.validateBusiness({
+    reason: "user_requested",
+    closingMessage: "结束",
+  }, context);
+  assert.equal(valid, null);
+});
+
 test("validates claim source identity without comparing prose", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "sources" });
@@ -128,4 +188,16 @@ test("validates claim source identity without comparing prose", async () => {
     claims: [{ text: "完全不同的同义改写", sourceIds: ["answer:valid"] }],
   }, context);
   assert.equal(paraphrase, null);
+
+  const missingRoleSource = await definition.validateBusiness({
+    ...baseInput,
+    claims: [],
+    targetRole: {
+      value: "后端工程师",
+      status: "confirmed",
+      confidence: "high",
+      sourceIds: ["answer:missing"],
+    },
+  }, context);
+  assert.equal(missingRoleSource?.code, "SOURCE_NOT_FOUND");
 });

@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { after, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
@@ -22,9 +22,8 @@ export async function POST(
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { id } = await params;
     const [owned] = await db.select({ id: interviews.id }).from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)))
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)))
       .limit(1);
     if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
 

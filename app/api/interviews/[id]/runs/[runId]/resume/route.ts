@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
@@ -28,12 +28,18 @@ export async function POST(
   const parsed = paramsSchema.safeParse(await params);
   if (!parsed.success) return NextResponse.json({ error: "Invalid run id" }, { status: 400 });
 
-  const [owned] = await db.select({ id: interviews.id }).from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-    .where(and(eq(interviews.id, parsed.data.id), eq(resumes.userId, userId)))
+  const [owned] = await db.select({
+    id: interviews.id,
+    status: interviews.status,
+    configVersion: interviews.configVersion,
+  }).from(interviews)
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .where(and(eq(interviews.id, parsed.data.id), eq(interviewResumeSnapshots.ownerUserId, userId)))
     .limit(1);
   if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
+  if (owned.configVersion !== 2 || owned.status !== "active") {
+    return NextResponse.json({ error: "Run resume requires an active Agent v2 interview" }, { status: 409 });
+  }
 
   const dependencies = createProductionAgentDependencies({ defer: (task) => after(task) });
   const run = await dependencies.repository.getRun(parsed.data.runId);
