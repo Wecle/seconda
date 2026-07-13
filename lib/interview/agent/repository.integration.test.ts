@@ -21,11 +21,13 @@ import { createDrizzleAgentInterviewStore } from "./drizzle-store";
 import { createDrizzleInterviewAgentRepository } from "./repository";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
 
-test("real database fences stale workers and preserves atomic idempotency under concurrency", {
+test("real database fences stale workers, notifies durable events and preserves atomic idempotency", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
 }, async () => {
   const client = postgres(process.env.DATABASE_URL!, { prepare: false });
   const db = drizzle(client, { schema });
+  let listener: ReturnType<typeof postgres> | null = null;
+  let unlisten: (() => Promise<void>) | null = null;
   const userId = randomUUID();
   const resumeId = randomUUID();
   const versionId = randomUUID();
@@ -79,6 +81,53 @@ test("real database fences stale workers and preserves atomic idempotency under 
     assert.equal(secondClaim.claimed, true);
     assert.equal(secondClaim.run?.checkpoint?.progressHash, "before-crash");
     const secondLease = { owner: "worker-b", generation: secondClaim.run!.leaseGeneration };
+
+    const notifications: Array<{ runId: string; latestSequence: number }> = [];
+    listener = postgres(process.env.DATABASE_URL!, { prepare: false });
+    const listenRequest = await listener.listen("interview_agent_events", (value) => {
+      const parsed = JSON.parse(value) as { runId?: unknown; latestSequence?: unknown };
+      if (parsed.runId === runId && typeof parsed.latestSequence === "number") {
+        notifications.push({ runId: parsed.runId, latestSequence: parsed.latestSequence });
+      }
+    });
+    unlisten = () => listenRequest.unlisten();
+    const notifiedEvent = {
+      type: "reasoning_started" as const,
+      visibility: "public" as const,
+      attemptId: "attempt-notify",
+      logicalMessageId: "message-notify",
+      payload: {
+        runId,
+        attemptId: "attempt-notify",
+        entryId: "reasoning:attempt-notify",
+      },
+      dedupeKey: "reasoning-started:attempt-notify",
+    };
+    const [firstAppend, deduplicatedAppend] = await Promise.all([
+      repository.appendEvent(runId, notifiedEvent, secondLease),
+      repository.appendEvent(runId, notifiedEvent, secondLease),
+    ]);
+    await waitUntil(() => notifications.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(firstAppend.sequence, 1);
+    assert.equal(deduplicatedAppend.sequence, 1);
+    assert.deepEqual(notifications, [{ runId, latestSequence: firstAppend.sequence }]);
+
+    await repository.appendEvent(runId, { type: "checkpoint", payload: { progress: 1 } }, secondLease);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.deepEqual(notifications, [{ runId, latestSequence: firstAppend.sequence }]);
+    const persistedEvents = await repository.listEvents(runId, 0);
+    const publicEvents = await repository.listEvents(runId, 0, { visibility: "public" });
+    assert.equal(persistedEvents.length, 2);
+    assert.equal(persistedEvents[0].runId, runId);
+    assert.equal(persistedEvents[0].attemptId, "attempt-notify");
+    assert.equal(persistedEvents[0].logicalMessageId, "message-notify");
+    assert.equal(new Date(persistedEvents[0].createdAt).toISOString(), persistedEvents[0].createdAt);
+    assert.equal(persistedEvents[1].visibility, "internal");
+    assert.equal(persistedEvents[1].attemptId, null);
+    assert.equal(persistedEvents[1].logicalMessageId, null);
+    assert.deepEqual(publicEvents.map((event) => event.type), ["reasoning_started"]);
+
     await assert.rejects(
       repository.appendEvent(runId, { type: "warning", payload: {} }, firstLease),
       /lease/i,
@@ -156,10 +205,21 @@ test("real database fences stale workers and preserves atomic idempotency under 
       await db.delete(resumes).where(eq(resumes.id, resumeId));
       await db.delete(users).where(eq(users.id, userId));
     } finally {
+      if (unlisten) await unlisten();
+      if (listener) await listener.end();
       await client.end();
     }
   }
 });
+
+async function waitUntil(predicate: () => boolean) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for the durable Agent event notification");
+}
 
 test("interview creation idempotency is scoped to the owner and immutable request", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",

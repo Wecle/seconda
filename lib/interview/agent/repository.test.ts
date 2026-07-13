@@ -123,6 +123,50 @@ test("replays only events after the supplied cursor", async () => {
   assert.deepEqual((await repository.listEvents(run.id, 1)).map((event) => event.sequence), [2, 3]);
 });
 
+test("replays only explicitly public events for SSE", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "visibility" });
+  await repository.appendEvent(run.id, {
+    type: "checkpoint",
+    visibility: "internal",
+    attemptId: null,
+    logicalMessageId: null,
+    payload: {},
+  });
+  await repository.appendEvent(run.id, {
+    type: "reasoning_delta",
+    visibility: "public",
+    attemptId: "a1",
+    logicalMessageId: "m1",
+    payload: {
+      runId: run.id,
+      attemptId: "a1",
+      entryId: "reasoning:a1",
+      text: "公开",
+    },
+  });
+
+  const events = await repository.listEvents(run.id, 0, { visibility: "public" });
+
+  assert.deepEqual(events.map((event) => event.type), ["reasoning_delta"]);
+});
+
+test("materializes a complete stable envelope for in-memory events", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "envelope" });
+  await repository.appendEvent(run.id, { type: "checkpoint", payload: { progress: 1 } });
+
+  const [first] = await repository.listEvents(run.id, 0);
+  const [replayed] = await repository.listEvents(run.id, 0);
+
+  assert.equal(first.id, replayed.id);
+  assert.equal(first.runId, run.id);
+  assert.equal(first.visibility, "internal");
+  assert.equal(first.attemptId, null);
+  assert.equal(first.logicalMessageId, null);
+  assert.equal(new Date(first.createdAt).toISOString(), first.createdAt);
+});
+
 test("allows one lease owner and supports stale takeover", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview-1", idempotencyKey: "run" });

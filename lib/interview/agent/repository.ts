@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import {
   interviewAnswerAssessments,
   interviewAgentEvents,
@@ -13,7 +13,9 @@ import {
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import type {
   AgentCheckpoint,
-  AgentEventType,
+  AgentEventInput,
+  AgentEventRecord,
+  AgentEventVisibility,
   AgentExitReason,
   InterviewAgentState,
   InterviewMessageKind,
@@ -30,11 +32,15 @@ export interface InterviewAgentRepository {
   }): Promise<{ id: string; status: "running"; created: boolean }>;
   appendEvent(
     runId: string,
-    event: { type: AgentEventType; payload: unknown; dedupeKey?: string },
+    event: AgentEventInput,
     lease?: RunLeaseToken,
   ): Promise<{ sequence: number }>;
   getRun(runId: string): Promise<AgentRunRecord | null>;
-  listEvents(runId: string, afterSequence: number): Promise<AgentEventRecord[]>;
+  listEvents(
+    runId: string,
+    afterSequence: number,
+    options?: { visibility?: AgentEventVisibility },
+  ): Promise<AgentEventRecord[]>;
   claimRun(runId: string, owner: string, now: Date, leaseMs: number): Promise<{ claimed: boolean; run: AgentRunRecord | null }>;
   renewLease(runId: string, lease: RunLeaseToken, now: Date, leaseMs: number): Promise<boolean>;
   releaseLease(runId: string, lease: RunLeaseToken): Promise<boolean>;
@@ -158,12 +164,6 @@ export type AgentRunTrigger = {
   instruction: string;
 };
 
-export type AgentEventRecord = {
-  sequence: number;
-  type: AgentEventType;
-  payload: unknown;
-};
-
 type MemoryRun = {
   id: string;
   interviewId: string;
@@ -178,6 +178,7 @@ type MemoryRun = {
   resumeCount: number;
   nextResumeAt: Date | null;
   events: AgentEventRecord[];
+  eventDedupeSequences: Map<string, number>;
   model: string | null;
   attemptId: string | null;
   attemptNumber: number;
@@ -231,6 +232,7 @@ export function createInMemoryInterviewAgentRepository(
         resumeCount: 0,
         nextResumeAt: null,
         events: [],
+        eventDedupeSequences: new Map(),
         model: null,
         attemptId: null,
         attemptNumber: 0,
@@ -246,21 +248,33 @@ export function createInMemoryInterviewAgentRepository(
       const run = requireMemoryRun(runs, runId);
       assertMemoryFence(run, lease);
       if (event.dedupeKey) {
-        const existing = run.events.find((candidate) => (
-          (candidate as AgentEventRecord & { dedupeKey?: string }).dedupeKey === event.dedupeKey
-        ));
-        if (existing) return { sequence: existing.sequence };
+        const existingSequence = run.eventDedupeSequences.get(event.dedupeKey);
+        if (existingSequence) return { sequence: existingSequence };
       }
       run.eventSequence += 1;
-      run.events.push({ sequence: run.eventSequence, ...event });
+      run.events.push({
+        id: `event-${++id}`,
+        runId,
+        sequence: run.eventSequence,
+        type: event.type,
+        visibility: event.visibility ?? "internal",
+        attemptId: event.attemptId ?? null,
+        logicalMessageId: event.logicalMessageId ?? null,
+        payload: event.payload,
+        createdAt: new Date().toISOString(),
+      });
+      if (event.dedupeKey) run.eventDedupeSequences.set(event.dedupeKey, run.eventSequence);
       return { sequence: run.eventSequence };
     },
     async getRun(runId) {
       const run = runs.get(runId);
       return run ? memoryRunRecord(run) : null;
     },
-    async listEvents(runId, afterSequence) {
-      return requireMemoryRun(runs, runId).events.filter((event) => event.sequence > afterSequence);
+    async listEvents(runId, afterSequence, options) {
+      return requireMemoryRun(runs, runId).events.filter((event) => (
+        event.sequence > afterSequence
+        && (!options?.visibility || event.visibility === options.visibility)
+      ));
     },
     async claimRun(runId, owner, now, leaseMs) {
       const run = requireMemoryRun(runs, runId);
@@ -353,9 +367,15 @@ export function createInMemoryInterviewAgentRepository(
       const completed = input.exitReason === "completed";
       run.eventSequence += 1;
       run.events.push({
+        id: `event-${++id}`,
+        runId,
         sequence: run.eventSequence,
         type: completed ? "run_completed" : "run_failed",
+        visibility: "public",
+        attemptId: null,
+        logicalMessageId: null,
         payload: buildTerminalPayload(runId, input),
+        createdAt: new Date().toISOString(),
       });
       run.status = completed ? "completed" : "failed";
       run.exitReason = input.exitReason;
@@ -534,6 +554,17 @@ function requireRunningMemoryRun(runs: Map<string, MemoryRun>, runId: string) {
 
 type AgentDatabase = typeof import("@/lib/db").db;
 
+async function notifyAgentEventAppend(
+  execute: (query: SQL) => Promise<unknown>,
+  runId: string,
+  latestSequence: number,
+) {
+  await execute(sql`SELECT pg_notify(
+    'interview_agent_events',
+    ${JSON.stringify({ runId, latestSequence })}
+  )`);
+}
+
 export function createDrizzleInterviewAgentRepository(
   database: AgentDatabase,
 ): InterviewAgentRepository {
@@ -575,6 +606,7 @@ export function createDrizzleInterviewAgentRepository(
     },
     async appendEvent(runId, event, lease) {
       return database.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${runId}))`);
         const [writableRun] = await tx.select({ id: interviewAgentRuns.id })
           .from(interviewAgentRuns)
           .where(runFenceCondition(runId, lease))
@@ -599,13 +631,20 @@ export function createDrizzleInterviewAgentRepository(
           .where(runFenceCondition(runId, lease))
           .returning({ sequence: interviewAgentRuns.lastEventSequence });
         if (!run) throw new Error(`Unknown run: ${runId}`);
+        const visibility = event.visibility ?? "internal";
         await tx.insert(interviewAgentEvents).values({
           runId,
           sequence: run.sequence,
           dedupeKey: event.dedupeKey,
+          attemptId: event.attemptId ?? null,
+          logicalMessageId: event.logicalMessageId ?? null,
+          visibility,
           type: event.type,
           payload: event.payload,
         });
+        if (visibility === "public") {
+          await notifyAgentEventAppend((query) => tx.execute(query), runId, run.sequence);
+        }
         return run;
       });
     },
@@ -626,15 +665,32 @@ export function createDrizzleInterviewAgentRepository(
       }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
       return run ? parseRunRecord(run) : null;
     },
-    async listEvents(runId, afterSequence) {
+    async listEvents(runId, afterSequence, options) {
       const rows = await database.select({
+        id: interviewAgentEvents.id,
+        runId: interviewAgentEvents.runId,
         sequence: interviewAgentEvents.sequence,
         type: interviewAgentEvents.type,
+        visibility: interviewAgentEvents.visibility,
+        attemptId: interviewAgentEvents.attemptId,
+        logicalMessageId: interviewAgentEvents.logicalMessageId,
         payload: interviewAgentEvents.payload,
+        createdAt: interviewAgentEvents.createdAt,
       }).from(interviewAgentEvents)
-        .where(and(eq(interviewAgentEvents.runId, runId), sql`${interviewAgentEvents.sequence} > ${afterSequence}`))
+        .where(and(
+          eq(interviewAgentEvents.runId, runId),
+          gt(interviewAgentEvents.sequence, afterSequence),
+          options?.visibility
+            ? eq(interviewAgentEvents.visibility, options.visibility)
+            : undefined,
+        ))
         .orderBy(asc(interviewAgentEvents.sequence));
-      return rows as AgentEventRecord[];
+      return rows.map((row) => ({
+        ...row,
+        type: row.type as AgentEventRecord["type"],
+        visibility: row.visibility as AgentEventVisibility,
+        createdAt: row.createdAt.toISOString(),
+      }));
     },
     async claimRun(runId, owner, now, leaseMs) {
       const expiresAt = new Date(now.getTime() + leaseMs);
@@ -853,9 +909,13 @@ export function createDrizzleInterviewAgentRepository(
         await tx.insert(interviewAgentEvents).values({
           runId,
           sequence: updated.sequence,
+          attemptId: null,
+          logicalMessageId: null,
+          visibility: "public",
           type: completed ? "run_completed" : "run_failed",
           payload: buildTerminalPayload(runId, input),
         });
+        await notifyAgentEventAppend((query) => tx.execute(query), runId, updated.sequence);
         return {
           status: completed ? "completed" as const : "failed" as const,
           eventSequence: updated.sequence,
@@ -1106,12 +1166,16 @@ export function createDrizzleInterviewAgentRepository(
             runId: run.id,
             sequence: invalidated.sequence,
             dedupeKey: "terminal",
+            attemptId: null,
+            logicalMessageId: null,
+            visibility: "public",
             type: "run_failed",
             payload: buildTerminalPayload(run.id, {
               exitReason: "aborted_tools",
               userMessage: "用户已结束面试。",
             }),
           });
+          await notifyAgentEventAppend((query) => tx.execute(query), run.id, invalidated.sequence);
           invalidatedRunIds.push(run.id);
         }
         return { changed: true, invalidatedRunIds };
