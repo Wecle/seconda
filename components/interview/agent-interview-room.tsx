@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useReducer, useState } from "react";
+import { useCallback, useMemo, useReducer, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, FileText, Loader2, LogOut, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -11,6 +11,7 @@ import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
 import { AgentThinkingPanel } from "./agent-thinking-panel";
 import { AgentArtifactCard } from "./agent-artifact-card";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
+import { buildInterviewRoomTimeline } from "./interview-room-timeline";
 import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent } from "@/lib/interview/agent/room-state";
 import type { CommittedArtifact, PublicThinkingEntry } from "@/lib/interview/agent/contracts";
@@ -167,16 +168,23 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   };
 
   const completed = ["completing", "scoring", "reporting", "completed", "failed"].includes(interviewStatus);
-  const userRunIds = new Set(room.messages.filter((message) => message.role === "user" && message.runId).map((message) => message.runId));
+  const timeline = useMemo(() => buildInterviewRoomTimeline(room.messages), [room.messages]);
   const renderTurn = (runId: string) => {
     const turn = room.turns[runId];
     if (!turn) return null;
-    return <div className="space-y-4" key={`turn:${runId}`}>
+    return <div className="space-y-3">
       <AgentThinkingPanel thinking={turn.thinking} active={busy && run?.id === runId && !turn.responseStarted} onToggle={(expanded) => dispatch({ type: "thinking_toggled", runId, expanded })} />
       {turn.artifacts.map((artifact) => <AgentArtifactCard key={artifact.artifactId} artifact={artifact} />)}
       {turn.provisional && <div className="max-w-[86%] rounded-2xl rounded-bl-md border bg-card px-5 py-4 opacity-80"><ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.provisional}</ReactMarkdown></div>}
     </div>;
   };
+  const renderMessage = (message: typeof room.messages[number]) => (
+    <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"} key={message.id}>
+      <div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+      </div>
+    </div>
+  );
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex h-16 items-center justify-between border-b px-6">
@@ -185,13 +193,13 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       </header>
 
       <main className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col">
-        <div className="flex-1 space-y-6 overflow-y-auto px-6 py-8">
-          {room.messages.map((message) => <div className="contents" key={message.id}>
-            {message.role === "assistant" && message.runId && !userRunIds.has(message.runId) ? renderTurn(message.runId) : null}
-            <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}><div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}><ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown></div></div>
-            {message.role === "user" && message.runId ? renderTurn(message.runId) : null}
+        <div className="flex-1 space-y-7 overflow-y-auto px-6 py-8">
+          {timeline.map((group) => <div className="space-y-3" key={group.key}>
+            {group.beforeTurn.map(renderMessage)}
+            {group.runId ? renderTurn(group.runId) : null}
+            {group.afterTurn.map(renderMessage)}
           </div>)}
-          {busy && run?.id && !room.messages.some((message) => message.runId === run.id) ? renderTurn(run.id) : null}
+          {busy && run?.id && !room.messages.some((message) => message.runId === run.id) ? <div className="space-y-3">{renderTurn(run.id)}</div> : null}
           {busy && !run?.id && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
           {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接正在恢复，已接收的正式消息不会丢失。</p>}
           {connectionState === "manual_retry" && <Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button>}
