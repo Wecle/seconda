@@ -65,3 +65,21 @@ test("uses full jitter capped at eight seconds", async () => {
   assert.ok(delays[0] >= 0 && delays[0] < 500);
   assert.ok(delays[1] >= 0 && delays[1] < 1000);
 });
+
+test("continues attempt numbers from the persisted offset", async () => {
+  const started: number[] = [];
+  const result = await runAgentAttempts({
+    candidates: [{ model: "fast" }],
+    attemptNumberOffset: 7,
+    classifyError: () => "fatal",
+    createId: (_model, number) => `attempt-${number}`,
+    onAttemptStarted: async ({ attemptNumber }) => {
+      started.push(attemptNumber);
+    },
+    attempt: async ({ attemptNumber }) => attemptNumber,
+  });
+
+  assert.equal(result.value, 8);
+  assert.equal(result.attemptNumber, 8);
+  assert.deepEqual(started, [8]);
+});

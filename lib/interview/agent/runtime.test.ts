@@ -460,11 +460,12 @@ test("commits the same message identity used by provisional deltas", async () =>
   assert.ok(types.indexOf("text_delta") < types.indexOf("message_committed"));
 });
 
-test("keeps provider attempts local to each logical model call", async () => {
+test("continues persisted provider attempts across logical model calls", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "attempt-local" });
   let attempts = 0;
   let logicalCalls = 0;
+  const offsets: number[] = [];
   const result = await runInterviewAgent({
     interviewId: "interview",
     runId: run.id,
@@ -473,13 +474,15 @@ test("keeps provider attempts local to each logical model call", async () => {
       async nextStep() { throw new Error("unused"); },
       async nextStepStream(input) {
         logicalCalls += 1;
+        offsets.push(input.attemptNumberOffset ?? 0);
         const attemptsForCall = logicalCalls === 5 ? 1 : 3;
         for (let index = 0; index < attemptsForCall; index += 1) {
           attempts += 1;
+          const attemptNumber = (input.attemptNumberOffset ?? 0) + index + 1;
           await input.onAttemptStarted?.({
             model: "fast",
-            attemptId: `attempt-${attempts}`,
-            attemptNumber: attempts,
+            attemptId: `attempt-${attemptNumber}`,
+            attemptNumber,
             provisionalMessageId: `message-${index}`,
           });
         }
@@ -503,6 +506,63 @@ test("keeps provider attempts local to each logical model call", async () => {
   assert.equal(result.exitReason, "completed");
   assert.equal(result.turnCount, 4);
   assert.equal(attempts, 13);
+  assert.deepEqual(offsets, [0, 3, 6, 9, 12]);
+  assert.equal(repository.inspectRun(run.id)?.attemptNumber, 13);
+});
+
+test("continues attempt numbers after a persisted run recovery", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "attempt-recovery",
+  });
+  const claimed = await repository.claimRun(run.id, "worker", new Date(0), 60_000);
+  const lease = { owner: "worker", generation: claimed.run!.leaseGeneration };
+  await repository.startAttempt(run.id, {
+    model: "fast",
+    attemptId: "attempt-7",
+    attemptNumber: 7,
+    provisionalMessageId: "message-7",
+    now: new Date(1),
+  }, lease);
+  let observedOffset = -1;
+
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    lease,
+    model: {
+      async nextStep() { throw new Error("unused"); },
+      async nextStepStream(input) {
+        observedOffset = input.attemptNumberOffset ?? 0;
+        await input.onAttemptStarted?.({
+          model: "fast",
+          attemptId: "attempt-8",
+          attemptNumber: observedOffset + 1,
+          provisionalMessageId: "message-8",
+        });
+        return {
+          step: {
+            type: "tool_call" as const,
+            callId: "ask",
+            toolName: "ask_interview_question",
+            args: {},
+          },
+          attemptId: "attempt-8",
+          provisionalMessageId: "message-8",
+        };
+      },
+    },
+    tools: new Map([["ask_interview_question", tool("ask_interview_question")]]),
+    initialMessages: [],
+    signal: new AbortController().signal,
+    progressHash: () => "recovered",
+  });
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(observedOffset, 7);
+  assert.equal(repository.inspectRun(run.id)?.attemptNumber, 8);
 });
 
 test("maps provider exceptions separately from aborted streaming", async () => {
