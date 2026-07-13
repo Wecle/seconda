@@ -5,6 +5,7 @@ import type { AgentModelStep } from "./contracts";
 import { createInMemoryInterviewAgentRepository } from "./repository";
 import type { InterviewToolDefinition } from "./tool-pipeline";
 import { runInterviewAgent } from "./runtime";
+import { createInterviewToolRegistry } from "./tool-registry";
 
 function tool(name: string): InterviewToolDefinition<unknown, unknown> {
   return {
@@ -69,33 +70,25 @@ test("enters terminal phase after fifteen planning tools and still asks", async 
   assert.equal(modelCalls, 16);
 });
 
-test("does not count an early terminal action as a planning step", async () => {
-  const { result, modelCalls } = await fixture([
-    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: {} },
-  ]);
-  assert.equal(result.exitReason, "completed");
-  assert.equal(result.turnCount, 0);
-  assert.equal(modelCalls, 1);
-});
-
-test("restores planning tools after an early terminal action needs evidence repair", async () => {
+test("keeps terminal-only tools after planning exhaustion and a failed terminal action", async () => {
   const repository = createInMemoryInterviewAgentRepository();
-  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-repair" });
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-boundary" });
   const ask = tool("ask_interview_question");
-  ask.validateBusiness = async (input) => (
-    (input as { resumeEvidenceIds?: string[] }).resumeEvidenceIds?.length
-      ? null
-      : {
-          code: "MISSING_EVIDENCE",
-          message: "问题缺少有效的简历证据引用。",
-          retryable: false,
-          suggestion: "先调用 get_resume_evidence。",
-        }
-  );
+  ask.validateBusiness = async () => ({
+    code: "MISSING_EVIDENCE",
+    message: "missing",
+    retryable: false,
+  });
+  const planning = Array.from({ length: 15 }, (_, index) => ({
+    type: "tool_call" as const,
+    callId: `plan-${index}`,
+    toolName: ["get_coverage_state", "get_interview_history", "get_resume_evidence"][index % 3],
+    args: { index },
+  }));
   const steps: AgentModelStep[] = [
-    { type: "tool_call", callId: "ask-missing", toolName: "ask_interview_question", args: {} },
-    { type: "tool_call", callId: "load-evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["project:3"] } },
-    { type: "tool_call", callId: "ask-grounded", toolName: "ask_interview_question", args: { resumeEvidenceIds: ["project:3"] } },
+    ...planning,
+    { type: "tool_call", callId: "ask-failed", toolName: "ask_interview_question", args: {} },
+    { type: "tool_call", callId: "finish", toolName: "finish_interview", args: {} },
   ];
   const offeredTools: string[][] = [];
   let index = 0;
@@ -111,6 +104,8 @@ test("restores planning tools after an early terminal action needs evidence repa
       },
     },
     tools: new Map([
+      ["get_coverage_state", tool("get_coverage_state")],
+      ["get_interview_history", tool("get_interview_history")],
       ["get_resume_evidence", tool("get_resume_evidence")],
       ["ask_interview_question", ask],
       ["finish_interview", tool("finish_interview")],
@@ -121,8 +116,99 @@ test("restores planning tools after an early terminal action needs evidence repa
   });
 
   assert.equal(result.exitReason, "completed");
+  assert.deepEqual(offeredTools[16].sort(), ["ask_interview_question", "finish_interview"]);
+  assert.equal(offeredTools[16].includes("get_resume_evidence"), false);
+});
+
+test("does not count an early terminal action as a planning step", async () => {
+  const { result, modelCalls } = await fixture([
+    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: {} },
+  ]);
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 0);
+  assert.equal(modelCalls, 1);
+});
+
+test("restores planning tools after an early terminal action needs evidence repair", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-repair" });
+  const executedTools: string[] = [];
+  const handlers: Parameters<typeof createInterviewToolRegistry>[0]["handlers"] = {
+    async get_resume_evidence(input) {
+      executedTools.push("get_resume_evidence");
+      return { requested: input };
+    },
+    async ask_interview_question(input) {
+      executedTools.push("ask_interview_question");
+      return { accepted: true, input };
+    },
+    async get_interview_history() { throw new Error("unexpected get_interview_history"); },
+    async get_coverage_state() { throw new Error("unexpected get_coverage_state"); },
+    async update_coverage() { throw new Error("unexpected update_coverage"); },
+    async finish_interview() { throw new Error("unexpected finish_interview"); },
+  };
+  const registry = createInterviewToolRegistry({
+    handlers,
+    async loadActionInput(input) {
+      return {
+        candidateRoundCount: 1,
+        categoryCounts: {},
+        recentQuestions: [],
+        requestedUserEnd: false,
+        proposal: {
+          action: input.action,
+          category: input.category,
+          intent: input.intent,
+          question: input.question,
+          resumeEvidenceIds: input.resumeEvidenceIds,
+        },
+      };
+    },
+  });
+  const questionInput = {
+    action: "ask" as const,
+    category: "technical_depth" as const,
+    intent: "follow_up" as const,
+    acknowledgement: "你介绍了智能审批项目。",
+    question: "请说明审批链路的数据一致性如何保证？",
+    claims: [],
+    topic: "审批一致性",
+  };
+  const steps: AgentModelStep[] = [
+    { type: "tool_call", callId: "ask-missing", toolName: "ask_interview_question", args: { ...questionInput, resumeEvidenceIds: [] } },
+    { type: "tool_call", callId: "load-evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["project:3"] } },
+    { type: "tool_call", callId: "ask-grounded", toolName: "ask_interview_question", args: { ...questionInput, resumeEvidenceIds: ["project:3"] } },
+  ];
+  const offeredTools: string[][] = [];
+  let index = 0;
+
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep(input) {
+        offeredTools.push(input.tools.map(({ name }) => name));
+        return steps[index++];
+      },
+    },
+    tools: registry,
+    initialMessages: [{ role: "user", content: "回答" }],
+    signal: new AbortController().signal,
+    progressHash: () => String(index),
+  });
+
+  assert.equal(result.exitReason, "completed");
   assert.equal(result.turnCount, 1);
   assert.ok(offeredTools[1].includes("get_resume_evidence"));
+  assert.deepEqual(executedTools, ["get_resume_evidence", "ask_interview_question"]);
+  const firstAskCompletion = (await repository.listEvents(run.id, 0)).find((event) => {
+    const payload = event.payload as { toolName?: string };
+    return event.type === "tool_call_completed" && payload.toolName === "ask_interview_question";
+  });
+  assert.equal((firstAskCompletion?.payload as {
+    result?: { error?: { code?: string } };
+  }).result?.error?.code, "MISSING_EVIDENCE");
   assert.equal(repository.inspectRun(run.id)?.checkpoint?.terminalAttemptCount, 2);
 });
 
@@ -133,7 +219,7 @@ test("allows one terminal action and two repairs", async () => {
     message: "missing",
     retryable: true,
   });
-  const { result, modelCalls } = await fixture(Array.from({ length: 4 }, (_, index) => ({
+  const { result, repository, run, modelCalls } = await fixture(Array.from({ length: 4 }, (_, index) => ({
     type: "tool_call" as const,
     callId: `terminal-${index}`,
     toolName: "ask_interview_question",
@@ -142,6 +228,7 @@ test("allows one terminal action and two repairs", async () => {
   assert.equal(result.exitReason, "terminal_action_failed");
   assert.equal(result.turnCount, 0);
   assert.equal(modelCalls, 3);
+  assert.equal(repository.inspectRun(run.id)?.checkpoint?.terminalAttemptCount, 3);
 });
 
 test("moves repeated invalid model output to terminal failure without consuming planning", async () => {
