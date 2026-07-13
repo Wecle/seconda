@@ -4,8 +4,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
+import { getPostgresAgentEventWakeHub } from "@/lib/interview/agent/postgres-wake-hub";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
-import { encodeSseEvent, pollAgentEvents, resolveReplayCursor } from "@/lib/interview/agent/sse";
+import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/sse";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 const paramsSchema = z.object({
@@ -43,11 +44,13 @@ export async function GET(
   }
 
   const encoder = new TextEncoder();
+  const wakeHub = getPostgresAgentEventWakeHub();
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       try {
-        for await (const event of pollAgentEvents({
+        for await (const event of streamAgentEvents({
           repository,
+          wakeHub,
           runId: run.id,
           afterSequence: resolveReplayCursor(parsedAfter.data, parsedLastEventId.data),
           signal: request.signal,
@@ -55,8 +58,11 @@ export async function GET(
             process.env.INTERVIEW_AGENT_HEARTBEAT_MS,
             10_000,
           ),
+          fallbackMs: readPositiveInteger(
+            process.env.INTERVIEW_AGENT_EVENT_FALLBACK_MS,
+            1_500,
+          ),
         })) {
-          if ("type" in event && !PUBLIC_STREAM_EVENTS.has(event.type)) continue;
           controller.enqueue(encoder.encode(encodeSseEvent(event)));
         }
       } finally {
@@ -73,12 +79,6 @@ export async function GET(
     },
   });
 }
-
-const PUBLIC_STREAM_EVENTS = new Set([
-  "heartbeat", "thinking_started", "thinking_summary", "response_started", "artifact_committed",
-  "text_delta", "warning", "message_committed", "run_completed", "run_failed",
-  "scoring_progress", "reporting_started",
-]);
 
 function readPositiveInteger(value: string | undefined, fallback: number) {
   const parsed = Number(value);
