@@ -17,9 +17,25 @@ import {
   users,
 } from "@/lib/db/schema";
 import { createDrizzleCompletionJobRepository } from "../completion/repository";
+import type { AgentEventInput } from "./contracts";
 import { createDrizzleAgentInterviewStore } from "./drizzle-store";
 import { createDrizzleInterviewAgentRepository } from "./repository";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
+
+function publicReasoningEvent(
+  runId: string,
+  attemptId: string,
+  logicalMessageId: string,
+  text: string,
+): AgentEventInput {
+  return {
+    type: "reasoning_delta",
+    visibility: "public",
+    attemptId,
+    logicalMessageId,
+    payload: { runId, attemptId, entryId: `reasoning:${attemptId}`, text },
+  };
+}
 
 test("real database fences stale workers, notifies durable events and preserves atomic idempotency", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
@@ -85,9 +101,13 @@ test("real database fences stale workers, notifies durable events and preserves 
     const notifications: Array<{ runId: string; latestSequence: number }> = [];
     listener = postgres(process.env.DATABASE_URL!, { prepare: false });
     const listenRequest = await listener.listen("interview_agent_events", (value) => {
-      const parsed = JSON.parse(value) as { runId?: unknown; latestSequence?: unknown };
-      if (parsed.runId === runId && typeof parsed.latestSequence === "number") {
-        notifications.push({ runId: parsed.runId, latestSequence: parsed.latestSequence });
+      try {
+        const parsed = JSON.parse(value) as { runId?: unknown; latestSequence?: unknown };
+        if (parsed.runId === runId && typeof parsed.latestSequence === "number") {
+          notifications.push({ runId: parsed.runId, latestSequence: parsed.latestSequence });
+        }
+      } catch {
+        return;
       }
     });
     unlisten = () => listenRequest.unlisten();
@@ -128,8 +148,46 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(persistedEvents[1].logicalMessageId, null);
     assert.deepEqual(publicEvents.map((event) => event.type), ["reasoning_started"]);
 
+    const firstReasoning = await repository.appendEvent(
+      runId,
+      publicReasoningEvent(runId, "attempt-replay", "message-replay", "甲"),
+      secondLease,
+    );
+    const secondReasoning = await repository.appendEvent(
+      runId,
+      publicReasoningEvent(runId, "attempt-replay", "message-replay", "乙"),
+      secondLease,
+    );
+    const replayedReasoning = await repository.listEvents(
+      runId,
+      firstReasoning.sequence,
+      { visibility: "public" },
+    );
+    assert.deepEqual(
+      replayedReasoning.map((event) => ({
+        sequence: event.sequence,
+        attemptId: event.attemptId,
+        logicalMessageId: event.logicalMessageId,
+        payload: event.payload,
+      })),
+      [{
+        sequence: secondReasoning.sequence,
+        attemptId: "attempt-replay",
+        logicalMessageId: "message-replay",
+        payload: {
+          runId,
+          attemptId: "attempt-replay",
+          entryId: "reasoning:attempt-replay",
+          text: "乙",
+        },
+      }],
+    );
     await assert.rejects(
-      repository.appendEvent(runId, { type: "warning", payload: {} }, firstLease),
+      repository.appendEvent(
+        runId,
+        publicReasoningEvent(runId, "attempt-stale", "message-replay", "丙"),
+        firstLease,
+      ),
       /lease/i,
     );
 
@@ -205,9 +263,15 @@ test("real database fences stale workers, notifies durable events and preserves 
       await db.delete(resumes).where(eq(resumes.id, resumeId));
       await db.delete(users).where(eq(users.id, userId));
     } finally {
-      if (unlisten) await unlisten();
-      if (listener) await listener.end();
-      await client.end();
+      try {
+        if (unlisten) await unlisten();
+      } finally {
+        try {
+          if (listener) await listener.end();
+        } finally {
+          await client.end();
+        }
+      }
     }
   }
 });

@@ -23,7 +23,7 @@ async function main() {
       exitReason,
       error: new Error(`Injected ${exitReason}`),
     });
-    const terminalEvents = (await repository.listEvents(run.id, 0)).filter(
+    const terminalEvents = (await repository.listEvents(run.id, 0, { visibility: "public" })).filter(
       (event) => event.type === "run_completed" || event.type === "run_failed",
     );
     assert.equal(terminalEvents.length, 1, `${exitReason} terminal event count`);
