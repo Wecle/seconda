@@ -85,8 +85,8 @@ export function createInterviewToolRegistry(options: {
     evidenceIds: readonly string[],
     context: InterviewToolContext,
   ) => Promise<string[]>;
-  validateGroundedResponse?: (
-    input: z.infer<typeof interviewToolInputSchemas.ask_interview_question>,
+  validateClaimSourceIds?: (
+    sourceIds: readonly string[],
     context: InterviewToolContext,
   ) => Promise<string[]>;
 }): InterviewToolRegistry {
@@ -118,14 +118,15 @@ export function createInterviewToolRegistry(options: {
         }
         if (name !== "ask_interview_question") return null;
         const questionInput = input as z.infer<typeof interviewToolInputSchemas.ask_interview_question>;
-        if (options.validateGroundedResponse) {
-          const unsupported = await options.validateGroundedResponse(questionInput, context);
-          if (unsupported.length > 0) {
+        const sourceIds = [...new Set(questionInput.claims.flatMap((claim) => claim.sourceIds))];
+        if (options.validateClaimSourceIds && sourceIds.length > 0) {
+          const missing = await options.validateClaimSourceIds(sourceIds, context);
+          if (missing.length > 0) {
             return {
-              code: "UNSUPPORTED_FACT",
-              message: `候选人可见内容包含无来源事实：${unsupported.join("；")}`,
+              code: "SOURCE_NOT_FOUND",
+              message: `引用来源不存在：${missing.join(", ")}`,
               retryable: true,
-              suggestion: "删除无来源陈述，或改成询问句；只引用已加载简历证据或候选人回答原文。",
+              suggestion: "只使用 Prompt 或工具结果中返回的简历证据 ID 和 answer:消息ID。",
             };
           }
         }
