@@ -37,11 +37,23 @@ export const terminalRunPayloadSchema = z.object({
   userMessage: z.string().min(1).max(500),
 }).strict();
 
+export const agentEventVisibilitySchema = z.enum(["public", "internal"]);
+
 export const agentEventTypeSchema = z.enum([
   "run_started",
+  "phase_changed",
+  "attempt_started",
+  "attempt_discarded",
   "thinking_started",
   "thinking_summary",
+  "reasoning_started",
+  "reasoning_delta",
+  "reasoning_completed",
+  "proposal_authorized",
   "response_started",
+  "response_delta",
+  "response_finished",
+  "response_discarded",
   "artifact_committed",
   "scoring_progress",
   "reporting_started",
@@ -56,6 +68,34 @@ export const agentEventTypeSchema = z.enum([
   "run_completed",
   "run_failed",
 ]);
+
+export type AgentEventType = z.infer<typeof agentEventTypeSchema>;
+
+export const publicAgentEventTypes = [
+  "run_started",
+  "phase_changed",
+  "attempt_started",
+  "attempt_discarded",
+  "reasoning_started",
+  "reasoning_delta",
+  "reasoning_completed",
+  "tool_call_started",
+  "tool_call_completed",
+  "proposal_authorized",
+  "response_started",
+  "response_delta",
+  "response_finished",
+  "response_discarded",
+  "artifact_committed",
+  "scoring_progress",
+  "reporting_started",
+  "message_committed",
+  "run_completed",
+  "run_failed",
+] as const satisfies readonly AgentEventType[];
+
+export const publicAgentEventTypeSchema = z.enum(publicAgentEventTypes);
+export type PublicAgentEventType = (typeof publicAgentEventTypes)[number];
 
 export const interviewMessageRoleSchema = z.enum([
   "user",
@@ -142,15 +182,111 @@ export const textDeltaPayloadSchema = z.object({
   provisional: z.literal(true),
 }).strict();
 
-export const messageCommittedPayloadSchema = z.object({
+export const runStartedPayloadSchema = z.object({
   runId: z.string().min(1),
-  messageId: z.string().min(1),
-  messageSequence: z.number().int().min(1),
+  logicalMessageId: z.string().min(1).nullable(),
+}).strict();
+
+export const publicAgentPhaseSchema = z.enum([
+  "accepted",
+  "reasoning",
+  "tool_running",
+  "proposal_streaming",
+  "authorized",
+  "responding",
+  "validating",
+  "committing",
+  "repairing",
+  "acting",
+  "scoring",
+  "reporting",
+]);
+
+export const phaseChangedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1).nullable(),
+  phase: publicAgentPhaseSchema,
+}).strict();
+
+export const attemptStartedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  attemptNumber: z.number().int().positive(),
+}).strict();
+
+export const attemptDiscardedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  reason: z.string().min(1).max(100),
+}).strict();
+
+const reasoningLifecyclePayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  entryId: z.string().min(1).max(200),
+}).strict();
+
+export const reasoningStartedPayloadSchema = reasoningLifecyclePayloadSchema;
+
+export const reasoningDeltaPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  entryId: z.string().min(1).max(200),
+  text: z.string().min(1),
+}).strict();
+
+export const reasoningCompletedPayloadSchema = reasoningLifecyclePayloadSchema;
+
+const toolCallLifecyclePayloadBaseSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  toolCallId: z.string().min(1),
+  toolName: z.enum([
+    "get_resume_evidence",
+    "get_interview_history",
+    "get_coverage_state",
+  ]),
+  publicLabel: z.string().min(1).max(100),
+});
+
+export const toolCallStartedPayloadSchema = toolCallLifecyclePayloadBaseSchema.strict();
+export const toolCallCompletedPayloadSchema = toolCallLifecyclePayloadBaseSchema.strict();
+
+export const proposalAuthorizedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  proposalHash: z.string().regex(/^[a-f0-9]{64}$/),
 }).strict();
 
 export const responseStartedPayloadSchema = z.object({
   runId: z.string().min(1),
-  messageId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+}).strict();
+
+export const responseDeltaPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  text: z.string().min(1),
+  provisional: z.literal(true),
+}).strict();
+
+export const responseFinishedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  characterCount: z.number().int().min(0),
+}).strict();
+
+export const responseDiscardedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  reason: z.string().min(1).max(100),
 }).strict();
 
 export const thinkingSummaryPayloadSchema = z.object({
@@ -167,6 +303,70 @@ export const artifactCommittedPayloadSchema = z.object({
   title: z.string().min(1).max(100),
   summary: z.string().min(1).max(500),
   details: z.array(z.string().min(1).max(300)).max(10).default([]),
+}).strict();
+
+export const scoringProgressPayloadSchema = z.object({
+  runId: z.string().min(1),
+  total: z.number().int().min(0),
+  pending: z.number().int().min(0),
+  scoring: z.number().int().min(0),
+  scored: z.number().int().min(0),
+  failed: z.number().int().min(0),
+}).strict();
+
+export const reportingStartedPayloadSchema = z.object({
+  runId: z.string().min(1),
+}).strict();
+
+export const committedInterviewMessageSchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  sequence: z.number().int().min(1),
+  role: z.literal("assistant"),
+  kind: z.enum(["opening", "question", "finish", "clarification"]),
+  content: z.string().min(1),
+}).strict();
+
+export const messageCommittedPayloadSchema = z.object({
+  runId: z.string().min(1),
+  attemptId: z.string().min(1),
+  logicalMessageId: z.string().min(1),
+  message: committedInterviewMessageSchema,
+}).strict();
+
+export const publicAgentEventPayloadSchemas = {
+  run_started: runStartedPayloadSchema,
+  phase_changed: phaseChangedPayloadSchema,
+  attempt_started: attemptStartedPayloadSchema,
+  attempt_discarded: attemptDiscardedPayloadSchema,
+  reasoning_started: reasoningStartedPayloadSchema,
+  reasoning_delta: reasoningDeltaPayloadSchema,
+  reasoning_completed: reasoningCompletedPayloadSchema,
+  tool_call_started: toolCallStartedPayloadSchema,
+  tool_call_completed: toolCallCompletedPayloadSchema,
+  proposal_authorized: proposalAuthorizedPayloadSchema,
+  response_started: responseStartedPayloadSchema,
+  response_delta: responseDeltaPayloadSchema,
+  response_finished: responseFinishedPayloadSchema,
+  response_discarded: responseDiscardedPayloadSchema,
+  artifact_committed: artifactCommittedPayloadSchema,
+  scoring_progress: scoringProgressPayloadSchema,
+  reporting_started: reportingStartedPayloadSchema,
+  message_committed: messageCommittedPayloadSchema,
+  run_completed: terminalRunPayloadSchema,
+  run_failed: terminalRunPayloadSchema,
+} as const satisfies Record<PublicAgentEventType, z.ZodType>;
+
+export const agentEventRecordSchema = z.object({
+  id: z.string().min(1),
+  runId: z.string().min(1),
+  sequence: z.number().int().min(1),
+  type: agentEventTypeSchema,
+  visibility: agentEventVisibilitySchema,
+  attemptId: z.string().min(1).nullable(),
+  logicalMessageId: z.string().min(1).nullable(),
+  payload: z.unknown().nonoptional(),
+  createdAt: z.string().datetime(),
 }).strict();
 
 export const persistedAgentStreamEventSchema = z.object({
@@ -220,7 +420,17 @@ export type QuestionCategory = z.infer<typeof questionCategorySchema>;
 export type AgentRunStatus = z.infer<typeof agentRunStatusSchema>;
 export type AgentExitReason = z.infer<typeof agentExitReasonSchema>;
 export type TerminalRunPayload = z.infer<typeof terminalRunPayloadSchema>;
-export type AgentEventType = z.infer<typeof agentEventTypeSchema>;
+export type AgentEventVisibility = z.infer<typeof agentEventVisibilitySchema>;
+export type AgentEventRecord = z.infer<typeof agentEventRecordSchema>;
+export type AgentEventInput = Omit<
+  AgentEventRecord,
+  "id" | "runId" | "sequence" | "visibility" | "attemptId" | "logicalMessageId" | "createdAt"
+> & {
+  visibility?: AgentEventVisibility;
+  attemptId?: string | null;
+  logicalMessageId?: string | null;
+  dedupeKey?: string;
+};
 export type InterviewMessageRole = z.infer<typeof interviewMessageRoleSchema>;
 export type InterviewMessageKind = z.infer<typeof interviewMessageKindSchema>;
 export type CoverageStatus = z.infer<typeof coverageStatusSchema>;
