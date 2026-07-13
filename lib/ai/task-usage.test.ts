@@ -41,26 +41,13 @@ test("routes every non-streaming business task through the shared generator", as
   }
 });
 
-test("routes streamed next-question generation through the shared generator", async () => {
+test("does not retain streamed legacy next-question generation", async () => {
   const route = await readFile(
     `${root}/app/api/interviews/[id]/next-question/route.ts`,
     "utf8",
   );
   const body = exportedFunction(route, "POST");
 
-  for (const value of [
-    "streamStructured",
-    'task: "question.generate"',
-    "schema: generatedQuestionSchema",
-    "abortSignal: request.signal",
-    "isUsableQuestionPartial",
-    "validateGeneratedQuestion",
-  ]) {
-    assert.equal(body.includes(value), true, `missing ${value}`);
-  }
-
-  assert.doesNotMatch(
-    body,
-    new RegExp(["chat" + "LanguageModel", "stream" + "Text\\s*\\(", "Output\\.object"].join("|")),
-  );
+  assert.match(body, /legacyInterviewReadOnlyResponse/);
+  assert.doesNotMatch(body, /streamStructured|question\.generate|generatedQuestionSchema/);
 });

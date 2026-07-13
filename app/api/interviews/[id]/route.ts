@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { interviewAgentEvents, interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviewQuestions, interviewResumeSnapshots, interviews, questionScores } from "@/lib/db/schema";
-import { and, eq, asc, desc, inArray } from "drizzle-orm";
+import { and, eq, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
@@ -9,6 +9,7 @@ import type { AgentExitReason } from "@/lib/interview/agent/contracts";
 import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
 import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
 import { getCompletionRecoveryDisposition } from "@/lib/interview/completion/worker";
+import { serializePublicRoomEvents } from "@/lib/interview/agent/room-snapshot";
 
 export async function GET(
   _request: NextRequest,
@@ -38,27 +39,32 @@ export async function GET(
       );
     }
 
+    const usesAgentRoom = interview.status === "active" || interview.configVersion === 2;
+
     const [rows, agentMessages, publicEvents, latestRuns, completionJobs] = await Promise.all([db
       .select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
       .leftJoin(questionScores, eq(questionScores.questionId, interviewQuestions.id))
       .where(eq(interviewQuestions.interviewId, id))
       .orderBy(asc(interviewQuestions.questionIndex)),
-      interview.configVersion === 2
+      usesAgentRoom
         ? db.select({ id: interviewMessages.id, runId: interviewMessages.runId, sequence: interviewMessages.sequence, role: interviewMessages.role, kind: interviewMessages.kind, content: interviewMessages.content })
           .from(interviewMessages).where(eq(interviewMessages.interviewId, id)).orderBy(asc(interviewMessages.sequence))
         : Promise.resolve([]),
-      interview.configVersion === 2
-        ? db.select({ runId: interviewAgentEvents.runId, sequence: interviewAgentEvents.sequence, runCreatedAt: interviewAgentRuns.createdAt, type: interviewAgentEvents.type, payload: interviewAgentEvents.payload }).from(interviewAgentEvents)
+      usesAgentRoom
+        ? db.select({ id: interviewAgentEvents.id, runId: interviewAgentEvents.runId, sequence: interviewAgentEvents.sequence, attemptId: interviewAgentEvents.attemptId, logicalMessageId: interviewAgentEvents.logicalMessageId, visibility: interviewAgentEvents.visibility, type: interviewAgentEvents.type, payload: interviewAgentEvents.payload, createdAt: interviewAgentEvents.createdAt }).from(interviewAgentEvents)
           .innerJoin(interviewAgentRuns, eq(interviewAgentRuns.id, interviewAgentEvents.runId))
-          .where(and(eq(interviewAgentRuns.interviewId, id), inArray(interviewAgentEvents.type, ["thinking_started", "thinking_summary", "artifact_committed", "response_started", "run_failed"])))
+          .where(and(
+            eq(interviewAgentRuns.interviewId, id),
+            eq(interviewAgentEvents.visibility, "public"),
+          ))
           .orderBy(asc(interviewAgentRuns.createdAt), asc(interviewAgentRuns.id), asc(interviewAgentEvents.sequence))
         : Promise.resolve([]),
-      interview.configVersion === 2
-        ? db.select({ id: interviewAgentRuns.id, interviewId: interviewAgentRuns.interviewId, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, leaseOwner: interviewAgentRuns.leaseOwner, leaseExpiresAt: interviewAgentRuns.leaseExpiresAt, leaseGeneration: interviewAgentRuns.leaseGeneration, resumeCount: interviewAgentRuns.resumeCount, nextResumeAt: interviewAgentRuns.nextResumeAt, checkpoint: interviewAgentRuns.checkpointJson, trigger: interviewAgentRuns.triggerJson, lastEventSequence: interviewAgentRuns.lastEventSequence })
+      usesAgentRoom
+        ? db.select({ id: interviewAgentRuns.id, interviewId: interviewAgentRuns.interviewId, status: interviewAgentRuns.status, phase: interviewAgentRuns.phase, attemptId: interviewAgentRuns.attemptId, attemptNumber: interviewAgentRuns.attemptNumber, provisionalMessageId: interviewAgentRuns.provisionalMessageId, exitReason: interviewAgentRuns.exitReason, leaseOwner: interviewAgentRuns.leaseOwner, leaseExpiresAt: interviewAgentRuns.leaseExpiresAt, leaseGeneration: interviewAgentRuns.leaseGeneration, resumeCount: interviewAgentRuns.resumeCount, nextResumeAt: interviewAgentRuns.nextResumeAt, checkpoint: interviewAgentRuns.checkpointJson, trigger: interviewAgentRuns.triggerJson, lastEventSequence: interviewAgentRuns.lastEventSequence })
           .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt)).limit(1)
         : Promise.resolve([]),
-      interview.configVersion === 2
+      usesAgentRoom
         ? db.select({ id: interviewCompletionJobs.id, interviewId: interviewCompletionJobs.interviewId, status: interviewCompletionJobs.status, leaseOwner: interviewCompletionJobs.leaseOwner, leaseExpiresAt: interviewCompletionJobs.leaseExpiresAt, leaseGeneration: interviewCompletionJobs.leaseGeneration, attemptCount: interviewCompletionJobs.attemptCount, nextAttemptAt: interviewCompletionJobs.nextAttemptAt })
           .from(interviewCompletionJobs).where(eq(interviewCompletionJobs.interviewId, id)).limit(1)
         : Promise.resolve([]),
@@ -81,7 +87,7 @@ export async function GET(
     return NextResponse.json({
       interview,
       questions: questionsWithScores,
-      agentState: interview.configVersion === 2 ? {
+      agentState: usesAgentRoom ? {
         messages: agentMessages,
         latestRun: latestRuns[0]
           ? {
@@ -93,6 +99,7 @@ export async function GET(
               recoveryDisposition: getRecoveryDisposition({
                 ...latestRuns[0],
                 status: latestRuns[0].status as "running" | "completed" | "failed",
+                phase: latestRuns[0].phase as import("@/lib/interview/agent/repository").AgentRunPhase,
                 exitReason: latestRuns[0].exitReason as AgentExitReason | null,
                 checkpoint: latestRuns[0].checkpoint as import("@/lib/interview/agent/contracts").AgentCheckpoint | null,
                 trigger: latestRuns[0].trigger as import("@/lib/interview/agent/repository").AgentRunTrigger | null,
@@ -125,7 +132,7 @@ export async function GET(
             ...(payload.type === "background_saved" ? { artifactId: `coverage:${event.runId}` } : {}),
           };
         }),
-        publicEvents: publicEvents.filter((event) => event.type !== "artifact_committed"),
+        publicEvents: serializePublicRoomEvents(publicEvents),
       } : null,
       resumeSnapshot: resumeSnapshot
         ? {

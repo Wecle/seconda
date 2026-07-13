@@ -7,7 +7,6 @@ import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
 import { endAgentInterview } from "@/lib/interview/agent/service";
-import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 import { createProductionCompletionDependencies, scheduleInterviewCompletion } from "@/lib/interview/completion/composition";
 
 export async function POST(
@@ -15,9 +14,6 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    if (!isInterviewAgentEnabled()) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
     const userId = await getCurrentUserId();
     if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     const { id } = await params;

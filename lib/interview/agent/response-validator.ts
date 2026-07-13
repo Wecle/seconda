@@ -7,23 +7,33 @@ export type ResponseValidationResult =
       | "FINISH_ASKS_QUESTION"
       | "FORMAL_SCORE"
       | "LANGUAGE_MISMATCH"
-      | "UNAUTHORIZED_TERM";
+      | "UNAUTHORIZED_TERM"
+      | "RESPONSE_TOO_LONG"
+      | "PROTOCOL_CONTROL"
+      | "SENSITIVE_CONTENT";
     message: string;
   };
 
 type ResponseLanguage = "zh" | "en" | "es" | "de";
 
 const formalScorePatterns = [
+  /\bi\s+(?:would\s+)?(?:give|rate|score)\s+your\s+(?:answer|response|performance)\b/iu,
+  /\byour\s+(?:overall\s+)?(?:score|rating|grade)\b/iu,
+  /\b(?:answer|response|performance|logic|communication|understanding|depth|authenticity|reflection|candidate|interview)\b.{0,8}\b(?:score|rating|grade)\b/iu,
+  /\btu\s+(?:puntuaci[oó]n|calificaci[oó]n|nota)\b/iu,
+  /\b(?:respuesta|desempeño|entrevista)\b.{0,8}\b(?:puntuaci[oó]n|calificaci[oó]n|nota)\b/iu,
+  /\b(?:deine|ihre)\s+(?:bewertung|punktzahl|note)\b/iu,
+  /\b(?:antwort|leistung|interview)\b.{0,8}\b(?:bewertung|punktzahl|note)\b/iu,
   /(?:理解力|表达力|逻辑性|深度|真实性|反思力).{0,12}(?:10|[0-9])(?:\.\d+)?\s*(?:分(?!钟)|\/\s*10)/iu,
   /(?:你的|该回答的|本轮回答的|候选人的)(?:得分|评分|分数)\s*(?:是|为)?\s*(?:10|[0-9])(?:\.\d+)?(?:\s*分(?!钟)|(?=\s*(?:[。！？,.!?]|$)))/iu,
   /\bi\s+(?:would\s+)?(?:give|rate|score)\s+your\s+(?:answer|response|performance)\s+(?:an?\s+)?\d+(?:\.\d+)?\s*(?:points?)?\b/iu,
   /\byour\s+(?:overall\s+)?(?:score|rating|grade)\b.{0,12}\d+(?:\.\d+)?/iu,
-  /\b(?:answer|response|performance|logic|communication|understanding|depth|authenticity|reflection|candidate|interview)\b.{0,24}\b(?:score|rating|grade)\b.{0,12}\d+(?:\.\d+)?/iu,
+  /\b(?:answer|response|performance|logic|communication|understanding|depth|authenticity|reflection|candidate|interview)\b.{0,8}\b(?:score|rating|grade)\b.{0,8}\d+(?:\.\d+)?/iu,
   /\d+(?:\.\d+)?\s*(?:out\s+of\s+10|\/\s*10)/iu,
   /\btu\s+(?:puntuaci[oó]n|calificaci[oó]n|nota)\b.{0,12}\d+(?:[.,]\d+)?/iu,
-  /\b(?:respuesta|desempeño|entrevista)\b.{0,24}\b(?:puntuaci[oó]n|calificaci[oó]n|nota)\b.{0,12}\d+(?:[.,]\d+)?/iu,
+  /\b(?:respuesta|desempeño|entrevista)\b.{0,8}\b(?:puntuaci[oó]n|calificaci[oó]n|nota)\b.{0,8}\d+(?:[.,]\d+)?/iu,
   /\b(?:deine|ihre)\s+(?:bewertung|punktzahl|note)\b.{0,12}\d+(?:[.,]\d+)?/iu,
-  /\b(?:antwort|leistung|interview)\b.{0,24}\b(?:bewertung|punktzahl|note)\b.{0,12}\d+(?:[.,]\d+)?/iu,
+  /\b(?:antwort|leistung|interview)\b.{0,8}\b(?:bewertung|punktzahl|note)\b.{0,8}\d+(?:[.,]\d+)?/iu,
   /\b(?:zero|one|two|three|four|five|six|seven|eight|nine|ten)\s+out\s+of\s+ten\b/iu,
   /\b(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\s+de\s+diez\b/iu,
   /\b(?:null|eins|zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn)\s+von\s+zehn\b/iu,
@@ -56,6 +66,24 @@ const protectedTechnologyTerms = [
   "aws", "azure", "docker", "gcp", "kubernetes", "mysql", "postgresql", "redis",
 ] as const;
 
+const responseProtocolPatterns = [
+  /\b(?:submit_interview_turn|responseText|proposalHash|coverageChanges)\b/u,
+  /["'](?:assessment|decision)["']/u,
+  /\b(?:assessment|decision)\b\s{0,8}(?::|=)/u,
+  /<\/?(?:tool|system|assistant|developer)(?:\s|>)/iu,
+  /```(?:json|sql)?\s{0,8}\{?\s{0,8}"?(?:assessment|decision)"?/iu,
+];
+
+const responseSensitivePatterns = [
+  /[A-Za-z0-9][A-Za-z0-9._%+-]{29,}[A-Za-z0-9]/u,
+  /[A-Za-z0-9._%+-]{1,30}@/u,
+  /(?:\+?\d[\d\s()-]{8,}\d|\b1[3-9]\d{9}\b)/u,
+  /\bapi[_ -]?key\b|\bsk-[A-Za-z0-9_-]{10,}/iu,
+  /\bDATABASE_URL\b|postgres(?:ql)?:\/\//iu,
+];
+
+const MAX_RESPONSE_CHARACTERS = 2_000;
+
 const sentenceInitialCommonWords = new Set([
   "based", "can", "could", "describe", "did", "do", "does", "explain", "how", "please",
   "tell", "thank", "that", "the", "this", "today", "we", "what", "when",
@@ -68,11 +96,43 @@ export function validateFinalResponse(input: {
   text: string;
   allowedTerms: readonly string[];
 }): ResponseValidationResult {
+  const progress = validateResponseProgress(input);
+  if (!progress.ok) return progress;
+
+  const questionCount = countQuestions(input.text);
+  if (input.action === "finish" && (questionCount > 0 || startsWithQuestionIntent(input.text))) {
+    return invalid("FINISH_ASKS_QUESTION", "结束语不得继续提问。");
+  }
+  if (input.action !== "finish" && (questionCount !== 1 || hasCompoundQuestion(input.text))) {
+    return invalid("MULTIPLE_QUESTIONS", "每轮必须且只能提出一个问题。");
+  }
+
+  return { ok: true };
+}
+
+export function validateResponseProgress(input: {
+  action: "ask" | "clarify" | "finish";
+  language: ResponseLanguage;
+  text: string;
+  allowedTerms: readonly string[];
+}): ResponseValidationResult {
+  if ([...input.text].length > MAX_RESPONSE_CHARACTERS) {
+    return invalid("RESPONSE_TOO_LONG", "回复超过允许长度。");
+  }
+  if (responseProtocolPatterns.some((pattern) => pattern.test(input.text))) {
+    return invalid("PROTOCOL_CONTROL", "回复不得包含内部协议控制内容。");
+  }
+  if (responseSensitivePatterns.some((pattern) => pattern.test(input.text))) {
+    return invalid("SENSITIVE_CONTENT", "回复不得包含敏感或内部信息。");
+  }
   if (containsFormalScore(input.text)) {
     return invalid("FORMAL_SCORE", "面试过程中的回复不得包含正式评分。");
   }
-
-  if (isLanguageMismatch(input.language, input.text, input.allowedTerms)) {
+  if (hasEnoughLanguageSignal(input.text) && isLanguageMismatch(
+    input.language,
+    input.text,
+    input.allowedTerms,
+  )) {
     return invalid("LANGUAGE_MISMATCH", "回复语言与面试配置不一致。");
   }
 
@@ -80,7 +140,7 @@ export function validateFinalResponse(input: {
   if (input.action === "finish" && (questionCount > 0 || startsWithQuestionIntent(input.text))) {
     return invalid("FINISH_ASKS_QUESTION", "结束语不得继续提问。");
   }
-  if (input.action !== "finish" && (questionCount !== 1 || hasCompoundQuestion(input.text))) {
+  if (input.action !== "finish" && (questionCount > 1 || hasCompoundQuestion(input.text))) {
     return invalid("MULTIPLE_QUESTIONS", "每轮必须且只能提出一个问题。");
   }
 
@@ -95,8 +155,12 @@ export function validateFinalResponse(input: {
       `回复包含未经简历或上下文授权的内容：${unauthorizedTerm}`,
     );
   }
-
   return { ok: true };
+}
+
+function hasEnoughLanguageSignal(text: string) {
+  const letters = text.match(/[\p{Script=Han}\p{Script=Latin}]/gu)?.length ?? 0;
+  return letters >= 4;
 }
 
 function invalid(
@@ -136,6 +200,11 @@ function isLanguageMismatch(
   if (language === "zh") {
     const hanCharacterCount = hanSpans.join("").length;
     const latinCharacterCount = text.match(/\p{Script=Latin}/gu)?.length ?? 0;
+    if (
+      hanCharacterCount === 0
+      && latinCharacterCount > 0
+      && isAllowedLatinPrefix(text, allowedTerms)
+    ) return false;
     return hanCharacterCount === 0
       || (hanCharacterCount < 4 && latinCharacterCount > hanCharacterCount * 2);
   }
@@ -150,6 +219,17 @@ function isLanguageMismatch(
 
   return (strongestCompetitor >= 2 && strongestCompetitor > expectedScore)
     || (expectedScore === 0 && strongestCompetitor === 1);
+}
+
+function isAllowedLatinPrefix(text: string, allowedTerms: readonly string[]) {
+  const normalized = normalizeGroundingTerm(text).replace(/[^\p{L}\p{N}+.#/-]+/gu, " ").trim();
+  if (!normalized) return false;
+  return allowedTerms.some((term) => {
+    const allowed = normalizeGroundingTerm(term)
+      .replace(/[^\p{L}\p{N}+.#/-]+/gu, " ")
+      .trim();
+    return allowed.startsWith(normalized);
+  });
 }
 
 function scoreLatinLanguages(text: string): Record<Exclude<ResponseLanguage, "zh">, number> {

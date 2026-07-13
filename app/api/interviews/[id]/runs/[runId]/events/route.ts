@@ -7,7 +7,6 @@ import { getCurrentUserId } from "@/lib/auth/session";
 import { getPostgresAgentEventWakeHub } from "@/lib/interview/agent/postgres-wake-hub";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
 import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/sse";
-import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -19,9 +18,6 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string; runId: string }> },
 ) {
-  if (!isInterviewAgentEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsedParams = paramsSchema.safeParse(await params);

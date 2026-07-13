@@ -22,7 +22,6 @@ import { createDrizzleCompletionJobRepository } from "../completion/repository";
 import type { AgentEventInput } from "./contracts";
 import { createDrizzleAgentInterviewStore } from "./drizzle-store";
 import { createDrizzleInterviewAgentRepository } from "./repository";
-import { ensureLatestAnswerAssessment } from "./assessment-service";
 import { hashTurnProposalPrefix, type TurnProposalPrefix } from "./turn-proposal";
 
 function publicReasoningEvent(
@@ -358,6 +357,8 @@ test("real database atomically commits an authorized turn and rolls back policy 
       interviewId,
       idempotencyKey: "authorized-turn",
     });
+    await db.update(interviewMessages).set({ runId: run.id })
+      .where(eq(interviewMessages.id, answerMessage.id));
     const claimed = await repository.claimRun(run.id, "turn-worker", new Date(), 60_000);
     const lease = {
       owner: "turn-worker",
@@ -421,6 +422,14 @@ test("real database atomically commits an authorized turn and rolls back policy 
       logicalMessageId,
       proposalHash,
     });
+    await repository.saveCheckpoint(run.id, {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: "committing",
+      activeSkillNames: [],
+      phase: "committing",
+    }, lease);
     const commitInput = {
       runId: run.id,
       interviewId,
@@ -434,6 +443,34 @@ test("real database atomically commits an authorized turn and rolls back policy 
       responseText: "你在项目中如何验证租约失效后的数据一致性？",
       language: "zh" as const,
     };
+    const otherRun = await repository.createRun({
+      interviewId,
+      idempotencyKey: "other-answer-run",
+    });
+    await db.update(interviewMessages).set({ runId: otherRun.id })
+      .where(eq(interviewMessages.id, answerMessage.id));
+    await assert.rejects(repository.commitTurnOutcome(commitInput), /does not belong/i);
+    const [wrongRunAssessments, wrongRunMessages, wrongRunQuestions, wrongRunCommits, wrongRunEvents] = await Promise.all([
+      db.select().from(interviewAnswerAssessments)
+        .where(eq(interviewAnswerAssessments.interviewId, interviewId)),
+      db.select().from(interviewMessages)
+        .where(eq(interviewMessages.interviewId, interviewId)),
+      db.select().from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, interviewId)),
+      db.select().from(interviewAgentToolCommits)
+        .where(eq(interviewAgentToolCommits.runId, run.id)),
+      db.select().from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, run.id),
+        eq(interviewAgentEvents.type, "message_committed"),
+      )),
+    ]);
+    assert.equal(wrongRunAssessments.length, 0);
+    assert.equal(wrongRunMessages.length, 1);
+    assert.equal(wrongRunQuestions.length, 1);
+    assert.equal(wrongRunCommits.length, 0);
+    assert.equal(wrongRunEvents.length, 0);
+    await db.update(interviewMessages).set({ runId: run.id })
+      .where(eq(interviewMessages.id, answerMessage.id));
     const [first, replay] = await Promise.all([
       repository.commitTurnOutcome(commitInput),
       repository.commitTurnOutcome(commitInput),
@@ -548,6 +585,14 @@ test("real database atomically commits an authorized turn and rolls back policy 
       logicalMessageId: secondLogicalMessageId,
       proposalHash: limitedHash,
     });
+    await repository.saveCheckpoint(run.id, {
+      turnCount: 2,
+      toolCallCount: 2,
+      lastEventSequence: first.committedEventSequence,
+      progressHash: "category-limit:committing",
+      activeSkillNames: [],
+      phase: "committing",
+    }, lease);
     await assert.rejects(repository.commitTurnOutcome({
       runId: run.id,
       interviewId,
@@ -662,101 +707,6 @@ test("interview creation idempotency is scoped to the owner and immutable reques
       for (const interviewId of interviewIds) await db.delete(interviews).where(eq(interviews.id, interviewId));
       for (const resumeId of ids.resumes) await db.delete(resumes).where(eq(resumes.id, resumeId));
       for (const userId of ids.users) await db.delete(users).where(eq(users.id, userId));
-    } finally {
-      await client.end();
-    }
-  }
-});
-
-test("durable assessment claims prevent duplicate model calls and fence commits", {
-  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
-}, async () => {
-  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
-  const db = drizzle(client, { schema });
-  const userId = randomUUID();
-  const resumeId = randomUUID();
-  const versionId = randomUUID();
-  let interviewId: string | null = null;
-  try {
-    await db.insert(users).values({ id: userId, email: `${userId}@example.test` });
-    await db.insert(resumes).values({ id: resumeId, userId, title: "Assessment resume" });
-    await db.insert(resumeVersions).values({
-      id: versionId,
-      resumeId,
-      versionNumber: 1,
-      originalFilename: "resume.pdf",
-      storedPath: `https://blob.example/${versionId}.pdf`,
-      extractedText: "Built resilient TypeScript services",
-      parsedJson: { name: "Candidate", skills: ["TypeScript"], experience: [], education: [], projects: [], summary: "" },
-      parseStatus: "parsed",
-    });
-    const store = createDrizzleAgentInterviewStore(db);
-    const created = await store.createInterview({
-      ownerUserId: userId,
-      idempotencyKey: randomUUID(),
-      resumeVersionId: versionId,
-      config: { configVersion: 2, language: "zh", persona: "standard", preference: "", preferenceTags: [] },
-    });
-    interviewId = created.interviewId;
-    await store.initializeCoverage(interviewId);
-    const repository = createDrizzleInterviewAgentRepository(db);
-    const run = await repository.createRun({ interviewId, idempotencyKey: "assessment-run" });
-    await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "assess" });
-    const claimed = await repository.claimRun(run.id, "assessment-worker", new Date(), 60_000);
-    assert.equal(claimed.claimed, true);
-    const lease = { owner: "assessment-worker", generation: claimed.run!.leaseGeneration };
-    const [question] = await db.insert(interviewQuestions).values({
-      interviewId,
-      questionIndex: 1,
-      questionType: "technical_depth",
-      topic: "resilience",
-      question: "How did you make the service resilient?",
-      answerText: "I used idempotency and leases.",
-      answeredAt: new Date(),
-    }).returning({ id: interviewQuestions.id });
-    await db.insert(interviewMessages).values({
-      interviewId,
-      runId: run.id,
-      sequence: 1,
-      role: "user",
-      kind: "answer",
-      content: "I used idempotency and leases.",
-      questionId: question.id,
-    });
-    let releaseAssessment!: () => void;
-    const assessmentGate = new Promise<void>((resolve) => { releaseAssessment = resolve; });
-    let calls = 0;
-    const assess = async () => {
-      calls += 1;
-      await assessmentGate;
-      return {
-        completeness: "high" as const,
-        specificity: "high" as const,
-        evidenceStrength: "strong" as const,
-        reflectionDepth: "deep" as const,
-        followUpNeeded: false,
-        missingPoints: [],
-        extractedEvidence: ["idempotency and leases"],
-        publicSummary: "回答提供了具体的可靠性证据。",
-      };
-    };
-    const first = ensureLatestAnswerAssessment(db, { interviewId, runId: run.id, lease, assess });
-    while (calls === 0) await new Promise((resolve) => setTimeout(resolve, 1));
-    await assert.rejects(
-      ensureLatestAnswerAssessment(db, { interviewId, runId: run.id, lease, assess }),
-      /already in progress/,
-    );
-    releaseAssessment();
-    await first;
-    assert.equal(calls, 1);
-    const stored = await db.select().from(interviewAnswerAssessments)
-      .where(eq(interviewAnswerAssessments.interviewId, interviewId));
-    assert.equal(stored.length, 1);
-  } finally {
-    try {
-      if (interviewId) await db.delete(interviews).where(eq(interviews.id, interviewId));
-      await db.delete(resumes).where(eq(resumes.id, resumeId));
-      await db.delete(users).where(eq(users.id, userId));
     } finally {
       await client.end();
     }

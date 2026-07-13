@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { asc, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   interviewCoverage,
@@ -21,9 +21,8 @@ import { createProductionCompletionDependencies } from "@/lib/interview/completi
 import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
-import { ensureLatestAnswerAssessment } from "./assessment-service";
-import { composeCandidateResponse } from "./grounding";
 import { agentRunFence } from "./fencing";
+import type { InterviewToolHandlers } from "./tool-registry";
 
 export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -52,23 +51,6 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
           if (updated.length === 0) throw new Error("Agent run lease is stale");
         },
       });
-      let phaseProgressId: string | undefined;
-      let publicThinkingSummary: string | undefined;
-      if (input.mode === "answer") {
-        await repository.appendEvent(input.runId, {
-          type: "thinking_started",
-          payload: { runId: input.runId },
-          dedupeKey: "thinking:started",
-        }, input.lease);
-        const assessment = await ensureLatestAnswerAssessment(db, {
-          interviewId: input.interviewId,
-          runId: input.runId,
-          lease: input.lease,
-          signal: input.signal,
-        });
-        phaseProgressId = assessment.id;
-        publicThinkingSummary = assessment.value.publicSummary;
-      }
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
       await compactInterviewContextIfNeeded(db, {
@@ -82,6 +64,7 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         interviewId: input.interviewId,
         runId: input.runId,
         currentInstruction: input.instruction,
+        mode: input.mode,
       });
       const contextUpdated = await db.update(interviewAgentRuns).set({
         promptTemplateVersion: promptContext.templateVersion,
@@ -95,39 +78,7 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         progressVersion += 1;
       });
       const tools = createInterviewToolRegistry({
-        handlers: handlers as Parameters<typeof createInterviewToolRegistry>[0]["handlers"],
-        async validateEvidenceIds(evidenceIds, context) {
-          const index = await loadInterviewEvidenceIndex(context.interviewId);
-          return loadResumeEvidence(index, evidenceIds).missingIds;
-        },
-        async validateClaimSourceIds(sourceIds, context) {
-          const [index, answers] = await Promise.all([
-            loadInterviewEvidenceIndex(context.interviewId),
-            db.select({ id: interviewMessages.id })
-              .from(interviewMessages)
-              .where(and(eq(interviewMessages.interviewId, context.interviewId), eq(interviewMessages.role, "user"))),
-          ]);
-          const valid = new Set([
-            ...index.records.map((record) => record.id),
-            "resume:raw",
-            ...answers.map((answer) => `answer:${answer.id}`),
-          ]);
-          return sourceIds.filter((sourceId) => !valid.has(sourceId));
-        },
-        async loadActionInput(toolInput) {
-          const state = await repository.loadState(input.interviewId);
-          return {
-            ...state,
-            proposal: {
-              action: toolInput.action,
-              category: toolInput.category,
-              intent: toolInput.intent,
-              question: toolInput.question,
-              resumeEvidenceIds: toolInput.resumeEvidenceIds,
-              finishReason: toolInput.finishReason,
-            },
-          };
-        },
+        handlers,
       });
       const active = resolveRunSkills(input.mode);
       const deferredTools = new Map(
@@ -140,9 +91,6 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         model,
         tools: deferredTools,
         activeSkills: active.skills,
-        phaseProgressId,
-        publicThinkingSummary,
-        thinkingAlreadyStarted: input.mode === "answer",
         initialMessages: [{ role: "user", content: input.instruction }],
         signal: input.signal,
         lease: input.lease,
@@ -151,6 +99,7 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
           stablePrefix: promptContext.stablePrefix,
           incrementalTail: promptContext.incrementalTail,
         },
+        turnContext: promptContext.turnContext,
       });
     },
   };
@@ -166,7 +115,7 @@ function createToolHandlers(
   repository: ReturnType<typeof createDrizzleInterviewAgentRepository>,
   completion: ReturnType<typeof createProductionCompletionDependencies>,
   markProgress: () => void,
-) {
+): InterviewToolHandlers {
   return {
     async get_resume_evidence(input: { evidenceIds: string[] }, context: { interviewId: string }) {
       const index = await loadInterviewEvidenceIndex(context.interviewId);
@@ -193,58 +142,31 @@ function createToolHandlers(
         status: interviewCoverage.status,
       }).from(interviewCoverage).where(eq(interviewCoverage.interviewId, context.interviewId));
     },
-    async update_coverage(input: { category: string; topic: string; status: string; resumeEvidenceIds: string[] }, context: { interviewId: string; runId: string; toolCallId?: string; lease?: import("./repository").RunLeaseToken }) {
-      if (!context.toolCallId) throw new Error("Tool call id is required");
-      const result = await repository.commitCoverageUpdate({
+    async submit_interview_turn(input, context) {
+      const authorized = context.authorizedTerminal;
+      if (!authorized) throw new Error("Authorized terminal context is required");
+      const { responseText, ...proposal } = input;
+      const outcome = await repository.commitTurnOutcome({
         interviewId: context.interviewId,
         runId: context.runId,
-        toolCallId: context.toolCallId,
-        lease: context.lease,
-        category: input.category,
-        topic: input.topic,
-        status: input.status,
-        resumeEvidenceIds: input.resumeEvidenceIds,
-      });
-      markProgress();
-      return result;
-    },
-    async ask_interview_question(input: { category: string; topic: string; acknowledgement: string; question: string; claims: Array<{ text: string; sourceIds: string[] }>; resumeEvidenceIds: string[]; targetRole?: { value: string; status: "inferred" | "confirmed"; confidence: "low" | "medium" | "high"; sourceIds: string[] } }, context: { interviewId: string; runId: string; toolCallId: string; provisionalMessageId?: string; lease?: import("./repository").RunLeaseToken }) {
-      const responseText = composeCandidateResponse(input);
-      const outcome = await repository.commitQuestionOutcome({
-        runId: context.runId,
-        interviewId: context.interviewId,
-        toolCallId: context.toolCallId,
-        lease: context.lease,
-        category: input.category,
-        topic: input.topic,
-        question: input.question,
+        toolCallId: authorized.toolCallId,
+        lease: authorized.lease,
+        logicalMessageId: authorized.logicalMessageId,
+        attemptId: authorized.attemptId,
+        answerMessageId: authorized.answerMessageId,
+        proposal,
+        proposalHash: authorized.proposalHash,
         responseText,
-        resumeEvidenceIds: input.resumeEvidenceIds,
-        provisionalMessageId: context.provisionalMessageId,
-        targetRole: input.targetRole,
+        language: authorized.language,
       });
       markProgress();
+      if (outcome.message.kind === "finish") {
+        try {
+          const job = await completion.repository.getJobByInterview(context.interviewId);
+          if (job) await completion.scheduler.schedule(job.id);
+        } catch {}
+      }
       return outcome;
-    },
-    async finish_interview(input: { closingMessage: string }, context: { interviewId: string; runId: string; toolCallId?: string; lease?: import("./repository").RunLeaseToken }) {
-      if (!context.toolCallId) throw new Error("Tool call id is required");
-      const outcome = await repository.commitFinishOutcome({
-        interviewId: context.interviewId,
-        runId: context.runId,
-        toolCallId: context.toolCallId,
-        lease: context.lease,
-        closingMessage: input.closingMessage,
-      });
-      markProgress();
-      let completionJobId: string | undefined;
-      try {
-        const job = await completion.repository.getJobByInterview(context.interviewId);
-        if (job) {
-          completionJobId = job.id;
-          await completion.scheduler.schedule(job.id);
-        }
-      } catch {}
-      return { ...outcome, completionJobId };
     },
   };
 }

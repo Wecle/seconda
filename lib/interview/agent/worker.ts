@@ -64,15 +64,22 @@ export async function executeClaimedRun(options: {
     return { status: leaseLost ? "lease_lost" as const : "completed" as const };
   } catch (error) {
     const current = await options.repository.getRun(options.runId);
+    let committed = current?.status === "completed";
     if (!leaseLost && current?.status === "running") {
+      committed = (await options.repository.listEvents(options.runId, 0))
+        .some((event) => event.type === "message_committed");
       await options.repository.terminateRun(options.runId, {
-        exitReason: leaseLost
-          ? "aborted_tools"
+        exitReason: committed
+          ? "completed"
           : isPromptTooLong(error) ? "prompt_too_long" : "aborted_streaming",
-        error,
+        ...(committed ? {} : { error }),
       }, lease);
     }
-    return { status: leaseLost ? "lease_lost" as const : "failed" as const };
+    return {
+      status: committed
+        ? "completed" as const
+        : leaseLost ? "lease_lost" as const : "failed" as const,
+    };
   } finally {
     clearInterval(interval);
     await options.repository.releaseLease(options.runId, lease);

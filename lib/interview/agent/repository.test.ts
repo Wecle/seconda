@@ -463,6 +463,14 @@ async function createAnsweredTurnFixture() {
     logicalMessageId,
     proposalHash,
   });
+  await repository.saveCheckpoint(run.id, {
+    turnCount: 1,
+    toolCallCount: 1,
+    lastEventSequence: 0,
+    progressHash: "committing",
+    activeSkillNames: [],
+    phase: "committing",
+  }, lease);
   const input: CommitTurnOutcomeInput = {
     runId: run.id,
     interviewId: "atomic-interview",
@@ -514,6 +522,14 @@ async function prepareFixtureAttempt(
     logicalMessageId: input.logicalMessageId,
     proposalHash,
   });
+  await fixture.repository.saveCheckpoint(fixture.run.id, {
+    turnCount: 1,
+    toolCallCount: 1,
+    lastEventSequence: 0,
+    progressHash: `${input.attemptId}:committing`,
+    activeSkillNames: [],
+    phase: "committing",
+  }, fixture.lease);
   return { proposalHash };
 }
 
@@ -539,6 +555,41 @@ test("commits assessment coverage message and committed event once", async () =>
     (snapshot.messageCommittedEvents[0].payload as { message: unknown }).message,
     first.message,
   );
+});
+
+test("rejects an answer from another run without turn writes", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  const answer = snapshot.messages.find((message) => message.id === fixture.input.answerMessageId)!;
+  answer.runId = "run-other";
+
+  await assert.rejects(
+    fixture.repository.commitTurnOutcome(fixture.input),
+    /does not belong/i,
+  );
+
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+  assert.equal(snapshot.submitTurnCommits.length, 0);
+});
+
+test("rejects a memory run committed through another interview id without writes", async () => {
+  const fixture = await createAnsweredTurnFixture();
+
+  await assert.rejects(
+    fixture.repository.commitTurnOutcome({
+      ...fixture.input,
+      interviewId: "another-interview",
+    }),
+    /run does not belong to interview/i,
+  );
+
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+  assert.equal(snapshot.submitTurnCommits.length, 0);
 });
 
 test("rejects committed-tool replay from a stale attempt or lease", async () => {

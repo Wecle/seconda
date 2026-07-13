@@ -11,6 +11,7 @@
     "test:ai:contract": "tsx --env-file=.env scripts/ai-live-contract.ts",
     "test:interview:agent": "tsx --env-file=.env scripts/interview-agent-contract.ts",
     "test:interview:failure": "tsx --env-file=.env scripts/interview-agent-failure-contract.ts",
+    "agent:cutover": "tsx --env-file=.env scripts/agent-runtime-cutover.ts",
     "db:migrate": "tsx --env-file=.env lib/db/migrate.ts"
   },
   "dependencies": {

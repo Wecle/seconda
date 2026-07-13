@@ -215,7 +215,9 @@ export type AgentRunRecord = {
   interviewId: string;
   status: "running" | "completed" | "failed";
   phase?: AgentRunPhase;
+  attemptId: string | null;
   attemptNumber?: number;
+  provisionalMessageId: string | null;
   exitReason: AgentExitReason | null;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
@@ -563,6 +565,7 @@ export function createInMemoryInterviewAgentRepository(
       const run = requireMemoryRun(runs, runId);
       assertMemoryFence(run, lease);
       run.checkpoint = checkpoint;
+      if (checkpoint.phase) run.phase = checkpoint.phase;
     },
     async terminateRun(runId, input, lease) {
       const run = requireMemoryRun(runs, runId);
@@ -604,6 +607,9 @@ export function createInMemoryInterviewAgentRepository(
     async commitTurnOutcome(input) {
       const run = requireRunningMemoryRun(runs, input.runId);
       assertMemoryAttemptFence(run, input);
+      if (run.interviewId !== input.interviewId) {
+        throw new Error("Agent run does not belong to interview");
+      }
       const key = `${input.runId}:${input.toolCallId}`;
       const existing = toolCommits.get(key);
       if (existing) {
@@ -613,7 +619,7 @@ export function createInMemoryInterviewAgentRepository(
         return existing.result as CommittedTurnOutcome;
       }
       if (
-        run.phase !== "responding"
+        run.phase !== "committing"
         || run.authorizedProposalHash !== input.proposalHash
         || !run.responseStartedAt
       ) {
@@ -645,6 +651,7 @@ export function createInMemoryInterviewAgentRepository(
         : null;
       if (input.answerMessageId && (
         !answerMessage
+        || answerMessage.runId !== input.runId
         || answerMessage.role !== "user"
         || answerMessage.kind !== "answer"
         || !answerQuestion
@@ -922,7 +929,9 @@ function memoryRunRecord(run: MemoryRun): AgentRunRecord {
     interviewId: run.interviewId,
     status: run.status,
     phase: run.phase,
+    attemptId: run.attemptId,
     attemptNumber: run.attemptNumber,
+    provisionalMessageId: run.provisionalMessageId,
     exitReason: run.exitReason,
     leaseOwner: run.leaseOwner,
     leaseExpiresAt: run.leaseExpiresAt,
@@ -1155,7 +1164,7 @@ export function createDrizzleInterviewAgentRepository(
 
       const [created] = await database
         .insert(interviewAgentRuns)
-        .values(input)
+        .values({ ...input, streamMode: "durable_provisional" })
         .onConflictDoNothing({
           target: [
             interviewAgentRuns.interviewId,
@@ -1227,7 +1236,9 @@ export function createDrizzleInterviewAgentRepository(
         interviewId: interviewAgentRuns.interviewId,
         status: interviewAgentRuns.status,
         phase: interviewAgentRuns.phase,
+        attemptId: interviewAgentRuns.attemptId,
         attemptNumber: interviewAgentRuns.attemptNumber,
+        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
         exitReason: interviewAgentRuns.exitReason,
         leaseOwner: interviewAgentRuns.leaseOwner,
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
@@ -1310,7 +1321,9 @@ export function createDrizzleInterviewAgentRepository(
         interviewId: interviewAgentRuns.interviewId,
         status: interviewAgentRuns.status,
         phase: interviewAgentRuns.phase,
+        attemptId: interviewAgentRuns.attemptId,
         attemptNumber: interviewAgentRuns.attemptNumber,
+        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
         exitReason: interviewAgentRuns.exitReason,
         leaseOwner: interviewAgentRuns.leaseOwner,
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
@@ -1505,6 +1518,7 @@ export function createDrizzleInterviewAgentRepository(
       const rows = await database.update(interviewAgentRuns).set({
         checkpointJson: checkpoint,
         turnCount: checkpoint.turnCount,
+        ...(checkpoint.phase ? { phase: checkpoint.phase } : {}),
         updatedAt: new Date(),
       }).where(runFenceCondition(runId, lease)).returning({ id: interviewAgentRuns.id });
       if (rows.length === 0) throw new Error("Agent run lease is stale");
@@ -1602,7 +1616,7 @@ export function createDrizzleInterviewAgentRepository(
           return existing.result as CommittedTurnOutcome;
         }
         if (
-          run.phase !== "responding"
+          run.phase !== "committing"
           || !run.responseStartedAt
           || run.authorizedProposalHash !== input.proposalHash
         ) {
@@ -1639,14 +1653,22 @@ export function createDrizzleInterviewAgentRepository(
         let answerQuestionId: string | null = null;
         if (input.answerMessageId) {
           const [answer] = await tx.select({
+            runId: interviewMessages.runId,
             role: interviewMessages.role,
             kind: interviewMessages.kind,
             questionId: interviewMessages.questionId,
           }).from(interviewMessages).where(and(
             eq(interviewMessages.id, input.answerMessageId),
             eq(interviewMessages.interviewId, input.interviewId),
+            eq(interviewMessages.runId, input.runId),
           )).limit(1);
-          if (!answer || answer.role !== "user" || answer.kind !== "answer" || !answer.questionId) {
+          if (
+            !answer
+            || answer.runId !== input.runId
+            || answer.role !== "user"
+            || answer.kind !== "answer"
+            || !answer.questionId
+          ) {
             throw new Error("Answer message does not belong to this interview question");
           }
           const [question] = await tx.select({
@@ -2173,7 +2195,9 @@ function parseRunRecord(row: {
   interviewId: string;
   status: string;
   phase: string;
+  attemptId: string | null;
   attemptNumber: number;
+  provisionalMessageId: string | null;
   exitReason: string | null;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;

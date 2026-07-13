@@ -166,6 +166,7 @@ export function createDrizzleAgentInterviewStore(
         const [createdRun] = await tx.insert(interviewAgentRuns).values({
           interviewId: input.interviewId,
           idempotencyKey: input.runIdempotencyKey,
+          streamMode: "durable_provisional",
           triggerJson: input.trigger,
         }).onConflictDoNothing({
           target: [interviewAgentRuns.interviewId, interviewAgentRuns.idempotencyKey],

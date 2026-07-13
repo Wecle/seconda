@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getRecoveryDisposition } from "./worker";
-import type { AgentRunRecord } from "./repository";
+import {
+  createInMemoryInterviewAgentRepository,
+  type AgentRunRecord,
+} from "./repository";
 
 const base: AgentRunRecord = {
   id: "run",
   interviewId: "interview",
   status: "running",
+  attemptId: null,
+  provisionalMessageId: null,
   exitReason: null,
   leaseOwner: null,
   leaseExpiresAt: null,
@@ -63,4 +68,39 @@ test("enforces cooldown and a bounded recovery budget", () => {
     exitReason: "provider_failed",
     resumeCount: 2,
   }, now), "exhausted");
+});
+
+test("keeps the queryable run phase aligned with recovery checkpoints", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const created = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "phase-recovery",
+  });
+  const claimed = await repository.claimRun(created.id, "worker", new Date(), 60_000);
+  const lease = {
+    owner: "worker",
+    generation: claimed.run!.leaseGeneration,
+  };
+  await repository.startAttempt(created.id, {
+    model: "fake",
+    attemptId: "attempt-1",
+    attemptNumber: 1,
+    provisionalMessageId: "message-1",
+    now: new Date(),
+  }, lease);
+  await repository.saveCheckpoint(created.id, {
+    turnCount: 1,
+    toolCallCount: 0,
+    lastEventSequence: 0,
+    progressHash: "recoverable",
+    activeSkillNames: [],
+    runtimeMessages: [{ role: "user", content: "continue" }],
+    phase: "repairing",
+  }, lease);
+
+  const persisted = await repository.getRun(created.id);
+  assert.equal(persisted?.phase, "repairing");
+  assert.equal(persisted?.checkpoint?.phase, "repairing");
+  assert.equal(persisted?.attemptId, "attempt-1");
+  assert.equal(persisted?.provisionalMessageId, "message-1");
 });

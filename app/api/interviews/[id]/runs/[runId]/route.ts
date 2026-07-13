@@ -4,7 +4,6 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
 import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
 import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
@@ -18,9 +17,6 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string; runId: string }> },
 ) {
-  if (!isInterviewAgentEnabled()) {
-    return NextResponse.json({ error: "Not found" }, { status: 404 });
-  }
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = paramsSchema.safeParse(await params);
