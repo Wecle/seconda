@@ -5,6 +5,8 @@ import { and, eq, asc, desc, inArray } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
+import type { AgentExitReason } from "@/lib/interview/agent/contracts";
+import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
 
 export async function GET(
   _request: NextRequest,
@@ -80,7 +82,12 @@ export async function GET(
       questions: questionsWithScores,
       agentState: interview.configVersion === 2 ? {
         messages: agentMessages,
-        latestRun: latestRuns[0] ?? null,
+        latestRun: latestRuns[0]
+          ? {
+              ...latestRuns[0],
+              userMessage: agentExitMessage(latestRuns[0].exitReason as AgentExitReason | null),
+            }
+          : null,
         completionJob: completionJobs[0] ?? null,
         scoringProgress: rows.reduce((progress, { question }) => {
           if (!question.answeredAt) return progress;

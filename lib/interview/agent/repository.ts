@@ -15,6 +15,7 @@ import type {
   InterviewAgentState,
   InterviewMessageKind,
 } from "./contracts";
+import { agentExitMessage } from "./exit-messages";
 import { terminalRunPayloadSchema } from "./contracts";
 
 export interface InterviewAgentRepository {
@@ -604,21 +605,6 @@ function buildTerminalPayload(
     runId,
     exitReason: input.exitReason,
     retryable: input.retryable ?? input.exitReason === "aborted_streaming",
-    userMessage: input.userMessage ?? defaultExitMessage(input.exitReason),
+    userMessage: input.userMessage ?? agentExitMessage(input.exitReason),
   });
-}
-
-function defaultExitMessage(reason: AgentExitReason) {
-  const messages: Record<AgentExitReason, string> = {
-    completed: "本轮处理已完成。",
-    max_turns: "本轮处理达到最大步骤数，请重试。",
-    provider_failed: "模型服务暂时不可用，请稍后重试。",
-    terminal_action_failed: "本轮问题生成未能通过运行规则，请重试。",
-    aborted_streaming: "模型连接中断，请重试本轮回答。",
-    aborted_tools: "后台操作中断，请重试。",
-    hook_stopped: "本轮处理被安全规则终止。",
-    blocking_limit: "本轮处理持续没有进展，已停止运行。",
-    prompt_too_long: "面试上下文过长，暂时无法继续。",
-  };
-  return messages[reason];
 }
