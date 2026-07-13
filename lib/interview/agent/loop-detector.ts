@@ -67,7 +67,7 @@ export class AgentLoopDetector {
       this.noProgressCount = 1;
     }
 
-    if (this.history.length > 12 || toolCount > 6) {
+    if (toolCount > 6) {
       return breakDecision("blocking_limit");
     }
 

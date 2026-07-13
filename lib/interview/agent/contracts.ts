@@ -21,6 +21,8 @@ export const agentRunStatusSchema = z.enum([
 export const agentExitReasonSchema = z.enum([
   "completed",
   "max_turns",
+  "provider_failed",
+  "terminal_action_failed",
   "aborted_streaming",
   "aborted_tools",
   "hook_stopped",
@@ -120,7 +122,8 @@ export const agentCheckpointSchema = z.object({
   lastEventSequence: z.number().int().min(0),
   progressHash: z.string(),
   activeSkillNames: z.array(z.string()),
-  phase: z.enum(["assessing", "planning", "acting"]).optional(),
+  phase: z.enum(["assessing", "planning", "terminal", "acting"]).optional(),
+  terminalAttemptCount: z.number().int().min(0).max(3).optional(),
   phaseProgressId: z.string().optional(),
 });
 
