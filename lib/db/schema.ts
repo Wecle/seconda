@@ -1,4 +1,4 @@
-import { pgTable, text, integer, timestamp, uuid, jsonb, unique } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique } from "drizzle-orm/pg-core";
 import type { StoredInterviewConfig } from "@/lib/interview/settings";
 
 export const users = pgTable("users", {
@@ -52,9 +52,11 @@ export const resumeVersions = pgTable("resume_versions", {
 
 export const interviews = pgTable("interviews", {
   id: uuid("id").primaryKey().defaultRandom(),
+  creationIdempotencyKey: text("creation_idempotency_key"),
+  creationOwnerUserId: uuid("creation_owner_user_id")
+    .references(() => users.id, { onDelete: "set null" }),
   resumeVersionId: uuid("resume_version_id")
-    .notNull()
-    .references(() => resumeVersions.id, { onDelete: "cascade" }),
+    .references(() => resumeVersions.id, { onDelete: "set null" }),
   level: text("level").notNull(),
   type: text("type").notNull(),
   language: text("language").notNull(),
@@ -64,6 +66,9 @@ export const interviews = pgTable("interviews", {
   preference: text("preference"),
   preferenceTags: jsonb("preference_tags").$type<string[]>(),
   targetRole: text("target_role"),
+  targetRoleStatus: text("target_role_status"),
+  targetRoleConfidence: text("target_role_confidence"),
+  targetRoleSourceIds: jsonb("target_role_source_ids").$type<string[]>(),
   candidateRoundCount: integer("candidate_round_count").notNull().default(0),
   compactionFailureCount: integer("compaction_failure_count").notNull().default(0),
   status: text("status").notNull().default("active"),
@@ -73,6 +78,27 @@ export const interviews = pgTable("interviews", {
   reportJson: jsonb("report_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.creationOwnerUserId, table.creationIdempotencyKey),
+]);
+
+export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .unique()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
+  resumeTitle: text("resume_title").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  originalFilename: text("original_filename").notNull(),
+  storedPath: text("stored_path").notNull(),
+  mimeType: text("mime_type"),
+  fileSize: integer("file_size"),
+  extractedText: text("extracted_text"),
+  parsedJson: jsonb("parsed_json"),
+  parseStatus: text("parse_status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const interviewAgentRuns = pgTable("interview_agent_runs", {
@@ -93,11 +119,13 @@ export const interviewAgentRuns = pgTable("interview_agent_runs", {
   cacheMetricsAvailable: integer("cache_metrics_available").notNull().default(0),
   leaseOwner: text("lease_owner"),
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  leaseGeneration: integer("lease_generation").notNull().default(0),
   attemptId: text("attempt_id"),
   attemptNumber: integer("attempt_number").notNull().default(0),
   provisionalMessageId: text("provisional_message_id"),
   lastProviderProgressAt: timestamp("last_provider_progress_at", { withTimezone: true }),
   resumeCount: integer("resume_count").notNull().default(0),
+  nextResumeAt: timestamp("next_resume_at", { withTimezone: true }),
   promptTemplateVersion: text("prompt_template_version"),
   cacheEpoch: integer("cache_epoch").notNull().default(0),
   contextInputTokens: integer("context_input_tokens").notNull().default(0),
@@ -121,11 +149,26 @@ export const interviewAgentEvents = pgTable("interview_agent_events", {
     .notNull()
     .references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
   sequence: integer("sequence").notNull(),
+  dedupeKey: text("dedupe_key"),
   type: text("type").notNull(),
   payload: jsonb("payload"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique().on(table.runId, table.sequence),
+  unique().on(table.runId, table.dedupeKey),
+]);
+
+export const interviewAgentToolCommits = pgTable("interview_agent_tool_commits", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
+  toolCallId: text("tool_call_id").notNull(),
+  toolName: text("tool_name").notNull(),
+  resultJson: jsonb("result_json").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique().on(table.runId, table.toolCallId),
 ]);
 
 export const interviewMessages = pgTable("interview_messages", {
@@ -229,7 +272,7 @@ export const questionScores = pgTable("question_scores", {
   depth: integer("depth").notNull(),
   authenticity: integer("authenticity").notNull(),
   reflection: integer("reflection").notNull(),
-  overall: integer("overall").notNull(),
+  overall: numeric("overall", { precision: 3, scale: 1, mode: "number" }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -252,13 +295,24 @@ export const interviewAnswerAssessments = pgTable("interview_answer_assessments"
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const interviewAnswerAssessmentClaims = pgTable("interview_answer_assessment_claims", {
+  answerMessageId: uuid("answer_message_id").primaryKey().references(() => interviewMessages.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").notNull().references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
+  leaseOwner: text("lease_owner").notNull(),
+  leaseGeneration: integer("lease_generation").notNull(),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const interviewCompletionJobs = pgTable("interview_completion_jobs", {
   id: uuid("id").primaryKey().defaultRandom(),
   interviewId: uuid("interview_id").notNull().unique().references(() => interviews.id, { onDelete: "cascade" }),
   status: text("status").notNull().default("pending"),
   leaseOwner: text("lease_owner"),
   leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  leaseGeneration: integer("lease_generation").notNull().default(0),
   attemptCount: integer("attempt_count").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
   errorJson: jsonb("error_json"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

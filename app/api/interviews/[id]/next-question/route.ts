@@ -3,8 +3,7 @@ import { db } from "@/lib/db";
 import {
   interviews,
   interviewQuestions,
-  resumes,
-  resumeVersions,
+  interviewResumeSnapshots,
 } from "@/lib/db/schema";
 import { and, eq, asc, isNull, isNotNull } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
@@ -70,12 +69,8 @@ export async function POST(
     const [interviewRow] = await db
       .select({ interview: interviews })
       .from(interviews)
-      .innerJoin(
-        resumeVersions,
-        eq(resumeVersions.id, interviews.resumeVersionId)
-      )
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
     const interview = interviewRow?.interview;
     if (!interview || interview.status !== "active") {
@@ -142,10 +137,10 @@ export async function POST(
             return;
           }
 
-          const [resumeVersion] = await db
+          const [resumeSnapshot] = await db
             .select()
-            .from(resumeVersions)
-            .where(eq(resumeVersions.id, interview.resumeVersionId));
+            .from(interviewResumeSnapshots)
+            .where(eq(interviewResumeSnapshots.interviewId, interview.id));
 
           const allQuestions = await db
             .select()
@@ -158,11 +153,11 @@ export async function POST(
             .slice(-3)
             .map((q) => ({ question: q.question, answer: q.answerText! }));
 
-          const truncatedText = (resumeVersion?.extractedText ?? "").slice(
+          const truncatedText = (resumeSnapshot?.extractedText ?? "").slice(
             0,
             8000
           );
-          const resumeDataStr = JSON.stringify(resumeVersion?.parsedJson).slice(
+          const resumeDataStr = JSON.stringify(resumeSnapshot?.parsedJson).slice(
             0,
             8000
           );

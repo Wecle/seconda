@@ -40,6 +40,7 @@ export async function GET() {
 
     const interviewsByVersionId = new Map<string, typeof allInterviews>();
     for (const i of allInterviews) {
+      if (!i.resumeVersionId) continue;
       const arr = interviewsByVersionId.get(i.resumeVersionId) ?? [];
       arr.push(i);
       interviewsByVersionId.set(i.resumeVersionId, arr);

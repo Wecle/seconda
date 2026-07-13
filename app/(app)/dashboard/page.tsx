@@ -66,6 +66,7 @@ export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const interviewCreationRef = useRef<{ signature: string; key: string } | null>(null);
 
   const fetchResumes = useCallback(async () => {
     try {
@@ -268,12 +269,20 @@ export default function DashboardPage() {
     if (!selectedVersion || !selectedInterviewConfig || creatingInterview)
       return;
 
+    const signature = JSON.stringify({
+      resumeVersionId: selectedVersion.id,
+      ...selectedInterviewConfig,
+    });
+    if (interviewCreationRef.current?.signature !== signature) {
+      interviewCreationRef.current = { signature, key: crypto.randomUUID() };
+    }
     setCreatingInterview(true);
     try {
       const res = await fetch("/api/interviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          idempotencyKey: interviewCreationRef.current.key,
           configVersion: 2,
           language: selectedInterviewConfig.language,
           persona: selectedInterviewConfig.persona,
@@ -287,6 +296,7 @@ export default function DashboardPage() {
         setErrorAlertMessage(data?.error ?? "Failed to create interview.");
         return;
       }
+      interviewCreationRef.current = null;
       router.push(`/interviews/${data.interviewId}/room`);
     } catch (e) {
       console.error("Failed to start interview:", e);

@@ -12,11 +12,11 @@ export function buildCompletionView(status: string, progress?: ScoringProgress |
   return { label: `正在评分 ${progress?.scored ?? 0}/${progress?.total ?? 0}`, reportEnabled: false, failed: false };
 }
 
-export function InterviewCompletionProgress({ status, progress, onRetry }: { status: string; progress?: ScoringProgress | null; onRetry?: () => void }) {
+export function InterviewCompletionProgress({ status, progress, onRetry, retrying = false }: { status: string; progress?: ScoringProgress | null; onRetry?: () => void; retrying?: boolean }) {
   const view = buildCompletionView(status, progress);
   return <div className="flex items-center gap-3 rounded-xl border bg-card p-4">
     {!view.failed && status !== "completed" && <Loader2 className="size-5 animate-spin text-primary" />}
     <div className="flex-1"><p className="font-medium">{view.label}</p>{progress && status === "scoring" && <p className="text-sm text-muted-foreground">已完成 {progress.scored} 项，剩余 {progress.pending + progress.scoring + progress.failed} 项</p>}</div>
-    {view.failed && onRetry && <Button variant="outline" onClick={onRetry}><RotateCcw className="size-4" />恢复任务</Button>}
+    {view.failed && onRetry && <Button variant="outline" onClick={onRetry} disabled={retrying}>{retrying ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}恢复任务</Button>}
   </div>;
 }

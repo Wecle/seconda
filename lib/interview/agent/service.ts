@@ -1,10 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AgentExitReason } from "./contracts";
 import type { InterviewAgentRepository } from "./repository";
+import type { RunLeaseToken } from "./repository";
 import type { InterviewConfigV2 } from "../settings";
+import { getRecoveryDisposition } from "./worker";
 
 export interface AgentInterviewStore {
   createInterview(input: {
+    ownerUserId: string;
+    idempotencyKey: string;
     resumeVersionId: string;
     config: InterviewConfigV2;
   }): Promise<{ interviewId: string; resumeSummary: string }>;
@@ -17,11 +21,11 @@ export interface AgentInterviewStore {
   } | null>;
   acceptCandidateMessage(input: {
     interviewId: string;
-    runId: string;
     content: string;
     idempotencyKey: string;
-  }): Promise<{ id: string; sequence: number; content: string; created: boolean }>;
-  markCompleting(interviewId: string): Promise<boolean>;
+    runIdempotencyKey: string;
+    trigger: { mode: "answer"; instruction: string };
+  }): Promise<{ id: string; runId: string; sequence: number; content: string; created: boolean }>;
 }
 
 export interface AgentRunExecutor {
@@ -31,6 +35,7 @@ export interface AgentRunExecutor {
     mode: "opening" | "answer";
     instruction: string;
     signal: AbortSignal;
+    lease: RunLeaseToken;
   }): Promise<{ exitReason: AgentExitReason }>;
 }
 
@@ -40,6 +45,7 @@ export interface AgentRunScheduler {
 
 export async function createAgentInterview(options: {
   input: {
+    ownerUserId: string;
     resumeVersionId: string;
     config: InterviewConfigV2;
     idempotencyKey: string;
@@ -50,6 +56,8 @@ export async function createAgentInterview(options: {
   signal: AbortSignal;
 }) {
   const created = await options.store.createInterview({
+    ownerUserId: options.input.ownerUserId,
+    idempotencyKey: options.input.idempotencyKey,
     resumeVersionId: options.input.resumeVersionId,
     config: options.input.config,
   });
@@ -58,11 +66,19 @@ export async function createAgentInterview(options: {
     interviewId: created.interviewId,
     idempotencyKey: options.input.idempotencyKey,
   });
-  await options.repository.saveRunTrigger(run.id, {
-    mode: "opening",
-    instruction: openingInstruction(created.resumeSummary),
-  });
-  await options.scheduler.schedule(run.id);
+  let persistedRun = await options.repository.getRun(run.id);
+  if (!persistedRun) throw new Error("Opening run could not be loaded");
+  if (persistedRun.status === "running" && !persistedRun.trigger) {
+    await options.repository.saveRunTrigger(run.id, {
+      mode: "opening",
+      instruction: openingInstruction(created.resumeSummary),
+    });
+    persistedRun = await options.repository.getRun(run.id);
+    if (!persistedRun?.trigger) throw new Error("Opening run trigger could not be persisted");
+  }
+  if (getRecoveryDisposition(persistedRun, new Date()) === "schedule") {
+    await options.scheduler.schedule(run.id);
+  }
   return {
     interviewId: created.interviewId,
     runId: run.id,
@@ -91,26 +107,27 @@ export async function submitCandidateMessage(options: {
   }
 
   const runKey = `message:${options.input.idempotencyKey}`;
-  const existingOrNewRun = await options.repository.createRun({
-    interviewId: options.input.interviewId,
-    idempotencyKey: runKey,
-  });
   const accepted = await options.store.acceptCandidateMessage({
     ...options.input,
-    runId: existingOrNewRun.id,
+    runIdempotencyKey: runKey,
+    trigger: {
+      mode: "answer",
+      instruction:
+        "评估候选人的最新回答，更新覆盖度，然后选择一个深入追问、一个新主题或结束面试。一次只提交一个候选人可见结果。",
+    },
   });
 
-  if (!accepted.created && !existingOrNewRun.created) {
-    return { runId: existingOrNewRun.id, status: "accepted" as const, message: publicMessage(accepted) };
+  const run = await options.repository.getRun(accepted.runId);
+  if (!run) throw new Error("Accepted answer run could not be loaded");
+  if (getRecoveryDisposition(run, new Date()) === "schedule") {
+    await options.scheduler.schedule(accepted.runId);
   }
-
-  await options.repository.saveRunTrigger(existingOrNewRun.id, {
-    mode: "answer",
-    instruction:
-      "评估候选人的最新回答，更新覆盖度，然后选择一个深入追问、一个新主题或结束面试。一次只提交一个候选人可见结果。",
-  });
-  await options.scheduler.schedule(existingOrNewRun.id);
-  return { runId: existingOrNewRun.id, status: "accepted" as const, message: publicMessage(accepted) };
+  return {
+    runId: accepted.runId,
+    status: "accepted" as const,
+    runStatus: run.status,
+    message: publicMessage(accepted),
+  };
 }
 
 function publicMessage(message: { id: string; sequence: number; content: string }) {
@@ -133,8 +150,8 @@ export async function endAgentInterview(options: {
     throw new Error("Interview cannot be completed from its current state");
   }
 
-  const changed = await options.store.markCompleting(options.interviewId);
-  if (!changed) return { status: "completing" as const };
+  const transition = await options.repository.markInterviewCompleting(options.interviewId);
+  if (!transition.changed) return { status: "completing" as const };
   const run = await options.repository.createRun({
     interviewId: options.interviewId,
     idempotencyKey: `user-end:${randomUUID()}`,
@@ -151,5 +168,5 @@ export async function endAgentInterview(options: {
 }
 
 function openingInstruction(resumeSummary: string) {
-  return `候选人简历摘要：${resumeSummary}\n请基于简历证据判断最可能的目标岗位。岗位明确时说明本次面试岗位并邀请候选人自我介绍；存在多个同等可能方向时，只提出一个岗位澄清问题。不得暴露内部推理或覆盖度。`;
+  return `候选人简历摘要：${resumeSummary}\n请基于简历证据判断最可能的目标岗位。岗位明确时，在 ask_interview_question 中持久化 inferred targetRole、置信度和来源，说明本次面试岗位并邀请候选人自我介绍；候选人已明确岗位时持久化 confirmed targetRole。存在多个同等可能方向时，只提出一个岗位澄清问题且不要虚构 targetRole。不得暴露内部推理或覆盖度。`;
 }

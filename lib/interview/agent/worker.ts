@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { InterviewAgentRepository } from "./repository";
 import type { AgentRunRecord } from "./repository";
 import type { AgentRunExecutor, AgentRunScheduler } from "./service";
+import { MAX_AGENT_RUN_RESUMES } from "./repository";
 
 export async function executeClaimedRun(options: {
   runId: string;
@@ -19,11 +20,15 @@ export async function executeClaimedRun(options: {
     leaseMs,
   );
   if (!claimed.claimed || !claimed.run) return { status: "not_claimed" as const };
+  const lease = {
+    owner: options.owner,
+    generation: claimed.run.leaseGeneration,
+  };
   if (!claimed.run.trigger) {
     await options.repository.terminateRun(options.runId, {
       exitReason: "aborted_tools",
       error: new Error("Agent run trigger is missing"),
-    });
+    }, lease);
     return { status: "failed" as const };
   }
 
@@ -33,7 +38,7 @@ export async function executeClaimedRun(options: {
     try {
       const renewed = await options.repository.renewLease(
         options.runId,
-        options.owner,
+        lease,
         new Date(),
         leaseMs,
       );
@@ -54,22 +59,23 @@ export async function executeClaimedRun(options: {
       mode: claimed.run.trigger.mode,
       instruction: claimed.run.trigger.instruction,
       signal: controller.signal,
+      lease,
     });
     return { status: leaseLost ? "lease_lost" as const : "completed" as const };
   } catch (error) {
     const current = await options.repository.getRun(options.runId);
-    if (current?.status === "running") {
+    if (!leaseLost && current?.status === "running") {
       await options.repository.terminateRun(options.runId, {
         exitReason: leaseLost
           ? "aborted_tools"
           : isPromptTooLong(error) ? "prompt_too_long" : "aborted_streaming",
         error,
-      });
+      }, lease);
     }
-    return { status: "failed" as const };
+    return { status: leaseLost ? "lease_lost" as const : "failed" as const };
   } finally {
     clearInterval(interval);
-    await options.repository.releaseLease(options.runId, options.owner);
+    await options.repository.releaseLease(options.runId, lease);
   }
 }
 
@@ -114,9 +120,16 @@ function readPositiveInteger(value: string | undefined, fallback: number) {
 export function getRecoveryDisposition(
   run: AgentRunRecord,
   now: Date,
-): "already_running" | "schedule" | "completed" | "failed" {
+): "already_running" | "schedule" | "cooldown" | "exhausted" | "completed" | "failed" {
   if (run.status === "completed") return "completed";
-  if (run.status === "failed") return "failed";
+  if (run.status === "failed") {
+    const recoverable = run.trigger
+      && ["aborted_streaming", "provider_failed", "prompt_too_long"].includes(run.exitReason ?? "");
+    if (!recoverable) return "failed";
+    if (run.resumeCount >= MAX_AGENT_RUN_RESUMES) return "exhausted";
+    if (run.nextResumeAt && run.nextResumeAt.getTime() > now.getTime()) return "cooldown";
+    return "schedule";
+  }
   if (
     run.leaseOwner &&
     run.leaseExpiresAt &&
@@ -124,5 +137,6 @@ export function getRecoveryDisposition(
   ) {
     return "already_running";
   }
+  if (run.resumeCount >= MAX_AGENT_RUN_RESUMES) return "exhausted";
   return "schedule";
 }

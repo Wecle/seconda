@@ -4,11 +4,14 @@ import { generateStructured } from "@/lib/ai/generate-structured";
 import {
   interviewContextSnapshots,
   interviewCoverage,
+  interviewAgentRuns,
   interviewMessages,
   interviews,
 } from "@/lib/db/schema";
 import { estimateTokens } from "./budget";
 import { compactWithRecovery, shouldCompactContext, type CompactMessage } from "./compaction";
+import type { RunLeaseToken } from "../repository";
+import { agentRunFence } from "../fencing";
 
 const compactSummarySchema = z.object({
   summary: z.string(),
@@ -20,8 +23,9 @@ type AgentDatabase = typeof import("@/lib/db").db;
 
 export async function compactInterviewContextIfNeeded(
   database: AgentDatabase,
-  input: { interviewId: string; effectiveBudget: number },
+  input: { interviewId: string; runId: string; lease: RunLeaseToken; signal?: AbortSignal; effectiveBudget: number },
 ) {
+  await assertRunFence(database, input.runId, input.lease);
   const [interviewRows, snapshots, messageRows, coverage] = await Promise.all([
     database.select({
       candidateRoundCount: interviews.candidateRoundCount,
@@ -77,6 +81,7 @@ export async function compactInterviewContextIfNeeded(
     content: message.content,
   }));
   try {
+    await assertRunFence(database, input.runId, input.lease);
     const result = await compactWithRecovery({
       messages,
       summarize: (items) => generateStructured({
@@ -84,12 +89,18 @@ export async function compactInterviewContextIfNeeded(
         schema: compactSummarySchema,
         system: "你是面试上下文压缩器。保留事实、候选人回答证据、未解决追问和简历证据 ID，不得编造。",
         prompt: JSON.stringify({ previousSummary: latest?.summary ?? "", messages: items, coverage }),
+        abortSignal: input.signal,
       }),
     });
     const throughMessageSequence = messageRows.at(-1)?.sequence ?? 0;
     const cacheEpoch = (latest?.cacheEpoch ?? 0) + 1;
     await database.transaction(async (tx) => {
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.interviewId}))`);
+      const [leasedRun] = await tx.select({ id: interviewAgentRuns.id })
+        .from(interviewAgentRuns)
+        .where(agentRunFence(input.runId, input.lease))
+        .limit(1);
+      if (!leasedRun) throw new Error("Agent run lease is stale");
       const existing = await tx.select({ cacheEpoch: interviewContextSnapshots.cacheEpoch })
         .from(interviewContextSnapshots)
         .where(and(
@@ -116,8 +127,16 @@ export async function compactInterviewContextIfNeeded(
     return { compacted: true as const, cacheEpoch, level: result.level };
   } catch (error) {
     const failureCount = interview.compactionFailureCount + 1;
-    await database.update(interviews).set({ compactionFailureCount: failureCount, updatedAt: new Date() })
-      .where(eq(interviews.id, input.interviewId));
+    await database.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.interviewId}))`);
+      const [leasedRun] = await tx.select({ id: interviewAgentRuns.id })
+        .from(interviewAgentRuns)
+        .where(agentRunFence(input.runId, input.lease))
+        .limit(1);
+      if (!leasedRun) throw new Error("Agent run lease is stale");
+      await tx.update(interviews).set({ compactionFailureCount: failureCount, updatedAt: new Date() })
+        .where(eq(interviews.id, input.interviewId));
+    });
     if (failureCount >= 3) {
       throw Object.assign(new Error("Context compaction failed three consecutive times"), {
         code: "PROMPT_TOO_LONG",
@@ -126,6 +145,18 @@ export async function compactInterviewContextIfNeeded(
     }
     return { compacted: false as const, cacheEpoch: latest?.cacheEpoch ?? 0, deferred: true as const };
   }
+}
+
+async function assertRunFence(
+  database: AgentDatabase,
+  runId: string,
+  lease: RunLeaseToken,
+) {
+  const rows = await database.select({ id: interviewAgentRuns.id })
+    .from(interviewAgentRuns)
+    .where(agentRunFence(runId, lease))
+    .limit(1);
+  if (rows.length === 0) throw new Error("Agent run lease is stale");
 }
 
 function readSnapshotMetadata(value: unknown) {

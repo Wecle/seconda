@@ -5,31 +5,50 @@ import { completeInterviewReport } from "@/lib/interview/report-completion";
 import { createDrizzleCompletionJobRepository } from "./repository";
 import { scorePendingInterviewQuestions } from "./scoring";
 import { createCompletionScheduler, type CompletionExecutor } from "./worker";
+import { assertCompletionLease } from "./fencing";
 
 export function createProductionCompletionDependencies(defer: (task: () => Promise<void>) => void) {
   const repository = createDrizzleCompletionJobRepository(db);
   const executor: CompletionExecutor = {
-    async run({ interviewId, signal }) {
+    async run({ interviewId, jobId, signal, lease }) {
       try {
-        await db.update(interviews).set({ status: "scoring", updatedAt: new Date() }).where(and(
-          eq(interviews.id, interviewId),
-          inArray(interviews.status, ["active", "completing", "scoring", "failed"]),
-        ));
-        await scorePendingInterviewQuestions(db, interviewId, { concurrency: 3, signal });
-        const transitioned = await db.update(interviews).set({ status: "reporting", updatedAt: new Date() }).where(and(
-          eq(interviews.id, interviewId),
-          inArray(interviews.status, ["scoring", "failed"]),
-        )).returning({ id: interviews.id });
-        if (transitioned.length === 0) {
-          const [current] = await db.select({ status: interviews.status }).from(interviews)
-            .where(eq(interviews.id, interviewId)).limit(1);
-          if (current?.status === "completed") return;
-          throw new Error("Interview could not transition to reporting");
+        await assertCompletionLease(db, jobId, lease);
+        const [initial] = await db.select({ status: interviews.status }).from(interviews)
+          .where(eq(interviews.id, interviewId)).limit(1);
+        if (!initial) throw new Error("Interview not found");
+        if (initial.status === "completed") return;
+        if (!["completing", "scoring", "reporting", "failed"].includes(initial.status)) {
+          throw new Error("Interview is not in a resumable completion state");
         }
-        await completeInterviewReport(db, interviewId);
+        if (initial.status !== "reporting") {
+          const scoring = await db.transaction(async (tx) => {
+            await assertCompletionLease(tx, jobId, lease);
+            return tx.update(interviews).set({ status: "scoring", updatedAt: new Date() }).where(and(
+              eq(interviews.id, interviewId),
+              inArray(interviews.status, ["completing", "scoring", "failed"]),
+            )).returning({ id: interviews.id });
+          });
+          if (scoring.length === 0) throw new Error("Interview could not transition to scoring");
+          await scorePendingInterviewQuestions(db, interviewId, { concurrency: 3, signal, jobId, lease });
+          const reporting = await db.transaction(async (tx) => {
+            await assertCompletionLease(tx, jobId, lease);
+            return tx.update(interviews).set({ status: "reporting", updatedAt: new Date() }).where(and(
+              eq(interviews.id, interviewId),
+              eq(interviews.status, "scoring"),
+            )).returning({ id: interviews.id });
+          });
+          if (reporting.length === 0) throw new Error("Interview could not transition to reporting");
+        }
+        await completeInterviewReport(db, interviewId, { signal, jobId, lease });
       } catch (error) {
-        await db.update(interviews).set({ status: "failed", updatedAt: new Date() })
-          .where(and(eq(interviews.id, interviewId), inArray(interviews.status, ["scoring", "reporting"])));
+        if (signal.aborted) throw signal.reason ?? error;
+        try {
+          await db.transaction(async (tx) => {
+            await assertCompletionLease(tx, jobId, lease);
+            await tx.update(interviews).set({ status: "failed", updatedAt: new Date() })
+              .where(and(eq(interviews.id, interviewId), inArray(interviews.status, ["scoring", "reporting"])));
+          });
+        } catch {}
         throw error;
       }
     },

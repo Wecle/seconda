@@ -63,7 +63,7 @@ test("persists run_failed before exposing failed status", async () => {
 
 - [ ] **Step 2: Run the focused test and verify the interface is missing**
 
-Run: `pnpm exec tsx --test lib/interview/agent/repository.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/repository.test.ts`
 Expected: FAIL because `terminateRun` does not exist.
 
 - [ ] **Step 3: Add the strict terminal payload contract**
@@ -126,7 +126,7 @@ Remove separate `appendEvent({ type: "run_completed" })` calls so the event cann
 
 - [ ] **Step 6: Run tests and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/agent/repository.test.ts lib/interview/agent/runtime.test.ts lib/interview/agent/worker.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/repository.test.ts lib/interview/agent/runtime.test.ts lib/interview/agent/worker.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -169,7 +169,7 @@ test("removes the abort listener after every normal polling wait", async () => {
 
 - [ ] **Step 2: Verify the test fails**
 
-Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts`
 Expected: FAIL because listeners remain registered or `abortableWait` is not exported.
 
 - [ ] **Step 3: Implement settle-once cleanup**
@@ -197,7 +197,7 @@ export function abortableWait(delayMs: number, signal: AbortSignal) {
 
 - [ ] **Step 4: Run the test 100 times to detect accumulation**
 
-Run: `for i in {1..100}; do pnpm exec tsx --test lib/interview/agent/sse.test.ts >/dev/null || exit 1; done`  
+Run: `for i in {1..100}; do pnpm exec tsx --test lib/interview/agent/sse.test.ts >/dev/null || exit 1; done`
 Expected: exit 0 with no `MaxListenersExceededWarning`.
 
 - [ ] **Step 5: Commit**
@@ -238,7 +238,7 @@ test("synthesizes run_failed for an old failed run without a terminal event", as
 
 - [ ] **Step 2: Run and verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts`
 Expected: FAIL because the generator returns no event for an old terminal Run.
 
 - [ ] **Step 3: Extend Run records and synthesize delivery**
@@ -275,7 +275,7 @@ return NextResponse.json({
 
 - [ ] **Step 5: Run tests, typecheck, and route build**
 
-Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts lib/interview/agent/repository.test.ts && npx tsc --noEmit && pnpm build`  
+Run: `pnpm exec tsx --test lib/interview/agent/sse.test.ts lib/interview/agent/repository.test.ts && npx tsc --noEmit && pnpm build`
 Expected: PASS; build lists `/api/interviews/[id]/runs/[runId]`.
 
 - [ ] **Step 6: Restore generated `next-env.d.ts` if build changes it, then commit**
@@ -311,7 +311,7 @@ test("uses full jitter and stops after five reconnects", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/client-stream.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/client-stream.test.ts`
 Expected: FAIL because the module does not exist.
 
 - [ ] **Step 3: Implement the pure retry policy**
@@ -345,7 +345,7 @@ Remove the component-owned `useEffect` that creates EventSource. On `run_failed`
 
 - [ ] **Step 6: Run focused and full tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/client-stream.test.ts lib/interview/agent/sse.test.ts && pnpm test && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/client-stream.test.ts lib/interview/agent/sse.test.ts && pnpm test && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -391,7 +391,7 @@ README must state that terminal Runs never reconnect, network errors retry five 
 
 - [ ] **Step 4: Run the reliability gate**
 
-Run: `pnpm test:interview:failure && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm test:interview:failure && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: all commands succeed; lint may retain only the two pre-existing warnings.
 
 - [ ] **Step 5: Commit**

@@ -13,6 +13,7 @@ import {
   type CoachStart,
   type CoachEvaluate,
 } from "./schemas";
+import { aggregateInterviewScores, calculateQuestionOverall } from "./scoring-aggregation";
 
 export async function generateInterviewQuestions(params: {
   resumeData: unknown;
@@ -66,6 +67,7 @@ export async function scoreInterviewAnswer(params: {
   persona: string;
   language: string;
   resumeContext: string;
+  signal?: AbortSignal;
 }): Promise<ScoreResult> {
   const prompt = `面试问题：${params.question}
 候选人回答：${params.answer}
@@ -76,12 +78,18 @@ export async function scoreInterviewAnswer(params: {
 语言：${params.language}
 简历摘要：${params.resumeContext}`;
 
-  return generateStructured({
+  const result = await generateStructured({
     task: "answer.score",
     schema: scoreResultSchema,
     system: "你是专业的面试评估专家。请根据以下六个维度对候选人的回答进行评分（0-10分）：理解力(Understanding)、表达力(Expression)、逻辑性(Logic)、深度(Depth)、真实性(Authenticity)、反思力(Reflection)。同时提供优点、改进建议和深度分析。评分必须客观公正，基于回答内容本身。",
     prompt,
+    abortSignal: params.signal,
   });
+
+  return {
+    ...result,
+    scores: { ...result.scores, overall: calculateQuestionOverall(result.scores) },
+  };
 
 }
 
@@ -103,6 +111,7 @@ export async function generateInterviewReport(params: {
   type: string;
   language: string;
   resumeSummary: string;
+  signal?: AbortSignal;
 }): Promise<InterviewReport> {
   const questionsDetail = params.questions
     .map(
@@ -124,12 +133,18 @@ ${questionsDetail}
 
 候选人简历摘要：${params.resumeSummary}`;
 
-  return generateStructured({
+  const narrative = await generateStructured({
     task: "report.generate",
     schema: interviewReportSchema,
-    system: "你是专业的面试教练。请基于候选人的所有面试回答和评分，生成一份全面的面试评估报告。报告应包含总分（0-100）、六维能力平均分、核心优势、需要改进的关键领域、总结和下一步建议。",
+    system: "你是专业的面试教练。请基于候选人的所有面试回答和已计算评分，生成报告叙事内容：2至3项核心优势、1至2项关键改进领域、总结和可执行的下一步建议。不得自行生成或修改总分与六维均值。",
     prompt,
+    abortSignal: params.signal,
   });
+
+  return {
+    ...aggregateInterviewScores(params.questions.map((question) => question.scores)),
+    ...narrative,
+  };
 
 }
 

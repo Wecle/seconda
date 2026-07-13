@@ -1,8 +1,8 @@
 # Seconda Agent Assessment, Streaming, and Thinking UX Design
 
-**Date:** 2026-07-12  
-**Status:** Proposed  
-**Audience:** Seconda product and engineering  
+**Date:** 2026-07-12
+**Status:** Proposed
+**Audience:** Seconda product and engineering
 **Scope:** Agent interview answer processing, final scoring, Run/SSE lifecycle, thinking UX, committed status cards, and message ordering
 
 ## 1. Problem Statement

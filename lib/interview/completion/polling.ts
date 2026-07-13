@@ -13,3 +13,15 @@ export function nextCompletionPoll(input: CompletionPollState): number | "paused
   if (!input.visible || !input.online) return "paused";
   return DELAYS[Math.min(input.attempt, DELAYS.length - 1)];
 }
+
+export function shouldAutoResumeCompletion(input: {
+  active: boolean;
+  timedOut: boolean;
+  alreadyAttempted: boolean;
+  status: string;
+}) {
+  return input.active
+    && input.timedOut
+    && !input.alreadyAttempted
+    && !["completed", "failed"].includes(input.status);
+}

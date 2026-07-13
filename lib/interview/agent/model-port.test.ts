@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { agentProviderStepSchema } from "./contracts";
-import { createStreamingInterviewAgentModelPort } from "./model-port";
+import { AGENT_SYSTEM_PROMPT, createStreamingInterviewAgentModelPort } from "./model-port";
 
 const askTool = [{ name: "ask_interview_question", description: "ask" }];
 const askArgs = {
@@ -14,6 +14,16 @@ const askArgs = {
   topic: "自我介绍",
   resumeEvidenceIds: [],
 };
+
+test("system prompt makes language and persona binding constraints", () => {
+  for (const language of ["zh", "en", "es", "de"]) {
+    assert.equal(AGENT_SYSTEM_PROMPT.includes(language), true);
+  }
+  for (const persona of ["friendly", "standard", "stressful"]) {
+    assert.equal(AGENT_SYSTEM_PROMPT.includes(persona), true);
+  }
+  assert.match(AGENT_SYSTEM_PROMPT, /不得改变.*评分标准/);
+});
 
 test("provider output requires a tool call", () => {
   assert.equal(agentProviderStepSchema.safeParse({

@@ -229,6 +229,9 @@ export default function ReportPage() {
   const [shareRevokeLoading, setShareRevokeLoading] = useState(false);
   const [shareExpiry, setShareExpiry] = useState<string>("168");
   const [shareDialogMessage, setShareDialogMessage] = useState<string | null>(null);
+  const [completionRetrying, setCompletionRetrying] = useState(false);
+  const [completionRecoveryRequested, setCompletionRecoveryRequested] = useState(false);
+  const completionRetryInFlightRef = useRef(false);
   const { t } = useTranslation();
 
   const loadReport = useCallback(async (signal: AbortSignal) => {
@@ -236,6 +239,7 @@ export default function ReportPage() {
     if (!response.ok) throw new Error(`Report request failed with ${response.status}`);
     const next = await response.json() as InterviewApiResponse;
     setData(next);
+    if (next.interview.status !== "failed") setCompletionRecoveryRequested(false);
     setLoading(false);
   }, [interviewId]);
 
@@ -261,10 +265,33 @@ export default function ReportPage() {
   }, [startInitialReportLoad]);
 
   const completionPolling = useCompletionPolling({
-    active: Boolean(data && ["completing", "scoring", "reporting"].includes(data.interview.status)),
-    status: data?.interview.status ?? "loading",
+    active: completionRecoveryRequested || Boolean(data && ["completing", "scoring", "reporting"].includes(data.interview.status)),
+    status: completionRecoveryRequested && data?.interview.status === "failed" ? "recovering" : data?.interview.status ?? "loading",
     refresh: loadReport,
+    resume: async (signal) => {
+      const response = await fetch(`/api/interviews/${interviewId}/completion/resume`, { method: "POST", signal });
+      if (!response.ok) throw new Error(`Completion resume failed with ${response.status}`);
+      const result = await response.json() as { status?: string };
+      if (result.status === "cooldown") throw new Error("评分恢复正在冷却，请稍后重试。");
+      if (result.status === "exhausted") throw new Error("评分恢复次数已用尽，请联系支持人员处理。");
+    },
   });
+
+  const retryCompletion = async () => {
+    if (completionRetryInFlightRef.current) return;
+    completionRetryInFlightRef.current = true;
+    setCompletionRetrying(true);
+    try {
+      await completionPolling.resumeNow();
+      setCompletionRecoveryRequested(true);
+      await completionPolling.refreshNow();
+    } catch (recoveryError) {
+      setActionMessage(recoveryError instanceof Error ? recoveryError.message : t.report.loadFailed);
+    } finally {
+      completionRetryInFlightRef.current = false;
+      setCompletionRetrying(false);
+    }
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -607,10 +634,8 @@ export default function ReportPage() {
         <InterviewCompletionProgress
           status={interview.status}
           progress={data?.agentState?.scoringProgress}
-          onRetry={interview.status === "failed" ? async () => {
-            await fetch(`/api/interviews/${interviewId}/completion/resume`, { method: "POST" });
-            window.location.reload();
-          } : undefined}
+          onRetry={interview.status === "failed" ? () => void retryCompletion() : undefined}
+          retrying={completionRecoveryRequested || completionRetrying || completionPolling.resuming}
         />
         {completionPolling.timedOut && <div className="flex gap-2"><Button variant="outline" onClick={() => void completionPolling.refreshNow()}>手动刷新状态</Button><Button variant="outline" onClick={completionPolling.resumePolling}>继续自动检查</Button></div>}
         <Button variant="outline" onClick={() => router.push(`/interviews/${interviewId}/room`)}>返回面试</Button>

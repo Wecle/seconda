@@ -4,7 +4,6 @@ import { resumes, resumeVersions } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
-import { randomUUID } from "node:crypto";
 import { createAgentInterviewRequestSchema } from "@/lib/interview/agent/api-contracts";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
@@ -57,6 +56,7 @@ export async function POST(request: NextRequest) {
       });
       const result = await createAgentInterview({
         input: {
+          ownerUserId: userId,
           resumeVersionId: v2.data.resumeVersionId,
           config: {
             configVersion: 2,
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
             preference: v2.data.preference,
             preferenceTags: v2.data.preferenceTags,
           },
-          idempotencyKey: `create:${randomUUID()}`,
+          idempotencyKey: v2.data.idempotencyKey,
         },
         store: createDrizzleAgentInterviewStore(db),
         repository: dependencies.repository,

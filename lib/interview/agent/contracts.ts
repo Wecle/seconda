@@ -125,6 +125,13 @@ export const agentCheckpointSchema = z.object({
   phase: z.enum(["assessing", "planning", "terminal", "acting"]).optional(),
   terminalAttemptCount: z.number().int().min(0).max(3).optional(),
   phaseProgressId: z.string().optional(),
+  modelCallCount: z.number().int().min(0).optional(),
+  invalidModelActionCount: z.number().int().min(0).optional(),
+  runtimeMessages: z.array(z.object({
+    role: z.enum(["system", "user", "assistant", "tool"]),
+    content: z.string(),
+  }).strict()).optional(),
+  pendingToolCall: agentProviderStepSchema.optional(),
 });
 
 export const textDeltaPayloadSchema = z.object({
@@ -235,4 +242,6 @@ export type InterviewAgentState = {
   categoryCounts: Partial<Record<QuestionCategory, number>>;
   recentQuestions: string[];
   requestedUserEnd: boolean;
+  categoryStatuses?: Partial<Record<QuestionCategory, CoverageStatus>>;
+  consecutiveNoFollowUpAssessments?: number;
 };

@@ -4,9 +4,8 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
   interviews,
+  interviewResumeSnapshots,
   interviewShares,
-  resumes,
-  resumeVersions,
 } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { generateInterviewShareToken } from "@/lib/interview/share-token";
@@ -18,9 +17,8 @@ async function getUserOwnedInterview(interviewId: string, userId: string) {
   const [interviewRow] = await db
     .select({ interview: interviews })
     .from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-    .where(and(eq(interviews.id, interviewId), eq(resumes.userId, userId)));
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .where(and(eq(interviews.id, interviewId), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
   return interviewRow?.interview ?? null;
 }

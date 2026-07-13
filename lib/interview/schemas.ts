@@ -19,11 +19,10 @@ export const scoreResultSchema = z.object({
     depth: z.number().int().min(0).max(10),
     authenticity: z.number().int().min(0).max(10),
     reflection: z.number().int().min(0).max(10),
-    overall: z.number().int().min(0).max(10),
-  }),
-  strengths: z.array(z.string()),
-  improvements: z.array(z.string()),
-  advice: z.array(z.string()),
+  }).strict(),
+  strengths: z.array(z.string().trim().min(1).max(300)).min(1).max(3),
+  improvements: z.array(z.string().trim().min(1).max(300)).min(1).max(3),
+  advice: z.array(z.string().trim().min(1).max(300)).min(1).max(3),
   deepDive: z.object({
     coreConcepts: z.object({
       title: z.string().optional(),
@@ -42,9 +41,16 @@ export const scoreResultSchema = z.object({
       })),
     }),
   }),
-});
+}).strict();
 
 export const interviewReportSchema = z.object({
+  topStrengths: z.array(z.string().trim().min(1).max(300)).min(2).max(3),
+  criticalFocus: z.array(z.string().trim().min(1).max(300)).min(1).max(2),
+  summary: z.string().trim().min(1).max(2000),
+  nextSteps: z.array(z.string().trim().min(1).max(300)).min(1).max(5),
+}).strict();
+
+export const persistedInterviewReportSchema = interviewReportSchema.extend({
   overallScore: z.number().int().min(0).max(100),
   dimensions: z.object({
     understanding: z.number().min(0).max(10),
@@ -54,11 +60,7 @@ export const interviewReportSchema = z.object({
     authenticity: z.number().min(0).max(10),
     reflection: z.number().min(0).max(10),
   }),
-  topStrengths: z.array(z.string()),
-  criticalFocus: z.array(z.string()),
-  summary: z.string(),
-  nextSteps: z.array(z.string()),
-});
+}).strict();
 
 export const followUpRoundSchema = z.object({
   comment: z.string(),
@@ -87,8 +89,10 @@ export const coachEvaluateSchema = z.object({
 
 export type GeneratedQuestion = z.infer<typeof generatedQuestionSchema>;
 export type GeneratedQuestions = z.infer<typeof generatedQuestionsSchema>;
-export type ScoreResult = z.infer<typeof scoreResultSchema>;
-export type InterviewReport = z.infer<typeof interviewReportSchema>;
+export type ScoreResult = z.infer<typeof scoreResultSchema> & {
+  scores: z.infer<typeof scoreResultSchema>["scores"] & { overall: number };
+};
+export type InterviewReport = z.infer<typeof persistedInterviewReportSchema>;
 export type FollowUpRound = z.infer<typeof followUpRoundSchema>;
 export type CoachStart = z.infer<typeof coachStartSchema>;
 export type CoachEvaluate = z.infer<typeof coachEvaluateSchema>;

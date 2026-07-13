@@ -2,6 +2,7 @@ import { z } from "zod";
 import { questionCategorySchema, type AgentModelStep } from "./contracts";
 import {
   authorizeInterviewAction,
+  type InterviewActionProposal,
   type InterviewActionInput,
 } from "./limits";
 import type {
@@ -53,7 +54,21 @@ export const interviewToolInputSchemas = {
     claims: groundedClaimsSchema,
     topic: z.string().trim().min(1).max(200),
     resumeEvidenceIds: z.array(z.string().min(1)).max(20),
-  }).strict(),
+    targetRole: z.object({
+      value: z.string().trim().min(1).max(200),
+      status: z.enum(["inferred", "confirmed"]),
+      confidence: z.enum(["low", "medium", "high"]),
+      sourceIds: z.array(z.string().min(1)).min(1).max(10),
+    }).strict().optional(),
+  }).strict().superRefine((value, context) => {
+    if (value.action === "clarify" && value.targetRole) {
+      context.addIssue({
+        code: "custom",
+        path: ["targetRole"],
+        message: "A clarification cannot persist an unconfirmed target role",
+      });
+    }
+  }),
   finish_interview: z.object({
     reason: z.enum(["coverage_sufficient", "low_information_gain", "user_requested", "max_rounds"]),
     closingMessage: z.string().trim().min(1).max(2000),
@@ -78,7 +93,7 @@ export function createAgentProviderStepSchema(
 export function createInterviewToolRegistry(options: {
   handlers: ToolHandlers;
   loadActionInput: (
-    input: z.infer<typeof interviewToolInputSchemas.ask_interview_question>,
+    input: InterviewActionProposal,
     context: InterviewToolContext,
   ) => Promise<InterviewActionInput>;
   validateEvidenceIds?: (
@@ -116,9 +131,25 @@ export function createInterviewToolRegistry(options: {
             }
           }
         }
+        if (name === "finish_interview") {
+          const finishInput = input as z.infer<typeof interviewToolInputSchemas.finish_interview>;
+          const authorization = authorizeInterviewAction(await options.loadActionInput({
+            action: "finish",
+            category: "introduction",
+            intent: "new_topic",
+            resumeEvidenceIds: [],
+            finishReason: finishInput.reason,
+          }, context));
+          return authorization.allowed && authorization.action === "finish"
+            ? null
+            : authorizationError(authorization.allowed ? "invalid_action" : authorization.reason);
+        }
         if (name !== "ask_interview_question") return null;
         const questionInput = input as z.infer<typeof interviewToolInputSchemas.ask_interview_question>;
-        const sourceIds = [...new Set(questionInput.claims.flatMap((claim) => claim.sourceIds))];
+        const sourceIds = [...new Set([
+          ...questionInput.claims.flatMap((claim) => claim.sourceIds),
+          ...(questionInput.targetRole?.sourceIds ?? []),
+        ])];
         if (options.validateClaimSourceIds && sourceIds.length > 0) {
           const missing = await options.validateClaimSourceIds(sourceIds, context);
           if (missing.length > 0) {
@@ -179,6 +210,18 @@ function authorizationError(reason: string): ToolError {
     invalid_action: {
       message: "面试行动无效。",
       suggestion: "提交一个单一且完整的问题。",
+    },
+    invalid_finish_reason: {
+      message: "结束原因与持久化面试状态不一致。",
+      suggestion: "根据用户结束标记、20 轮上限、覆盖度或信息增益选择真实原因。",
+    },
+    opening_cannot_finish: {
+      message: "开场阶段不能由 Agent 自主结束面试。",
+      suggestion: "推断岗位或提出一个岗位澄清问题。",
+    },
+    completion_not_ready: {
+      message: "面试尚未达到确定性结束条件。",
+      suggestion: "继续覆盖简历相关主题或进行必要追问。",
     },
   };
   const detail = messages[reason] ?? messages.invalid_action;

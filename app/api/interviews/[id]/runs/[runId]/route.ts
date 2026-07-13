@@ -2,11 +2,12 @@ import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
 import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
+import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -27,9 +28,8 @@ export async function GET(
     return NextResponse.json({ error: "Invalid Agent run" }, { status: 400 });
   }
   const [owned] = await db.select({ id: interviews.id }).from(interviews)
-    .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-    .where(and(eq(interviews.id, parsed.data.id), eq(resumes.userId, userId)))
+    .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .where(and(eq(interviews.id, parsed.data.id), eq(interviewResumeSnapshots.ownerUserId, userId)))
     .limit(1);
   if (!owned) return NextResponse.json({ error: "Interview not found" }, { status: 404 });
 
@@ -43,5 +43,6 @@ export async function GET(
     exitReason: run.exitReason,
     userMessage: agentExitMessage(run.exitReason),
     lastEventSequence: run.lastEventSequence,
+    recoveryDisposition: getRecoveryDisposition(run, new Date()),
   });
 }

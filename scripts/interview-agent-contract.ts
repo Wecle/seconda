@@ -7,6 +7,7 @@ import {
   interviewCoverage,
   interviewMessages,
   interviews,
+  resumes,
   resumeVersions,
 } from "../lib/db/schema";
 import { createProductionAgentDependencies } from "../lib/interview/agent/composition";
@@ -21,11 +22,13 @@ import { executeClaimedRun } from "../lib/interview/agent/worker";
 async function main() {
   const resumeVersionId = process.env.INTERVIEW_AGENT_TEST_RESUME_VERSION_ID?.trim();
   assert.ok(resumeVersionId, "INTERVIEW_AGENT_TEST_RESUME_VERSION_ID must be configured");
-  const [resume] = await db.select({ id: resumeVersions.id, status: resumeVersions.parseStatus })
+  const [resume] = await db.select({ id: resumeVersions.id, status: resumeVersions.parseStatus, userId: resumes.userId })
     .from(resumeVersions)
+    .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
     .where(eq(resumeVersions.id, resumeVersionId))
     .limit(1);
   assert.equal(resume?.status, "parsed", "test resume must exist and be parsed");
+  assert.ok(resume.userId, "test resume must have an owner");
 
   const dependencies = createProductionAgentDependencies();
   const store = createDrizzleAgentInterviewStore(db);
@@ -41,6 +44,7 @@ async function main() {
   };
   const created = await createAgentInterview({
     input: {
+      ownerUserId: resume.userId,
       resumeVersionId,
       config: {
         configVersion: 2,

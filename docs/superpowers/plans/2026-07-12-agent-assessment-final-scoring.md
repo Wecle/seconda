@@ -62,7 +62,7 @@ test("rejects formal scores and unbounded assessment text", () => {
 
 - [ ] **Step 2: Verify the tests fail**
 
-Run: `pnpm exec tsx --test lib/interview/agent/assessment-contracts.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/assessment-contracts.test.ts`
 Expected: FAIL because `answerAssessmentSchema` is missing.
 
 - [ ] **Step 3: Add the Zod contract**
@@ -96,7 +96,7 @@ scoreErrorJson: jsonb("score_error_json"),
 
 - [ ] **Step 5: Run migration twice and validate contracts**
 
-Run: `pnpm db:migrate && pnpm db:migrate && pnpm exec tsx --test lib/interview/agent/assessment-contracts.test.ts && npx tsc --noEmit`  
+Run: `pnpm db:migrate && pnpm db:migrate && pnpm exec tsx --test lib/interview/agent/assessment-contracts.test.ts && npx tsc --noEmit`
 Expected: both migrations and tests pass.
 
 - [ ] **Step 6: Commit**
@@ -134,7 +134,7 @@ test("assessment prompt forbids scores and personality judgments", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/ai/model-policy.test.ts lib/interview/agent/assessment.test.ts`  
+Run: `pnpm exec tsx --test lib/ai/model-policy.test.ts lib/interview/agent/assessment.test.ts`
 Expected: FAIL because the task and assessment module are missing.
 
 - [ ] **Step 3: Register the task and implement the prompt builder**
@@ -170,7 +170,7 @@ export function assessAnswer(input: AssessmentInput, signal?: AbortSignal) {
 
 - [ ] **Step 5: Run focused tests and typecheck**
 
-Run: `pnpm exec tsx --test lib/ai/model-policy.test.ts lib/interview/agent/assessment.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/ai/model-policy.test.ts lib/interview/agent/assessment.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -216,7 +216,7 @@ test("commits assessment and coverage in one transaction", async () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/assessment-service.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/assessment-service.test.ts`
 Expected: FAIL because the service is missing.
 
 - [ ] **Step 3: Implement lookup, model call, conflict recovery, and coverage transaction**
@@ -253,7 +253,7 @@ The assessment belongs after the cache-stable prefix because it changes each ans
 
 - [ ] **Step 6: Run tests and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/agent/assessment-service.test.ts lib/interview/agent/context/assembler.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/assessment-service.test.ts lib/interview/agent/context/assembler.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -294,7 +294,7 @@ test("answer run instructions proceed from assessment to coverage and action", (
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/skills.test.ts lib/interview/agent/tool-registry.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/skills.test.ts lib/interview/agent/tool-registry.test.ts`
 Expected: FAIL because the scoring tool is still exposed.
 
 - [ ] **Step 3: Remove the tool and replace the Skill**
@@ -310,7 +310,7 @@ const AGENT_SYSTEM_PROMPT =
 
 - [ ] **Step 5: Run Agent runtime regression tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/skills.test.ts lib/interview/agent/tool-registry.test.ts lib/interview/agent/runtime.test.ts && pnpm test`  
+Run: `pnpm exec tsx --test lib/interview/agent/skills.test.ts lib/interview/agent/tool-registry.test.ts lib/interview/agent/runtime.test.ts && pnpm test`
 Expected: PASS and no test expects formal per-turn scores.
 
 - [ ] **Step 6: Commit**
@@ -352,7 +352,7 @@ test("true repetition still warns, warns, and breaks inside one phase", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/loop-detector.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/loop-detector.test.ts`
 Expected: FAIL because phase fields are unsupported.
 
 - [ ] **Step 3: Implement phase-aware counters**
@@ -378,7 +378,7 @@ await repository.saveCheckpoint(runId, {
 
 - [ ] **Step 5: Run detector and runtime tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/loop-detector.test.ts lib/interview/agent/runtime.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/loop-detector.test.ts lib/interview/agent/runtime.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -440,7 +440,7 @@ test("a stale completion lease can be reclaimed", async () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/completion/repository.test.ts lib/interview/completion/worker.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/completion/repository.test.ts lib/interview/completion/worker.test.ts`
 Expected: FAIL because completion modules are missing.
 
 - [ ] **Step 3: Implement completion repository and leased Worker**
@@ -478,7 +478,7 @@ The room recovery flow calls this endpoint when it observes `scoring` or `report
 
 - [ ] **Step 5: Run focused tests and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/completion/*.test.ts lib/interview/agent/service.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/completion/*.test.ts lib/interview/agent/service.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -522,7 +522,7 @@ test("does not write zero or start a report after exhausted scoring failure", as
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/completion/scoring.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/completion/scoring.test.ts`
 Expected: FAIL because scoring orchestration is missing.
 
 - [ ] **Step 3: Implement atomic per-question claims and bounded workers**
@@ -553,7 +553,7 @@ Return `{ total, pending, scoring, scored, failed }` and interview status so UI 
 
 - [ ] **Step 6: Run migrations, all tests, lint, and build**
 
-Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: all pass; lint retains at most the two pre-existing warnings.
 
 - [ ] **Step 7: Commit**

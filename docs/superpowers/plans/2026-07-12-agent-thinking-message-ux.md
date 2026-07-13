@@ -56,7 +56,7 @@ test("requires stable artifact identity", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts lib/interview/agent/public-events.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts lib/interview/agent/public-events.test.ts`
 Expected: FAIL because schemas and event names are missing.
 
 - [ ] **Step 3: Add strict payload schemas**
@@ -90,7 +90,7 @@ const artifactMappers: Partial<Record<InterviewToolName, ArtifactMapper>> = {
 
 - [ ] **Step 5: Run tests and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts lib/interview/agent/public-events.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts lib/interview/agent/public-events.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -133,7 +133,7 @@ test("does not emit an artifact for a failed tool", async () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/completion/worker.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/completion/worker.test.ts`
 Expected: FAIL because public events are not emitted.
 
 - [ ] **Step 3: Emit assessment and planning summaries**
@@ -163,7 +163,7 @@ The completion Worker appends scoring progress after each committed score batch 
 
 - [ ] **Step 6: Run focused and full tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/completion/worker.test.ts && pnpm test && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/completion/worker.test.ts && pnpm test && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -209,7 +209,7 @@ test("a new run resets manual panel choice to automatic expanded mode", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`
 Expected: FAIL because the reducer module does not exist.
 
 - [ ] **Step 3: Define normalized state**
@@ -232,7 +232,7 @@ export type AgentRoomState = {
 
 - [ ] **Step 5: Run reducer tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -273,7 +273,7 @@ test("retry with one idempotency key returns the same message and run", async ()
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/service.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/service.test.ts`
 Expected: FAIL because the service currently returns only Run state.
 
 - [ ] **Step 3: Return the accepted durable message from the store/service**
@@ -304,7 +304,7 @@ On HTTP failure, dispatch `candidate_failed`; retry reuses the stored idempotenc
 
 - [ ] **Step 5: Run service, reducer, and type tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/service.test.ts lib/interview/agent/room-state.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/service.test.ts lib/interview/agent/room-state.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -347,7 +347,7 @@ test("shows processing entries and leaves failure expanded", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test components/interview/agent-thinking-panel.test.ts`  
+Run: `pnpm exec tsx --test components/interview/agent-thinking-panel.test.ts`
 Expected: FAIL because the component/view-model is missing.
 
 - [ ] **Step 3: Implement the accessible thinking panel**
@@ -364,7 +364,7 @@ Render candidate/interviewer messages, thinking panels, provisional content, and
 
 - [ ] **Step 6: Add Chinese and English copy, then test and lint**
 
-Run: `pnpm exec tsx --test components/interview/agent-thinking-panel.test.ts lib/interview/agent/room-state.test.ts && npx tsc --noEmit && pnpm lint`  
+Run: `pnpm exec tsx --test components/interview/agent-thinking-panel.test.ts lib/interview/agent/room-state.test.ts && npx tsc --noEmit && pnpm lint`
 Expected: tests/typecheck pass; lint retains at most the two pre-existing warnings.
 
 - [ ] **Step 7: Commit**
@@ -400,7 +400,7 @@ test("loads one complete Agent room snapshot", async () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/room-data.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/room-data.test.ts`
 Expected: FAIL because the loader is missing.
 
 - [ ] **Step 3: Extract the authenticated room loader**
@@ -430,7 +430,7 @@ The Agent client initializes directly from props. Add an in-flight promise guard
 
 - [ ] **Step 6: Run loader tests, typecheck, and build**
 
-Run: `pnpm exec tsx --test lib/interview/room-data.test.ts && npx tsc --noEmit && pnpm build`  
+Run: `pnpm exec tsx --test lib/interview/room-data.test.ts && npx tsc --noEmit && pnpm build`
 Expected: PASS and the room route builds as dynamic server-rendered.
 
 - [ ] **Step 7: Restore generated `next-env.d.ts` if needed, then commit**
@@ -466,7 +466,7 @@ test("disables report until completed", () => {
 
 - [ ] **Step 2: Verify failure**
 
-Run: `pnpm exec tsx --test components/interview/interview-completion-progress.test.ts`  
+Run: `pnpm exec tsx --test components/interview/interview-completion-progress.test.ts`
 Expected: FAIL because the component/view-model is missing.
 
 - [ ] **Step 3: Implement scoring/report progress**
@@ -479,7 +479,7 @@ For `scoring` or `reporting`, render progress instead of an incomplete report. F
 
 - [ ] **Step 5: Run tests, typecheck, and lint**
 
-Run: `pnpm exec tsx --test components/interview/interview-completion-progress.test.ts && npx tsc --noEmit && pnpm lint`  
+Run: `pnpm exec tsx --test components/interview/interview-completion-progress.test.ts && npx tsc --noEmit && pnpm lint`
 Expected: PASS with at most the two pre-existing warnings.
 
 - [ ] **Step 6: Commit**
@@ -515,12 +515,12 @@ Include:
 
 - [ ] **Step 2: Run full automated validation**
 
-Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: all pass; lint retains at most the two pre-existing warnings.
 
 - [ ] **Step 3: Run live contracts when configured**
 
-Run: `pnpm test:interview:agent && pnpm test:interview:failure` when `INTERVIEW_AGENT_TEST_RESUME_VERSION_ID` is present.  
+Run: `pnpm test:interview:agent && pnpm test:interview:failure` when `INTERVIEW_AGENT_TEST_RESUME_VERSION_ID` is present.
 Expected: both pass. If absent, record the skip explicitly.
 
 - [ ] **Step 4: Execute browser QA**

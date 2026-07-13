@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { interviewAgentEvents, interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviews, interviewQuestions, questionScores, resumes, resumeVersions } from "@/lib/db/schema";
+import { interviewAgentEvents, interviewAgentRuns, interviewCompletionJobs, interviewMessages, interviewQuestions, interviewResumeSnapshots, interviews, questionScores } from "@/lib/db/schema";
 import { and, eq, asc, desc, inArray } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
 import type { AgentExitReason } from "@/lib/interview/agent/contracts";
 import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
+import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
+import { getCompletionRecoveryDisposition } from "@/lib/interview/completion/worker";
 
 export async function GET(
   _request: NextRequest,
@@ -21,14 +23,13 @@ export async function GET(
     const { id } = await params;
 
     const [interviewRow] = await db
-      .select({ interview: interviews, resumeVersion: resumeVersions })
+      .select({ interview: interviews, resumeSnapshot: interviewResumeSnapshots })
       .from(interviews)
-      .innerJoin(resumeVersions, eq(resumeVersions.id, interviews.resumeVersionId))
-      .innerJoin(resumes, eq(resumes.id, resumeVersions.resumeId))
-      .where(and(eq(interviews.id, id), eq(resumes.userId, userId)));
+      .innerJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
+      .where(and(eq(interviews.id, id), eq(interviewResumeSnapshots.ownerUserId, userId)));
 
     const interview = interviewRow?.interview;
-    const resumeVersion = interviewRow?.resumeVersion;
+    const resumeSnapshot = interviewRow?.resumeSnapshot;
 
     if (!interview) {
       return NextResponse.json(
@@ -54,11 +55,11 @@ export async function GET(
           .orderBy(asc(interviewAgentRuns.createdAt), asc(interviewAgentRuns.id), asc(interviewAgentEvents.sequence))
         : Promise.resolve([]),
       interview.configVersion === 2
-        ? db.select({ id: interviewAgentRuns.id, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, lastEventSequence: interviewAgentRuns.lastEventSequence })
+        ? db.select({ id: interviewAgentRuns.id, interviewId: interviewAgentRuns.interviewId, status: interviewAgentRuns.status, exitReason: interviewAgentRuns.exitReason, leaseOwner: interviewAgentRuns.leaseOwner, leaseExpiresAt: interviewAgentRuns.leaseExpiresAt, leaseGeneration: interviewAgentRuns.leaseGeneration, resumeCount: interviewAgentRuns.resumeCount, nextResumeAt: interviewAgentRuns.nextResumeAt, checkpoint: interviewAgentRuns.checkpointJson, trigger: interviewAgentRuns.triggerJson, lastEventSequence: interviewAgentRuns.lastEventSequence })
           .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt)).limit(1)
         : Promise.resolve([]),
       interview.configVersion === 2
-        ? db.select({ id: interviewCompletionJobs.id, status: interviewCompletionJobs.status, attemptCount: interviewCompletionJobs.attemptCount })
+        ? db.select({ id: interviewCompletionJobs.id, interviewId: interviewCompletionJobs.interviewId, status: interviewCompletionJobs.status, leaseOwner: interviewCompletionJobs.leaseOwner, leaseExpiresAt: interviewCompletionJobs.leaseExpiresAt, leaseGeneration: interviewCompletionJobs.leaseGeneration, attemptCount: interviewCompletionJobs.attemptCount, nextAttemptAt: interviewCompletionJobs.nextAttemptAt })
           .from(interviewCompletionJobs).where(eq(interviewCompletionJobs.interviewId, id)).limit(1)
         : Promise.resolve([]),
     ]);
@@ -84,11 +85,31 @@ export async function GET(
         messages: agentMessages,
         latestRun: latestRuns[0]
           ? {
-              ...latestRuns[0],
+              id: latestRuns[0].id,
+              status: latestRuns[0].status,
+              exitReason: latestRuns[0].exitReason,
+              lastEventSequence: latestRuns[0].lastEventSequence,
               userMessage: agentExitMessage(latestRuns[0].exitReason as AgentExitReason | null),
+              recoveryDisposition: getRecoveryDisposition({
+                ...latestRuns[0],
+                status: latestRuns[0].status as "running" | "completed" | "failed",
+                exitReason: latestRuns[0].exitReason as AgentExitReason | null,
+                checkpoint: latestRuns[0].checkpoint as import("@/lib/interview/agent/contracts").AgentCheckpoint | null,
+                trigger: latestRuns[0].trigger as import("@/lib/interview/agent/repository").AgentRunTrigger | null,
+              }, new Date()),
             }
           : null,
-        completionJob: completionJobs[0] ?? null,
+        completionJob: completionJobs[0]
+          ? {
+              id: completionJobs[0].id,
+              status: completionJobs[0].status as import("@/lib/interview/completion/repository").CompletionJobStatus,
+              attemptCount: completionJobs[0].attemptCount,
+              recoveryDisposition: getCompletionRecoveryDisposition({
+                ...completionJobs[0],
+                status: completionJobs[0].status as import("@/lib/interview/completion/repository").CompletionJobStatus,
+              }, new Date()),
+            }
+          : null,
         scoringProgress: rows.reduce((progress, { question }) => {
           if (!question.answeredAt) return progress;
           progress.total += 1;
@@ -106,14 +127,15 @@ export async function GET(
         }),
         publicEvents: publicEvents.filter((event) => event.type !== "artifact_committed"),
       } : null,
-      resumeSnapshot: resumeVersion
+      resumeSnapshot: resumeSnapshot
         ? {
-            id: resumeVersion.id,
-            versionNumber: resumeVersion.versionNumber,
-            originalFilename: resumeVersion.originalFilename,
-            originalFileUrl: resumeVersion.storedPath,
-            parseStatus: resumeVersion.parseStatus,
-            parsedData: (resumeVersion.parsedJson as ParsedResume) ?? null,
+            id: resumeSnapshot.id,
+            title: resumeSnapshot.resumeTitle,
+            versionNumber: resumeSnapshot.versionNumber,
+            originalFilename: resumeSnapshot.originalFilename,
+            originalFileUrl: resumeSnapshot.storedPath,
+            parseStatus: resumeSnapshot.parseStatus,
+            parsedData: (resumeSnapshot.parsedJson as ParsedResume) ?? null,
           }
         : null,
     });

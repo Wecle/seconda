@@ -48,6 +48,117 @@ test("completes after a domain tool commits a candidate-visible outcome", async 
   assert.equal(repository.inspectRun(run.id)?.status, "completed");
 });
 
+test("finishes a recovered run from an acting checkpoint without replaying the model", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "checkpoint-recovery" });
+  await repository.appendEvent(run.id, {
+    type: "message_committed",
+    payload: { runId: run.id, messageId: "message-1", messageSequence: 1 },
+  });
+  await repository.saveCheckpoint(run.id, {
+    turnCount: 2,
+    toolCallCount: 3,
+    lastEventSequence: 1,
+    progressHash: "committed",
+    activeSkillNames: [],
+    phase: "acting",
+    terminalAttemptCount: 1,
+  });
+  let modelCalls = 0;
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() {
+        modelCalls += 1;
+        throw new Error("recovery must not replay the model");
+      },
+    },
+    tools: new Map([["ask_interview_question", tool("ask_interview_question")]]),
+    initialMessages: [{ role: "user", content: "accepted answer" }],
+    signal: new AbortController().signal,
+    progressHash: () => "committed",
+  });
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 2);
+  assert.equal(modelCalls, 0);
+  assert.equal((await repository.getRun(run.id))?.status, "completed");
+});
+
+test("replays a pending terminal tool idempotently after business commit and before checkpoint", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "post-commit-crash" });
+  const definition = tool("ask_interview_question");
+  definition.execute = async (_input, context) => {
+    if (!context.toolCallId) throw new Error("tool call id is required");
+    return context.repository.commitQuestionOutcome({
+      runId: context.runId,
+      interviewId: context.interviewId,
+      toolCallId: context.toolCallId,
+      lease: context.lease,
+      category: "technical_depth",
+      topic: "cache",
+      question: "如何保证缓存一致性？",
+      responseText: "请说明如何保证缓存一致性？",
+      resumeEvidenceIds: ["project:cache"],
+    });
+  };
+  const saveCheckpoint = repository.saveCheckpoint.bind(repository);
+  let crashAfterCommit = true;
+  repository.saveCheckpoint = async (runId, checkpoint, lease) => {
+    if (
+      crashAfterCommit
+      && checkpoint.toolCallCount === 1
+      && !checkpoint.pendingToolCall
+    ) {
+      crashAfterCommit = false;
+      throw new Error("simulated process crash after business commit");
+    }
+    await saveCheckpoint(runId, checkpoint, lease);
+  };
+
+  await assert.rejects(runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() {
+        return { type: "tool_call", callId: "stable-call", toolName: definition.name, args: {} };
+      },
+    },
+    tools: new Map([[definition.name, definition]]),
+    initialMessages: [{ role: "user", content: "accepted answer" }],
+    signal: new AbortController().signal,
+    progressHash: () => "question-committed",
+  }), /simulated process crash/);
+  assert.equal(repository.inspectInterview("interview").questions.length, 1);
+  assert.equal((await repository.getRun(run.id))?.status, "running");
+
+  repository.saveCheckpoint = saveCheckpoint;
+  let recoveryModelCalls = 0;
+  const recovered = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep() {
+        recoveryModelCalls += 1;
+        throw new Error("pending tool recovery must not call the model");
+      },
+    },
+    tools: new Map([[definition.name, definition]]),
+    initialMessages: [{ role: "user", content: "accepted answer" }],
+    signal: new AbortController().signal,
+    progressHash: () => "question-committed",
+  });
+  const snapshot = repository.inspectInterview("interview");
+  assert.equal(recovered.exitReason, "completed");
+  assert.equal(recoveryModelCalls, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messages.length, 1);
+});
+
 test("enters terminal phase after fifteen planning tools and still asks", async () => {
   const planning = Array.from({ length: 15 }, (_, index) => ({
     type: "tool_call" as const,

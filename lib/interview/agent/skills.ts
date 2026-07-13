@@ -23,7 +23,7 @@ const skills: InterviewSkill[] = [
     name: "coverage-planning",
     version: "1",
     description: "根据覆盖度、回答质量和信息增益决定追问、换题或结束。",
-    instructions: "优先使用已注入的覆盖度；仅在 Prompt 未提供覆盖度时调用 get_coverage_state。每次回答后更新对应主题。同类最多三题，全局最多二十轮，信息增益不足时结束。",
+    instructions: "优先使用已注入的覆盖度；仅在 Prompt 未提供覆盖度时调用 get_coverage_state。每次回答后更新对应主题。同类最多三题，全局最多二十轮，信息增益不足时只能提出结束建议，最终由应用策略校验。开场岗位明确时在 ask_interview_question 中提交带来源的 inferred targetRole；候选人确认方向后提交 confirmed targetRole；方向不明确时使用 clarify 且不虚构岗位。",
     toolNames: ["get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
   },
   {

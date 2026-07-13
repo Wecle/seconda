@@ -45,7 +45,7 @@ test("requires response_started before run-scoped deltas can be correlated", () 
 
 - [ ] **Step 2: Run the focused test and verify it fails**
 
-Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts`
 Expected: FAIL because `response_started` and Run-scoped fields are absent.
 
 - [ ] **Step 3: Add strict schemas and subscription support**
@@ -69,7 +69,7 @@ Add `response_started` to `agentEventTypeSchema` and the client public event lis
 
 - [ ] **Step 4: Run focused test and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/stream-contracts.test.ts && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -106,7 +106,7 @@ test("finishes planning before streaming a candidate-visible response", async ()
 
 - [ ] **Step 2: Run test and verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/agent/model-port.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/agent/model-port.test.ts`
 Expected: FAIL because the current model port streams while choosing a tool.
 
 - [ ] **Step 3: Introduce a response stream port**
@@ -131,7 +131,7 @@ Planning may stream provider-internal structured output to the server, but it mu
 
 - [ ] **Step 5: Run focused tests, full Agent tests, and typecheck**
 
-Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/agent/model-port.test.ts && pnpm test && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/runtime.test.ts lib/interview/agent/model-port.test.ts && pnpm test && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -178,7 +178,7 @@ test("accepts evidence-grounded acknowledgement plus one question", () => {
 
 - [ ] **Step 2: Run test and verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/grounding.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/grounding.test.ts`
 Expected: FAIL because the grounding module is missing.
 
 - [ ] **Step 3: Implement strict plan and claim validation**
@@ -206,7 +206,7 @@ If validation fails, return the error to the Agent loop for a bounded repair. Do
 
 - [ ] **Step 6: Run grounding, tool, runtime, and full tests**
 
-Run: `pnpm exec tsx --test lib/interview/agent/grounding.test.ts lib/interview/agent/tool-registry.test.ts lib/interview/agent/runtime.test.ts && pnpm test && npx tsc --noEmit`  
+Run: `pnpm exec tsx --test lib/interview/agent/grounding.test.ts lib/interview/agent/tool-registry.test.ts lib/interview/agent/runtime.test.ts && pnpm test && npx tsc --noEmit`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -249,7 +249,7 @@ test("keeps two turns isolated after snapshot hydration", () => {
 
 - [ ] **Step 2: Run reducer test and verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts`
 Expected: FAIL because thinking/artifacts are global.
 
 - [ ] **Step 3: Normalize state by Run**
@@ -278,7 +278,7 @@ For each turn render its candidate message, thinking panel, artifact cards, then
 
 - [ ] **Step 6: Run reducer tests, typecheck, lint, and build**
 
-Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm exec tsx --test lib/interview/agent/room-state.test.ts && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: PASS; lint retains only the two existing warnings.
 
 - [ ] **Step 7: Commit**
@@ -316,7 +316,7 @@ test("backs off and stops at terminal, hidden, or two minutes", () => {
 
 - [ ] **Step 2: Run test and verify failure**
 
-Run: `pnpm exec tsx --test lib/interview/completion/polling.test.ts`  
+Run: `pnpm exec tsx --test lib/interview/completion/polling.test.ts`
 Expected: FAIL because the policy does not exist.
 
 - [ ] **Step 3: Implement pure bounded policy**
@@ -340,7 +340,7 @@ Remove the room's `setInterval(1500)` and report page's recursive fixed-delay fe
 
 - [ ] **Step 6: Run polling tests, all tests, typecheck, lint, and build**
 
-Run: `pnpm exec tsx --test lib/interview/completion/polling.test.ts && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm exec tsx --test lib/interview/completion/polling.test.ts && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: PASS; no ongoing detail requests after terminal status.
 
 - [ ] **Step 7: Commit**
@@ -366,12 +366,12 @@ Add exact checks for per-turn ordering, `response_started` before the first delt
 
 - [ ] **Step 2: Run database and automated validation**
 
-Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`  
+Run: `pnpm db:migrate && pnpm db:migrate && pnpm test && npx tsc --noEmit && pnpm lint && pnpm build`
 Expected: migrations are idempotent; tests/typecheck/build pass; lint has at most the two existing warnings.
 
 - [ ] **Step 3: Run live contracts when configured**
 
-Run: `test -n "$INTERVIEW_AGENT_TEST_RESUME_VERSION_ID" && pnpm test:interview:agent && pnpm test:interview:failure`  
+Run: `test -n "$INTERVIEW_AGENT_TEST_RESUME_VERSION_ID" && pnpm test:interview:agent && pnpm test:interview:failure`
 Expected: both pass when configured; otherwise record the explicit skip.
 
 - [ ] **Step 4: Browser QA**
