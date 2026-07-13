@@ -17,6 +17,13 @@ test("loads answer planning without formal scoring tools", () => {
   assert.equal(resolved.toolNames.has("get_interview_history"), true);
 });
 
+test("prefers injected history and coverage over redundant reads", () => {
+  const instructions = resolveRunSkills("answer").skills.map((skill) => skill.instructions).join("\n");
+  assert.match(instructions, /已注入的最近消息/);
+  assert.match(instructions, /已注入的覆盖度/);
+  assert.match(instructions, /不得重复调用/);
+});
+
 test("rejects duplicate skills and missing tool declarations", () => {
   const skill = { name: "one", version: "1", description: "test", instructions: "test", toolNames: ["missing"] };
   assert.throws(() => createSkillCatalog([skill, skill], new Set(["missing"])), /Duplicate skill/);
