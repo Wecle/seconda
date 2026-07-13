@@ -78,6 +78,54 @@ test("does not count an early terminal action as a planning step", async () => {
   assert.equal(modelCalls, 1);
 });
 
+test("restores planning tools after an early terminal action needs evidence repair", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-repair" });
+  const ask = tool("ask_interview_question");
+  ask.validateBusiness = async (input) => (
+    (input as { resumeEvidenceIds?: string[] }).resumeEvidenceIds?.length
+      ? null
+      : {
+          code: "MISSING_EVIDENCE",
+          message: "问题缺少有效的简历证据引用。",
+          retryable: false,
+          suggestion: "先调用 get_resume_evidence。",
+        }
+  );
+  const steps: AgentModelStep[] = [
+    { type: "tool_call", callId: "ask-missing", toolName: "ask_interview_question", args: {} },
+    { type: "tool_call", callId: "load-evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["project:3"] } },
+    { type: "tool_call", callId: "ask-grounded", toolName: "ask_interview_question", args: { resumeEvidenceIds: ["project:3"] } },
+  ];
+  const offeredTools: string[][] = [];
+  let index = 0;
+
+  const result = await runInterviewAgent({
+    interviewId: "interview",
+    runId: run.id,
+    repository,
+    model: {
+      async nextStep(input) {
+        offeredTools.push(input.tools.map(({ name }) => name));
+        return steps[index++];
+      },
+    },
+    tools: new Map([
+      ["get_resume_evidence", tool("get_resume_evidence")],
+      ["ask_interview_question", ask],
+      ["finish_interview", tool("finish_interview")],
+    ]),
+    initialMessages: [{ role: "user", content: "回答" }],
+    signal: new AbortController().signal,
+    progressHash: () => String(index),
+  });
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 1);
+  assert.ok(offeredTools[1].includes("get_resume_evidence"));
+  assert.equal(repository.inspectRun(run.id)?.checkpoint?.terminalAttemptCount, 2);
+});
+
 test("allows one terminal action and two repairs", async () => {
   const terminal = tool("ask_interview_question");
   terminal.validateBusiness = async () => ({
