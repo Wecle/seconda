@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { nextReconnectDelay } from "@/lib/interview/agent/client-stream";
+import { parseAgentRunStreamEvent } from "@/lib/interview/agent/client-event";
+import { agentRunEventsPath, nextReconnectDelay } from "@/lib/interview/agent/client-stream";
+import { publicAgentEventTypes } from "@/lib/interview/agent/contracts";
+
+export type { AgentRunStreamEvent } from "@/lib/interview/agent/client-event";
+import type { AgentRunStreamEvent } from "@/lib/interview/agent/client-event";
 
 export type AgentRunStreamStatus = {
   id: string;
@@ -12,31 +17,6 @@ export type AgentRunStreamStatus = {
   recoveryDisposition?: "already_running" | "schedule" | "cooldown" | "exhausted" | "completed" | "failed";
 };
 
-export type AgentRunStreamEvent = {
-  type: string;
-  sequence: number;
-  payload: unknown;
-};
-
-const eventTypes = [
-  "run_started",
-  "thinking_started",
-  "thinking_summary",
-  "response_started",
-  "artifact_committed",
-  "scoring_progress",
-  "reporting_started",
-  "model_started",
-  "text_delta",
-  "warning",
-  "checkpoint",
-  "compacted",
-  "message_committed",
-  "run_completed",
-  "run_failed",
-  "heartbeat",
-];
-
 export function useAgentRunStream(options: {
   interviewId: string;
   run: AgentRunStreamStatus | null;
@@ -45,31 +25,34 @@ export function useAgentRunStream(options: {
   onTerminal: (run: AgentRunStreamStatus) => void | Promise<void>;
   resumeRun?: (runId: string, signal: AbortSignal) => Promise<void>;
 }) {
+  const { afterSequence = 0, interviewId, onEvent, onTerminal, resumeRun, run } = options;
   const [connectionState, setConnectionState] = useState<
     "idle" | "connecting" | "open" | "reconnecting" | "recovering" | "manual_retry" | "terminal"
-  >(options.run?.status === "running" && options.run.recoveryDisposition !== "exhausted" ? "connecting" : "idle");
+  >(run?.status === "running" && run.recoveryDisposition !== "exhausted" ? "connecting" : "idle");
   const [retryVersion, setRetryVersion] = useState(0);
-  const cursorRef = useRef(options.afterSequence ?? 0);
-  const cursorRunRef = useRef<string | undefined>(options.run?.id);
-  const callbacksRef = useRef({ onEvent: options.onEvent, onTerminal: options.onTerminal });
-  const resumeRunRef = useRef(options.resumeRun);
+  const cursorRef = useRef(afterSequence);
+  const cursorRunRef = useRef<string | undefined>(run?.id);
+  const callbacksRef = useRef({ onEvent, onTerminal });
+  const resumeRunRef = useRef(resumeRun);
   const recoveryAttemptedRunRef = useRef<string | null>(null);
-  callbacksRef.current = { onEvent: options.onEvent, onTerminal: options.onTerminal };
-  resumeRunRef.current = options.resumeRun;
-  const runId = options.run?.id;
-  const runStatus = options.run?.recoveryDisposition === "exhausted" ? "failed" : options.run?.status;
+  callbacksRef.current = { onEvent, onTerminal };
+  resumeRunRef.current = resumeRun;
+  const runId = run?.id;
+  const runStatus = run?.recoveryDisposition === "exhausted" ? "failed" : run?.status;
 
   const retry = useCallback(() => {
-    cursorRef.current = Math.max(cursorRef.current, options.afterSequence ?? 0);
+    cursorRef.current = Math.max(cursorRef.current, afterSequence);
     setConnectionState("connecting");
     setRetryVersion((value) => value + 1);
-  }, [options.afterSequence]);
+  }, [afterSequence]);
 
   useEffect(() => {
     if (!runId || runStatus !== "running") return;
     if (cursorRunRef.current !== runId) {
       cursorRunRef.current = runId;
-      cursorRef.current = options.afterSequence ?? 0;
+      cursorRef.current = afterSequence;
+    } else {
+      cursorRef.current = Math.max(cursorRef.current, afterSequence);
     }
     let disposed = false;
     let source: EventSource | null = null;
@@ -79,23 +62,17 @@ export function useAgentRunStream(options: {
 
     const connect = () => {
       if (disposed) return;
-      source = new EventSource(
-        `/api/interviews/${options.interviewId}/runs/${runId}/events?after=${cursorRef.current}`,
-      );
+      source = new EventSource(agentRunEventsPath(interviewId, runId, cursorRef.current));
       source.onopen = () => {
         setConnectionState("open");
       };
-      for (const type of eventTypes) {
+      for (const type of publicAgentEventTypes) {
         source.addEventListener(type, (raw) => {
           reconnectAttempt = 0;
           const message = raw as MessageEvent;
-          const sequence = Number(message.lastEventId);
-          if (Number.isInteger(sequence)) cursorRef.current = Math.max(cursorRef.current, sequence);
-          const event = {
-            type,
-            sequence: Number.isInteger(sequence) ? sequence : cursorRef.current,
-            payload: safeJson(message.data),
-          };
+          const event = parseAgentRunStreamEvent(type, message);
+          if (!event || event.payload.runId !== runId) return;
+          cursorRef.current = Math.max(cursorRef.current, event.sequence);
           void callbacksRef.current.onEvent(event);
           if (type === "run_completed" || type === "run_failed") {
             source?.close();
@@ -108,7 +85,7 @@ export function useAgentRunStream(options: {
         if (disposed) return;
         try {
           const response = await fetch(
-            `/api/interviews/${options.interviewId}/runs/${runId}`,
+            `/api/interviews/${interviewId}/runs/${runId}`,
             { cache: "no-store" },
           );
           if (!response.ok) throw new Error("Run status request failed");
@@ -153,15 +130,7 @@ export function useAgentRunStream(options: {
       source?.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [options.afterSequence, options.interviewId, retryVersion, runId, runStatus]);
+  }, [afterSequence, interviewId, retryVersion, runId, runStatus]);
 
   return { connectionState, retry, lastSequence: cursorRef };
-}
-
-function safeJson(value: string) {
-  try {
-    return JSON.parse(value) as unknown;
-  } catch {
-    return null;
-  }
 }

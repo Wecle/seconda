@@ -6,7 +6,7 @@ test("loads only opening skills and their required tools", () => {
   const resolved = resolveRunSkills("opening");
   assert.deepEqual(resolved.skills.map((skill) => skill.name), ["resume-grounding", "coverage-planning"]);
   assert.equal(resolved.toolNames.has("record_answer_evaluation" as never), false);
-  assert.equal(resolved.toolNames.has("ask_interview_question"), true);
+  assert.equal(resolved.toolNames.has("submit_interview_turn"), true);
   assert.equal(resolved.toolNames.has("get_interview_history"), false);
 });
 

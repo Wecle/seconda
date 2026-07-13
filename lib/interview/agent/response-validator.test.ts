@@ -1,7 +1,44 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateFinalResponse } from "./response-validator";
+import {
+  validateFinalResponse,
+  validateResponseProgress,
+} from "./response-validator";
+
+test("rejects unsafe response progress before a complete question is required", () => {
+  assert.deepEqual(validateResponseProgress({
+    action: "ask",
+    language: "zh",
+    text: "你提到了 30 秒回退机制。",
+    allowedTerms: ["30 秒", "回退机制"],
+  }), { ok: true });
+  for (const input of [
+    { text: "你的逻辑性是 8 分。", allowedTerms: ["8"] },
+    { text: "你提到了 60 秒回退机制。", allowedTerms: ["30 秒", "回退机制"] },
+    { text: "为什么这样做？如何验证？", allowedTerms: [] },
+    { text: "responseText: 请继续", allowedTerms: [] },
+  ]) {
+    assert.equal(validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    }).ok, false);
+  }
+  assert.equal(validateResponseProgress({
+    action: "finish",
+    language: "zh",
+    text: "面试结束，还有问题吗？",
+    allowedTerms: [],
+  }).ok, false);
+  assert.equal(validateResponseProgress({
+    action: "ask",
+    language: "zh",
+    text: "长".repeat(2_001),
+    allowedTerms: [],
+  }).ok, false);
+});
 
 test("accepts one grounded question and rejects unsafe final text", () => {
   assert.deepEqual(validateFinalResponse({
@@ -347,4 +384,21 @@ test("rejects compound questions and finish imperatives", () => {
     text: "面试结束。请介绍更多。",
     allowedTerms: [],
   }).ok, false);
+});
+
+test("rejects public PII and internal credentials", () => {
+  for (const text of [
+    "请联系 candidate@example.com 后说明回退机制？",
+    "请使用 DATABASE_URL=postgresql://secret 后说明回退机制？",
+    "请使用 api_key=sk-secret123456 后说明回退机制？",
+  ]) {
+    const result = validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text,
+      allowedTerms: ["回退机制"],
+    });
+    assert.equal(result.ok, false, text);
+    assert.equal(!result.ok && result.code, "SENSITIVE_CONTENT", text);
+  }
 });

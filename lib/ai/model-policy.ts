@@ -5,7 +5,6 @@ export type AITask =
   | "question.generate"
   | "question.follow-up"
   | "answer.score"
-  | "answer.assess"
   | "report.generate"
   | "coach.generate"
   | "coach.evaluate";
@@ -36,7 +35,6 @@ const taskTiers: Record<AITask, AIModelTier> = {
   "question.generate": "fast",
   "question.follow-up": "fast",
   "answer.score": "quality",
-  "answer.assess": "fast",
   "report.generate": "quality",
   "coach.generate": "quality",
   "coach.evaluate": "quality",

@@ -16,22 +16,22 @@ const skills: InterviewSkill[] = [
     name: "resume-grounding",
     version: "1",
     description: "基于稳定简历证据提问，禁止补全或虚构经历。",
-    instructions: "优先使用 Prompt 中已注入的最近消息、answer:消息ID、覆盖度和证据目录；这些数据存在时不得重复调用 get_interview_history 或 get_coverage_state。只有需要证据目录未包含的简历原文细节时才调用 get_resume_evidence，并且只能使用目录中出现的稳定 ID。候选人可见评价和问题中的确定性事实必须逐项写入 claims；无法确认时改成询问句。sourceIds 只能放在 claims 中，绝不能出现在 acknowledgement 或 question。不得补全人数、年限、技术栈、职责或成果。",
+    instructions: "优先使用 Prompt 中已注入的最近消息、answer:消息ID、覆盖度和证据目录；这些数据存在时不得重复调用 get_interview_history 或 get_coverage_state。只有需要证据目录未包含的简历原文细节时才调用 get_resume_evidence，并且只能使用目录中出现的稳定 ID。终结提案的 evidenceIds 和 coverageChanges 只能引用已提供的稳定证据 ID；无法确认的事实必须改成询问句。不得补全人数、年限、技术栈、职责或成果。",
     toolNames: ["get_resume_evidence", "get_interview_history"],
   },
   {
     name: "coverage-planning",
     version: "1",
     description: "根据覆盖度、回答质量和信息增益决定追问、换题或结束。",
-    instructions: "优先使用已注入的覆盖度；仅在 Prompt 未提供覆盖度时调用 get_coverage_state。每次回答后更新对应主题。同类最多三题，全局最多二十轮，信息增益不足时只能提出结束建议，最终由应用策略校验。开场岗位明确时在 ask_interview_question 中提交带来源的 inferred targetRole；候选人确认方向后提交 confirmed targetRole；方向不明确时使用 clarify 且不虚构岗位。",
-    toolNames: ["get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
+    instructions: "优先使用已注入的覆盖度；仅在 Prompt 未提供覆盖度时调用 get_coverage_state。每次回答后把轻量评估、覆盖度变化与下一行动合并到唯一的 submit_interview_turn 终结提案。同类最多三题，全局最多二十轮，结束建议最终由应用策略校验。开场方向不明确时使用 clarify 且不虚构岗位。",
+    toolNames: ["get_coverage_state", "submit_interview_turn"],
   },
   {
     name: "answer-planning",
     version: "1",
     description: "根据已提交的轻量评估规划下一步面试行动。",
-    instructions: "系统已经完成最新回答的轻量质量判断，并已注入最近消息和覆盖度；不得重复调用读取工具。只选择一个追问、一个新主题或结束；不得生成或写入正式分数。追问时先用1到3句评价已确认的回答内容，指出一个优势、缺口或含糊点，再自然引出且只引出一个问题。评价必须有 claims 来源，不做人格判断。",
-    toolNames: ["get_interview_history", "get_coverage_state", "update_coverage", "ask_interview_question", "finish_interview"],
+    instructions: "基于最新回答和已注入覆盖度，在 submit_interview_turn 中同时提交无分数轻量评估、覆盖度变化和一个追问、新主题或结束行动。不得生成正式分数。responseText 中只提出一个问题；评价只复述已确认内容，不做人格判断。",
+    toolNames: ["get_interview_history", "get_coverage_state", "submit_interview_turn"],
   },
 ];
 

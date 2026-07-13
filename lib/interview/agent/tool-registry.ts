@@ -1,31 +1,31 @@
 import { z } from "zod";
-import { questionCategorySchema, type AgentModelStep } from "./contracts";
-import {
-  authorizeInterviewAction,
-  type InterviewActionProposal,
-  type InterviewActionInput,
-} from "./limits";
+
+import type { AgentModelStep } from "./contracts";
 import type {
   InterviewToolContext,
   InterviewToolDefinition,
-  ToolError,
 } from "./tool-pipeline";
-import { acknowledgementSchema, groundedClaimsSchema, singleQuestionSchema } from "./grounding";
+import { interviewTurnProposalSchema } from "./turn-proposal";
 
 export const interviewToolNames = [
   "get_resume_evidence",
   "get_interview_history",
   "get_coverage_state",
-  "update_coverage",
-  "ask_interview_question",
-  "finish_interview",
+  "submit_interview_turn",
 ] as const;
 
 export type InterviewToolName = (typeof interviewToolNames)[number];
 
-type ToolHandlers = {
+type ToolHandlerInputs = {
+  get_resume_evidence: z.infer<typeof interviewToolInputSchemas.get_resume_evidence>;
+  get_interview_history: z.infer<typeof interviewToolInputSchemas.get_interview_history>;
+  get_coverage_state: z.infer<typeof interviewToolInputSchemas.get_coverage_state>;
+  submit_interview_turn: z.infer<typeof interviewTurnProposalSchema>;
+};
+
+export type InterviewToolHandlers = {
   [Name in InterviewToolName]: (
-    input: unknown,
+    input: ToolHandlerInputs[Name],
     context: InterviewToolContext,
   ) => Promise<unknown>;
 };
@@ -36,44 +36,21 @@ export type InterviewToolRegistry = Map<
 >;
 
 export const interviewToolInputSchemas = {
-  get_resume_evidence: z.object({ evidenceIds: z.array(z.string().min(1)).min(1).max(10) }).strict(),
-  get_interview_history: z.object({ limit: z.number().int().min(1).max(20).default(10) }).strict(),
+  get_resume_evidence: z.object({
+    evidenceIds: z.array(z.string().min(1)).min(1).max(10),
+  }).strict(),
+  get_interview_history: z.object({
+    limit: z.number().int().min(1).max(20).default(10),
+  }).strict(),
   get_coverage_state: z.object({}).strict(),
-  update_coverage: z.object({
-    category: questionCategorySchema,
-    topic: z.string().trim().min(1).max(200),
-    status: z.enum(["uncovered", "partial", "sufficient", "exhausted"]),
-    resumeEvidenceIds: z.array(z.string().min(1)).max(20),
-  }).strict(),
-  ask_interview_question: z.object({
-    action: z.enum(["ask", "clarify"]).default("ask"),
-    category: questionCategorySchema,
-    intent: z.enum(["new_topic", "follow_up", "verify_evidence"]),
-    acknowledgement: acknowledgementSchema,
-    question: singleQuestionSchema,
-    claims: groundedClaimsSchema,
-    topic: z.string().trim().min(1).max(200),
-    resumeEvidenceIds: z.array(z.string().min(1)).max(20),
-    targetRole: z.object({
-      value: z.string().trim().min(1).max(200),
-      status: z.enum(["inferred", "confirmed"]),
-      confidence: z.enum(["low", "medium", "high"]),
-      sourceIds: z.array(z.string().min(1)).min(1).max(10),
-    }).strict().optional(),
-  }).strict().superRefine((value, context) => {
-    if (value.action === "clarify" && value.targetRole) {
-      context.addIssue({
-        code: "custom",
-        path: ["targetRole"],
-        message: "A clarification cannot persist an unconfirmed target role",
-      });
-    }
-  }),
-  finish_interview: z.object({
-    reason: z.enum(["coverage_sufficient", "low_information_gain", "user_requested", "max_rounds"]),
-    closingMessage: z.string().trim().min(1).max(2000),
-  }).strict(),
+  submit_interview_turn: interviewTurnProposalSchema,
 } satisfies Record<InterviewToolName, z.ZodType>;
+
+export const publicInterviewToolLabels = {
+  get_resume_evidence: "核对简历证据",
+  get_interview_history: "回顾面试记录",
+  get_coverage_state: "检查能力覆盖度",
+} as const;
 
 export function createAgentProviderStepSchema(
   toolNames: readonly InterviewToolName[],
@@ -91,98 +68,22 @@ export function createAgentProviderStepSchema(
 }
 
 export function createInterviewToolRegistry(options: {
-  handlers: ToolHandlers;
-  loadActionInput: (
-    input: InterviewActionProposal,
-    context: InterviewToolContext,
-  ) => Promise<InterviewActionInput>;
-  validateEvidenceIds?: (
-    evidenceIds: readonly string[],
-    context: InterviewToolContext,
-  ) => Promise<string[]>;
-  validateClaimSourceIds?: (
-    sourceIds: readonly string[],
-    context: InterviewToolContext,
-  ) => Promise<string[]>;
+  handlers: InterviewToolHandlers;
 }): InterviewToolRegistry {
   return new Map(interviewToolNames.map((name) => {
     const definition: InterviewToolDefinition<unknown, unknown> = {
       name,
       inputSchema: interviewToolInputSchemas[name],
       normalize: normalizeToolInput,
-      async validateBusiness(input, context) {
-        if (
-          options.validateEvidenceIds &&
-          (name === "ask_interview_question" || name === "update_coverage")
-        ) {
-          const evidenceIds = (input as { resumeEvidenceIds?: unknown }).resumeEvidenceIds;
-          if (Array.isArray(evidenceIds)) {
-            const missing = await options.validateEvidenceIds(
-              evidenceIds.filter((id): id is string => typeof id === "string"),
-              context,
-            );
-            if (missing.length > 0) {
-              return {
-                code: "EVIDENCE_NOT_FOUND",
-                message: `简历证据不存在：${missing.join(", ")}`,
-                retryable: true,
-                suggestion: "调用 get_resume_evidence 并使用目录中返回的 evidence id。",
-              };
-            }
-          }
-        }
-        if (name === "finish_interview") {
-          const finishInput = input as z.infer<typeof interviewToolInputSchemas.finish_interview>;
-          const authorization = authorizeInterviewAction(await options.loadActionInput({
-            action: "finish",
-            category: "introduction",
-            intent: "new_topic",
-            resumeEvidenceIds: [],
-            finishReason: finishInput.reason,
-          }, context));
-          return authorization.allowed && authorization.action === "finish"
-            ? null
-            : authorizationError(authorization.allowed ? "invalid_action" : authorization.reason);
-        }
-        if (name !== "ask_interview_question") return null;
-        const questionInput = input as z.infer<typeof interviewToolInputSchemas.ask_interview_question>;
-        const sourceIds = [...new Set([
-          ...questionInput.claims.flatMap((claim) => claim.sourceIds),
-          ...(questionInput.targetRole?.sourceIds ?? []),
-        ])];
-        if (options.validateClaimSourceIds && sourceIds.length > 0) {
-          const missing = await options.validateClaimSourceIds(sourceIds, context);
-          if (missing.length > 0) {
-            return {
-              code: "SOURCE_NOT_FOUND",
-              message: `引用来源不存在：${missing.join(", ")}`,
-              retryable: true,
-              suggestion: "只使用 Prompt 或工具结果中返回的简历证据 ID 和 answer:消息ID。",
-            };
-          }
-        }
-        const authorization = authorizeInterviewAction(
-          await options.loadActionInput(
-            questionInput,
-            context,
-          ),
-        );
-        if (authorization.allowed && authorization.action === "ask") return null;
-        if (authorization.allowed) {
-          return {
-            code: "INTERVIEW_MUST_FINISH",
-            message: "面试已达到结束条件，不能继续提问。",
-            retryable: false,
-            suggestion: "调用 finish_interview。",
-          };
-        }
-        return authorizationError(authorization.reason);
+      async validateBusiness() {
+        return null;
       },
       async authorize(_input, context) {
         return Boolean(context.interviewId && context.runId);
       },
       execute(input, context) {
-        return options.handlers[name](input, context);
+        const handler = options.handlers[name];
+        return handler(input as never, context);
       },
     };
     return [name, definition];
@@ -191,39 +92,4 @@ export function createInterviewToolRegistry(options: {
 
 function normalizeToolInput<T>(input: T): T {
   return input;
-}
-
-function authorizationError(reason: string): ToolError {
-  const messages: Record<string, { message: string; suggestion: string }> = {
-    category_limit: {
-      message: "该题型已达到 3 题上限。",
-      suggestion: "选择尚未充分覆盖的题型。",
-    },
-    duplicate_question: {
-      message: "该问题与近期问题重复。",
-      suggestion: "切换主题或提出能获得新证据的追问。",
-    },
-    missing_evidence: {
-      message: "问题缺少有效的简历证据引用。",
-      suggestion: "先调用 get_resume_evidence，再基于返回的 evidence id 提问。",
-    },
-    invalid_action: {
-      message: "面试行动无效。",
-      suggestion: "提交一个单一且完整的问题。",
-    },
-    invalid_finish_reason: {
-      message: "结束原因与持久化面试状态不一致。",
-      suggestion: "根据用户结束标记、20 轮上限、覆盖度或信息增益选择真实原因。",
-    },
-    opening_cannot_finish: {
-      message: "开场阶段不能由 Agent 自主结束面试。",
-      suggestion: "推断岗位或提出一个岗位澄清问题。",
-    },
-    completion_not_ready: {
-      message: "面试尚未达到确定性结束条件。",
-      suggestion: "继续覆盖简历相关主题或进行必要追问。",
-    },
-  };
-  const detail = messages[reason] ?? messages.invalid_action;
-  return { code: reason.toUpperCase(), ...detail, retryable: false };
 }

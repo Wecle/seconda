@@ -17,6 +17,15 @@ export type InterviewToolContext = {
   toolCallId?: string;
   lease?: RunLeaseToken;
   provisionalMessageId?: string;
+  authorizedTerminal?: {
+    toolCallId: string;
+    attemptId: string;
+    logicalMessageId: string;
+    lease: RunLeaseToken;
+    proposalHash: string;
+    answerMessageId: string | null;
+    language: "zh" | "en" | "es" | "de";
+  };
 };
 
 export interface InterviewToolDefinition<TInput, TOutput> {
@@ -41,24 +50,26 @@ type AfterHookResult =
   | { action: "continue"; output: unknown }
   | { action: "stop"; message: string };
 
-export type ToolPipelineHook =
-  | {
-      phase: "before";
-      run(input: {
-        toolName: string;
-        input: unknown;
-        context: InterviewToolContext;
-      }): Promise<BeforeHookResult>;
-    }
-  | {
-      phase: "after";
-      run(input: {
-        toolName: string;
-        input: unknown;
-        output: unknown;
-        context: InterviewToolContext;
-      }): Promise<AfterHookResult>;
-    };
+export type BeforeToolPipelineHook = {
+  phase: "before";
+  run(input: {
+    toolName: string;
+    input: unknown;
+    context: InterviewToolContext;
+  }): Promise<BeforeHookResult>;
+};
+
+export type AfterToolPipelineHook = {
+  phase: "after";
+  run(input: {
+    toolName: string;
+    input: unknown;
+    output: unknown;
+    context: InterviewToolContext;
+  }): Promise<AfterHookResult>;
+};
+
+export type ToolPipelineHook = BeforeToolPipelineHook | AfterToolPipelineHook;
 
 export type ToolExecutionResult<TOutput> =
   | { ok: true; output: TOutput }

@@ -1,16 +1,23 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   interviewAnswerAssessments,
   interviewContextSnapshots,
   interviewCoverage,
   interviewMessages,
+  interviewQuestions,
   interviewResumeSnapshots,
   interviews,
 } from "@/lib/db/schema";
+import {
+  interviewLanguageValues,
+  interviewPersonaValues,
+} from "@/lib/interview/settings";
+import { z } from "zod";
+import { questionCategorySchema } from "../contracts";
 import { indexResumeEvidence } from "./resume-evidence";
 import { buildPromptPipe, canonicalJson } from "./prompt-pipe";
 
-export const PROMPT_TEMPLATE_VERSION = "interview-agent-v1";
+export const PROMPT_TEMPLATE_VERSION = "interview-agent-v2";
 
 export function assembleAgentContext(input: {
   language: string;
@@ -35,7 +42,17 @@ export function assembleAgentContext(input: {
   }>;
   currentInstruction: string;
   runId: string;
-  latestAssessment?: { id: string; publicSummary: string; followUpNeeded: boolean } | null;
+  latestAnswer?: {
+    id: string;
+    category: string;
+    content: string;
+  } | null;
+  priorAssessments?: Array<{
+    id: string;
+    answerMessageId: string;
+    publicSummary: string;
+    followUpNeeded: boolean;
+  }>;
   contextWindow?: number;
   outputReserve?: number;
 }) {
@@ -84,13 +101,21 @@ export function assembleAgentContext(input: {
         },
       ],
       tailSegments: [
-        ...(input.latestAssessment ? [{
-          id: "latest-assessment",
-          version: input.latestAssessment.id,
+        ...(input.priorAssessments?.length ? [{
+          id: "prior-assessments",
+          version: input.priorAssessments.map((assessment) => assessment.id).join(":"),
           priority: 90,
           cacheScope: "turn" as const,
           trimPolicy: "never" as const,
-          content: canonicalJson(input.latestAssessment),
+          content: canonicalJson(input.priorAssessments),
+        }] : []),
+        ...(input.latestAnswer ? [{
+          id: "latest-raw-answer",
+          version: input.latestAnswer.id,
+          priority: 100,
+          cacheScope: "turn" as const,
+          trimPolicy: "never" as const,
+          content: canonicalJson(input.latestAnswer),
         }] : []),
         {
           id: "recent-messages",
@@ -122,9 +147,14 @@ type AgentDatabase = typeof import("@/lib/db").db;
 
 export async function loadAgentContext(
   database: AgentDatabase,
-  input: { interviewId: string; runId: string; currentInstruction: string },
+  input: {
+    interviewId: string;
+    runId: string;
+    currentInstruction: string;
+    mode: "opening" | "answer";
+  },
 ) {
-  const [interviewRows, coverage, messages, snapshots, assessments] = await Promise.all([
+  const [interviewRows, coverage, messages, snapshots, assessments, answerRows] = await Promise.all([
     database.select({
       language: interviews.language,
       persona: interviews.persona,
@@ -164,18 +194,45 @@ export async function loadAgentContext(
       .limit(1),
     database.select({
       id: interviewAnswerAssessments.id,
+      answerMessageId: interviewAnswerAssessments.answerMessageId,
       publicSummary: interviewAnswerAssessments.publicSummary,
       followUpNeeded: interviewAnswerAssessments.followUpNeeded,
     }).from(interviewAnswerAssessments)
       .where(eq(interviewAnswerAssessments.interviewId, input.interviewId))
       .orderBy(desc(interviewAnswerAssessments.createdAt))
+      .limit(8),
+    database.select({
+      id: interviewMessages.id,
+      content: interviewMessages.content,
+      category: interviewQuestions.questionType,
+    }).from(interviewMessages)
+      .innerJoin(interviewQuestions, eq(interviewQuestions.id, interviewMessages.questionId))
+      .where(and(
+        eq(interviewMessages.interviewId, input.interviewId),
+        eq(interviewMessages.runId, input.runId),
+        eq(interviewMessages.role, "user"),
+        eq(interviewMessages.kind, "answer"),
+      ))
+      .orderBy(desc(interviewMessages.sequence))
       .limit(1),
   ]);
   const interview = interviewRows[0];
   if (!interview) throw new Error("Interview context not found");
   const evidence = indexResumeEvidence(interview.parsedJson, interview.extractedText ?? "");
   const snapshot = snapshots[0];
-  return assembleAgentContext({
+  const latestAnswer = input.mode === "answer" ? answerRows[0] : null;
+  if (input.mode === "answer" && !latestAnswer) {
+    throw new Error("Current answer context not found");
+  }
+  const language = z.enum(interviewLanguageValues).parse(interview.language);
+  const persona = z.enum(interviewPersonaValues).parse(interview.persona);
+  const priorAssessments = assessments.map((assessment) => ({
+    id: assessment.id,
+    answerMessageId: assessment.answerMessageId,
+    publicSummary: assessment.publicSummary,
+    followUpNeeded: assessment.followUpNeeded === 1,
+  })).reverse();
+  const assembled = assembleAgentContext({
     language: interview.language,
     persona: interview.persona,
     preference: interview.preference,
@@ -196,14 +253,75 @@ export async function loadAgentContext(
       })),
     currentInstruction: input.currentInstruction,
     runId: input.runId,
-    latestAssessment: assessments[0] ? {
-      id: assessments[0].id,
-      publicSummary: assessments[0].publicSummary,
-      followUpNeeded: assessments[0].followUpNeeded === 1,
+    latestAnswer: latestAnswer ? {
+      id: latestAnswer.id,
+      category: latestAnswer.category,
+      content: latestAnswer.content,
     } : null,
+    priorAssessments,
     contextWindow: readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000),
     outputReserve: readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000),
   });
+  return {
+    ...assembled,
+    turnContext: {
+      mode: input.mode,
+      answerCategory: latestAnswer
+        ? questionCategorySchema.parse(latestAnswer.category)
+        : null,
+      answerMessageId: latestAnswer?.id ?? null,
+      language,
+      persona,
+      allowedTerms: collectAllowedTerms({
+        evidence,
+        preference: interview.preference,
+        targetRole: interview.targetRole,
+        candidateMessages: messages,
+        currentAnswer: latestAnswer?.content ?? null,
+      }),
+    },
+  };
+}
+
+export function collectAllowedTerms(input: {
+  evidence: ReturnType<typeof indexResumeEvidence>;
+  preference: string | null;
+  targetRole: string | null;
+  candidateMessages: Array<{
+    role: string;
+    kind: string;
+    content: string;
+  }>;
+  currentAnswer: string | null;
+}) {
+  const authorizedSources = {
+    immutableResume: {
+      overview: input.evidence.overview,
+      rawText: input.evidence.rawText,
+      records: input.evidence.records.map((record) => ({
+        label: record.label,
+        content: record.content,
+      })),
+    },
+    deterministicConfiguration: {
+      preference: input.preference,
+      targetRole: input.targetRole,
+    },
+    candidateRawMessages: input.candidateMessages
+      .filter((message) => message.role === "user" && message.kind === "answer")
+      .map((message) => message.content),
+    currentAnswer: input.currentAnswer,
+  };
+  return [...new Set(
+    collectStrings(authorizedSources).map((value) => value.trim()).filter(Boolean),
+  )];
+}
+
+function collectStrings(value: unknown): string[] {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(collectStrings);
+  if (!value || typeof value !== "object") return [];
+  return Object.values(value).flatMap(collectStrings);
 }
 
 function readPositiveInteger(value: string | undefined, fallback: number) {

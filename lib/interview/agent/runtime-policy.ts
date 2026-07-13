@@ -5,8 +5,7 @@ export const MAX_INVALID_MODEL_ACTIONS = 3;
 export type RuntimePhase = "planning" | "terminal";
 
 const TERMINAL_TOOL_NAMES = new Set([
-  "ask_interview_question",
-  "finish_interview",
+  "submit_interview_turn",
 ]);
 
 export function isTerminalTool(name: string) {

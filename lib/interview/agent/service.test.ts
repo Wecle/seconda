@@ -69,6 +69,10 @@ test("creates an interview, initializes coverage and starts an opening run", asy
   });
   assert.equal(result.interviewId, "interview");
   assert.deepEqual(f.calls, ["createInterview", "initializeCoverage", "run:opening"]);
+  const instruction = (await f.repository.getRun(result.runId))?.trigger?.instruction ?? "";
+  assert.match(instruction, /submit_interview_turn/);
+  assert.match(instruction, /clarify/);
+  assert.doesNotMatch(instruction, /ask_interview_question|持久化 inferred targetRole/);
 });
 
 test("accepts a candidate answer exactly once for a repeated idempotency key", async () => {
@@ -132,19 +136,31 @@ test("repairs an accepted answer without accepting it or incrementing the round 
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 2);
 });
 
-test("rejects inactive and legacy interviews", async () => {
-  for (const f of [fixture({ status: "completed" }), fixture({ configVersion: 1 })]) {
-    await assert.rejects(
-      submitCandidateMessage({
-        input: { interviewId: "interview", content: "answer", idempotencyKey: "key" },
-        store: f.store,
-        repository: f.repository,
-        scheduler: f.scheduler,
-        signal: new AbortController().signal,
-      }),
-      /not an active v2 interview/,
-    );
-  }
+test("rejects inactive interviews", async () => {
+  const f = fixture({ status: "completed" });
+  await assert.rejects(
+    submitCandidateMessage({
+      input: { interviewId: "interview", content: "answer", idempotencyKey: "key" },
+      store: f.store,
+      repository: f.repository,
+      scheduler: f.scheduler,
+      signal: new AbortController().signal,
+    }),
+    /not active/,
+  );
+});
+
+test("active historical config uses the latest runtime", async () => {
+  const f = fixture({ configVersion: 1 });
+  const result = await submitCandidateMessage({
+    input: { interviewId: "interview", content: "answer", idempotencyKey: "key" },
+    store: f.store,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    signal: new AbortController().signal,
+  });
+  assert.equal(result.status, "accepted");
+  assert.deepEqual(f.calls.slice(-2), ["acceptCandidateMessage", "run:answer"]);
 });
 
 test("ends without another model call and is idempotent", async () => {

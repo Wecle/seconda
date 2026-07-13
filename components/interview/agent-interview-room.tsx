@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bot, FileText, Loader2, LogOut, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -8,13 +8,13 @@ import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
-import { AgentThinkingPanel } from "./agent-thinking-panel";
-import { AgentArtifactCard } from "./agent-artifact-card";
+import { AgentLiveTurn } from "./agent-live-turn";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
-import { buildInterviewRoomTimeline } from "./interview-room-timeline";
+import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./interview-room-timeline";
 import { useCompletionPolling } from "./use-completion-polling";
-import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent } from "@/lib/interview/agent/room-state";
-import type { CommittedArtifact, PublicThinkingEntry } from "@/lib/interview/agent/contracts";
+import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/room-state";
+import { latestRunSnapshotSequence } from "@/lib/interview/agent/client-stream";
+import type { CommittedArtifact } from "@/lib/interview/agent/contracts";
 import type { ParsedResume } from "@/lib/resume/types";
 import { clearPendingAnswer, loadPendingAnswer, savePendingAnswer, type PendingAnswer } from "@/lib/interview/agent/pending-answer";
 import {
@@ -27,7 +27,66 @@ type AgentMessage = { id: string; runId?: string | null; sequence: number; role:
 type AgentRun = AgentRunStreamStatus;
 type ResumeSnapshot = { id: string; versionNumber: number; originalFilename: string; originalFileUrl: string | null; parseStatus: string; parsedData: ParsedResume | null };
 
-export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, resumeSnapshot, status, initialScoringProgress, initialArtifacts = [], initialEvents = [] }: {
+const markdownPlugins = [remarkGfm];
+const noInitialArtifacts: CommittedArtifact[] = [];
+const noInitialEvents: PublicRoomEvent[] = [];
+
+const InterviewTranscript = memo(function InterviewTranscript({ timeline, turns, activeRunId, busy, onToggleThinking }: {
+  timeline: readonly InterviewRoomTimelineGroup[];
+  turns: Readonly<Record<string, RoomTurn>>;
+  activeRunId: string | null;
+  busy: boolean;
+  onToggleThinking: (runId: string, expanded: boolean) => void;
+}) {
+  return timeline.map((group) => <TimelineGroup
+    key={group.key}
+    group={group}
+    turn={group.runId ? turns[group.runId] : undefined}
+    active={Boolean(group.runId && busy && activeRunId === group.runId)}
+    onToggleThinking={onToggleThinking}
+  />);
+});
+
+const TimelineGroup = memo(function TimelineGroup({ group, turn, active, onToggleThinking }: {
+  group: InterviewRoomTimelineGroup;
+  turn?: RoomTurn;
+  active: boolean;
+  onToggleThinking: (runId: string, expanded: boolean) => void;
+}) {
+  return <div className="space-y-3">
+    {group.beforeTurn.map((message) => <TranscriptMessage key={message.id} message={message} />)}
+    {group.runId && turn ? <LiveTurnSlot
+      runId={group.runId}
+      turn={turn}
+      active={active}
+      onToggleThinking={onToggleThinking}
+    /> : null}
+    {group.afterTurn.map((message) => <TranscriptMessage key={message.id} message={message} />)}
+  </div>;
+});
+
+const LiveTurnSlot = memo(function LiveTurnSlot({ runId, turn, active, onToggleThinking }: {
+  runId: string;
+  turn: RoomTurn;
+  active: boolean;
+  onToggleThinking: (runId: string, expanded: boolean) => void;
+}) {
+  const onToggle = useCallback((expanded: boolean) => {
+    onToggleThinking(runId, expanded);
+  }, [onToggleThinking, runId]);
+
+  return <AgentLiveTurn turn={turn} artifacts={turn.artifacts} active={active} onToggle={onToggle} />;
+});
+
+const TranscriptMessage = memo(function TranscriptMessage({ message }: { message: RoomMessage }) {
+  return <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}>
+    <div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}>
+      <ReactMarkdown remarkPlugins={markdownPlugins}>{message.content}</ReactMarkdown>
+    </div>
+  </div>;
+});
+
+export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, resumeSnapshot, status, initialScoringProgress, initialArtifacts = noInitialArtifacts, initialEvents = noInitialEvents }: {
   interviewId: string;
   initialMessages: AgentMessage[];
   initialRun: AgentRun | null;
@@ -58,6 +117,11 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const completionRetryInFlightRef = useRef(false);
   const runRecoveryExhausted = run?.recoveryDisposition === "exhausted";
   const busy = submitting || (run?.status === "running" && !runRecoveryExhausted);
+  const runId = run?.id;
+  const hydratedRunSequence = useMemo(
+    () => latestRunSnapshotSequence(initialEvents, runId),
+    [initialEvents, runId],
+  );
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
@@ -94,49 +158,74 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   }, [interviewId]);
 
   const handleRunEvent = useCallback(async (event: AgentRunStreamEvent) => {
-    if (event.type === "thinking_started") {
-      if (run?.id) dispatch({ type: "run_accepted", runId: run.id });
-      return;
+    const { sequence } = event;
+    switch (event.type) {
+      case "run_started":
+        dispatch({ type: "run_started", sequence, runId: event.payload.runId, logicalMessageId: event.payload.logicalMessageId });
+        return;
+      case "phase_changed":
+        dispatch({ type: "phase_changed", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, phase: event.payload.phase });
+        return;
+      case "attempt_started":
+        dispatch({ type: "attempt_started", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId });
+        return;
+      case "attempt_discarded":
+        dispatch({ type: "attempt_discarded", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId, reason: event.payload.reason });
+        return;
+      case "reasoning_started":
+        dispatch({ type: "reasoning_started", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, entryId: event.payload.entryId });
+        return;
+      case "reasoning_delta":
+        dispatch({ type: "reasoning_delta", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, entryId: event.payload.entryId, text: event.payload.text });
+        return;
+      case "reasoning_completed":
+        dispatch({ type: "reasoning_completed", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, entryId: event.payload.entryId });
+        return;
+      case "tool_call_started":
+      case "tool_call_completed":
+        dispatch({ type: event.type, sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, toolCallId: event.payload.toolCallId, publicLabel: event.payload.publicLabel });
+        return;
+      case "proposal_authorized":
+        dispatch({ type: "proposal_authorized", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId });
+        return;
+      case "response_started":
+        dispatch({ type: "response_started", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId });
+        return;
+      case "response_delta":
+        dispatch({ type: "response_delta", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId, text: event.payload.text, provisional: true });
+        return;
+      case "response_finished":
+        dispatch({ type: "response_finished", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId });
+        return;
+      case "response_discarded":
+        dispatch({ type: "response_discarded", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId, reason: event.payload.reason });
+        return;
+      case "artifact_committed":
+        dispatch({ type: "artifact_committed", sequence, artifact: event.payload });
+        return;
+      case "scoring_progress":
+        dispatch({ type: "scoring_progress", sequence, runId: event.payload.runId });
+        setScoringProgress(event.payload);
+        return;
+      case "reporting_started":
+        dispatch({ type: "reporting_started", sequence, runId: event.payload.runId });
+        return;
+      case "message_committed":
+        dispatch({ type: "message_committed", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId, message: event.payload.message });
+        return;
+      case "run_failed":
+        dispatch({ type: "run_failed", sequence, runId: event.payload.runId });
+        setError(event.payload.userMessage);
+        await refresh();
+        return;
+      case "run_completed":
+        dispatch({ type: "run_completed", sequence, runId: event.payload.runId });
+        await refresh();
+        return;
+      default:
+        event satisfies never;
     }
-    if (event.type === "text_delta") {
-      const payload = event.payload as { runId?: unknown; messageId?: unknown; text?: unknown };
-      if (typeof payload.runId === "string" && typeof payload.messageId === "string" && typeof payload.text === "string") {
-        dispatch({ type: "provisional_delta", runId: payload.runId, messageId: payload.messageId, text: payload.text });
-      }
-      return;
-    }
-    if (event.type === "response_started") {
-      const payload = event.payload as { runId?: unknown; messageId?: unknown };
-      if (typeof payload.runId === "string" && typeof payload.messageId === "string") {
-        dispatch({ type: "response_started", runId: payload.runId, messageId: payload.messageId });
-      }
-      return;
-    }
-    if (event.type === "thinking_summary") {
-      dispatch({ type: "thinking_summary", entry: event.payload as PublicThinkingEntry });
-      return;
-    }
-    if (event.type === "artifact_committed") {
-      dispatch({ type: "artifact_committed", artifact: event.payload as CommittedArtifact });
-      return;
-    }
-    if (event.type === "message_committed") {
-      const payload = event.payload as { runId?: unknown };
-      if (typeof payload.runId === "string") dispatch({ type: "message_committed", runId: payload.runId });
-      await refresh();
-      return;
-    }
-    if (event.type === "run_completed" || event.type === "run_failed") {
-      if (event.type === "run_failed") {
-        if (run?.id) dispatch({ type: "run_failed", runId: run.id });
-        const payload = event.payload as { userMessage?: unknown };
-        setError(typeof payload?.userMessage === "string"
-          ? payload.userMessage
-          : "答案已接收，但 Agent 本轮未完成。你可以恢复原 Run，无需重新提交答案。");
-      }
-      await refresh();
-    }
-  }, [refresh, run]);
+  }, [refresh]);
 
   const handleTerminalRun = useCallback(async (terminal: AgentRunStreamStatus) => {
     if (terminal.status === "failed") {
@@ -149,6 +238,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const { connectionState, retry: retryConnection } = useAgentRunStream({
     interviewId,
     run,
+    afterSequence: hydratedRunSequence,
     onEvent: handleRunEvent,
     onTerminal: handleTerminalRun,
     resumeRun: resumeRunRequest,
@@ -263,22 +353,11 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
 
   const completed = ["completing", "scoring", "reporting", "completed", "failed"].includes(interviewStatus);
   const timeline = useMemo(() => buildInterviewRoomTimeline(room.messages), [room.messages]);
-  const renderTurn = (runId: string) => {
-    const turn = room.turns[runId];
-    if (!turn) return null;
-    return <div className="space-y-3">
-      <AgentThinkingPanel thinking={turn.thinking} active={busy && run?.id === runId && !turn.responseStarted} onToggle={(expanded) => dispatch({ type: "thinking_toggled", runId, expanded })} />
-      {turn.artifacts.map((artifact) => <AgentArtifactCard key={artifact.artifactId} artifact={artifact} />)}
-      {turn.provisional && <div className="max-w-[86%] rounded-2xl rounded-bl-md border bg-card px-5 py-4 opacity-80"><ReactMarkdown remarkPlugins={[remarkGfm]}>{turn.provisional}</ReactMarkdown></div>}
-    </div>;
-  };
-  const renderMessage = (message: typeof room.messages[number]) => (
-    <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"} key={message.id}>
-      <div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}>
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-      </div>
-    </div>
-  );
+  const toggleThinking = useCallback((runId: string, expanded: boolean) => {
+    dispatch({ type: "thinking_toggled", runId, expanded });
+  }, []);
+  const activeRunId = run?.id ?? null;
+  const activeRunHasMessage = activeRunId ? room.messages.some((message) => message.runId === activeRunId) : false;
   return (
     <div className="flex h-screen flex-col bg-background">
       <header className="flex h-16 items-center justify-between border-b px-6">
@@ -288,12 +367,19 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
 
       <main className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col">
         <div className="flex-1 space-y-7 overflow-y-auto px-6 py-8">
-          {timeline.map((group) => <div className="space-y-3" key={group.key}>
-            {group.beforeTurn.map(renderMessage)}
-            {group.runId ? renderTurn(group.runId) : null}
-            {group.afterTurn.map(renderMessage)}
-          </div>)}
-          {busy && run?.id && !room.messages.some((message) => message.runId === run.id) ? <div className="space-y-3">{renderTurn(run.id)}</div> : null}
+          <InterviewTranscript
+            timeline={timeline}
+            turns={room.turns}
+            activeRunId={activeRunId}
+            busy={busy}
+            onToggleThinking={toggleThinking}
+          />
+          {busy && activeRunId && !activeRunHasMessage && room.turns[activeRunId] ? <LiveTurnSlot
+            runId={activeRunId}
+            turn={room.turns[activeRunId]}
+            active
+            onToggleThinking={toggleThinking}
+          /> : null}
           {busy && !run?.id && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
           {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接暂时中断，但 Run 仍在服务器运行；正在重连，已接收的正式消息不会丢失。</p>}
           {connectionState === "recovering" && <p className="text-sm text-amber-600">连接持续中断，正在执行一次受控 Run 恢复。</p>}

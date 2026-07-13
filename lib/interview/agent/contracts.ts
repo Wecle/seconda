@@ -162,7 +162,18 @@ export const agentCheckpointSchema = z.object({
   lastEventSequence: z.number().int().min(0),
   progressHash: z.string(),
   activeSkillNames: z.array(z.string()),
-  phase: z.enum(["assessing", "planning", "terminal", "acting"]).optional(),
+  phase: z.enum([
+    "accepted",
+    "reasoning",
+    "tool_running",
+    "proposal_streaming",
+    "authorized",
+    "responding",
+    "validating",
+    "committing",
+    "repairing",
+    "acting",
+  ]).optional(),
   terminalAttemptCount: z.number().int().min(0).max(3).optional(),
   phaseProgressId: z.string().optional(),
   modelCallCount: z.number().int().min(0).optional(),
@@ -369,6 +380,11 @@ export const agentEventRecordSchema = z.object({
   createdAt: z.string().datetime(),
 }).strict();
 
+export const publicRoomEventEnvelopeSchema = agentEventRecordSchema.extend({
+  type: publicAgentEventTypeSchema,
+  visibility: z.literal("public"),
+});
+
 export const persistedAgentStreamEventSchema = z.object({
   type: agentEventTypeSchema,
   sequence: z.number().int().min(1),
@@ -422,6 +438,7 @@ export type AgentExitReason = z.infer<typeof agentExitReasonSchema>;
 export type TerminalRunPayload = z.infer<typeof terminalRunPayloadSchema>;
 export type AgentEventVisibility = z.infer<typeof agentEventVisibilitySchema>;
 export type AgentEventRecord = z.infer<typeof agentEventRecordSchema>;
+export type PublicRoomEventEnvelope = z.infer<typeof publicRoomEventEnvelopeSchema>;
 export type AgentEventInput = Omit<
   AgentEventRecord,
   "id" | "runId" | "sequence" | "visibility" | "attemptId" | "logicalMessageId" | "createdAt"
@@ -439,6 +456,7 @@ export type InterviewDecision = z.infer<typeof interviewDecisionSchema>;
 export type AgentModelStep = z.infer<typeof agentModelStepSchema>;
 export type AgentCheckpoint = z.infer<typeof agentCheckpointSchema>;
 export type TextDeltaPayload = z.infer<typeof textDeltaPayloadSchema>;
+export type CommittedInterviewMessage = z.infer<typeof committedInterviewMessageSchema>;
 export type MessageCommittedPayload = z.infer<typeof messageCommittedPayloadSchema>;
 export type PublicThinkingEntry = z.infer<typeof thinkingSummaryPayloadSchema>;
 export type CommittedArtifact = z.infer<typeof artifactCommittedPayloadSchema>;
