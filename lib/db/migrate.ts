@@ -274,6 +274,7 @@ async function migrate() {
   `;
 
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'accepted'`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS lease_generation INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS attempt_id TEXT`;
@@ -283,6 +284,10 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS resume_count INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS next_resume_at TIMESTAMPTZ`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS trigger_json JSONB`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS authorized_proposal_json JSONB`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS authorized_proposal_hash TEXT`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS proposal_authorized_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS response_started_at TIMESTAMPTZ`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS prompt_template_version TEXT`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS cache_epoch INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS context_input_tokens INTEGER NOT NULL DEFAULT 0`;

@@ -6,6 +6,8 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
 import {
+  interviewAgentEvents,
+  interviewAgentRuns,
   interviewAgentToolCommits,
   interviewAnswerAssessments,
   interviewCoverage,
@@ -21,6 +23,7 @@ import type { AgentEventInput } from "./contracts";
 import { createDrizzleAgentInterviewStore } from "./drizzle-store";
 import { createDrizzleInterviewAgentRepository } from "./repository";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
+import { hashTurnProposalPrefix, type TurnProposalPrefix } from "./turn-proposal";
 
 function publicReasoningEvent(
   runId: string,
@@ -272,6 +275,335 @@ test("real database fences stale workers, notifies durable events and preserves 
           await client.end();
         }
       }
+    }
+  }
+});
+
+test("real database atomically commits an authorized turn and rolls back policy failures", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+  const db = drizzle(client, { schema });
+  const userId = randomUUID();
+  const resumeId = randomUUID();
+  const versionId = randomUUID();
+  let interviewId: string | null = null;
+  try {
+    await db.insert(users).values({ id: userId, email: `${userId}@example.test` });
+    await db.insert(resumes).values({ id: resumeId, userId, title: "Atomic turn resume" });
+    await db.insert(resumeVersions).values({
+      id: versionId,
+      resumeId,
+      versionNumber: 1,
+      originalFilename: "resume.pdf",
+      storedPath: `https://blob.example/${versionId}.pdf`,
+      extractedText: "Built lease-based idempotent TypeScript services",
+      parsedJson: {
+        name: "Candidate",
+        title: "Engineer",
+        skills: ["TypeScript"],
+        experience: [],
+        education: [],
+        projects: [],
+        summary: "",
+      },
+      parseStatus: "parsed",
+    });
+    const store = createDrizzleAgentInterviewStore(db);
+    const created = await store.createInterview({
+      ownerUserId: userId,
+      idempotencyKey: randomUUID(),
+      resumeVersionId: versionId,
+      config: {
+        configVersion: 2,
+        language: "zh",
+        persona: "standard",
+        preference: "",
+        preferenceTags: [],
+      },
+    });
+    interviewId = created.interviewId;
+    await store.initializeCoverage(interviewId);
+    await db.update(interviews).set({ candidateRoundCount: 1 })
+      .where(eq(interviews.id, interviewId));
+
+    const [answeredQuestion] = await db.insert(interviewQuestions).values({
+      interviewId,
+      questionIndex: 1,
+      questionType: "technical_depth",
+      topic: "reliability",
+      question: "你如何保证服务可靠性？",
+      answerText: "我使用租约和幂等键。",
+      answeredAt: new Date(),
+    }).returning({ id: interviewQuestions.id });
+    await db.update(interviewCoverage).set({
+      questionCount: 1,
+      status: "partial",
+    }).where(and(
+      eq(interviewCoverage.interviewId, interviewId),
+      eq(interviewCoverage.category, "technical_depth"),
+      eq(interviewCoverage.topic, "__category__"),
+    ));
+    const [answerMessage] = await db.insert(interviewMessages).values({
+      interviewId,
+      sequence: 1,
+      role: "user",
+      kind: "answer",
+      content: "我使用租约和幂等键。",
+      questionId: answeredQuestion.id,
+    }).returning({ id: interviewMessages.id });
+
+    const repository = createDrizzleInterviewAgentRepository(db);
+    const run = await repository.createRun({
+      interviewId,
+      idempotencyKey: "authorized-turn",
+    });
+    const claimed = await repository.claimRun(run.id, "turn-worker", new Date(), 60_000);
+    const lease = {
+      owner: "turn-worker",
+      generation: claimed.run!.leaseGeneration,
+    };
+    const attemptId = "attempt-atomic";
+    const logicalMessageId = randomUUID();
+    await repository.startAttempt(run.id, {
+      model: "test-model",
+      attemptId,
+      attemptNumber: 1,
+      provisionalMessageId: logicalMessageId,
+      now: new Date(),
+    }, lease);
+    const proposal: TurnProposalPrefix = {
+      assessment: {
+        completeness: "high",
+        specificity: "high",
+        evidenceStrength: "strong",
+        reflectionDepth: "surface",
+        followUpNeeded: false,
+        missingPoints: ["失效边界"],
+        extractedEvidence: ["租约和幂等键"],
+        publicSummary: "回答包含可靠性机制，但仍需验证失效边界。",
+      },
+      coverageChanges: [{
+        category: "technical_depth",
+        topic: "可靠性机制",
+        status: "sufficient",
+        resumeEvidenceIds: ["resume:structured"],
+      }],
+      decision: {
+        action: "ask",
+        category: "technical_depth",
+        intent: "follow_up",
+        evidenceIds: ["resume:structured"],
+        coverageTarget: "验证项目中的一致性设计",
+        estimatedInformationGain: "high",
+      },
+    };
+    const proposalHash = hashTurnProposalPrefix(proposal);
+    await repository.authorizeProposal({
+      runId: run.id,
+      lease,
+      attemptId,
+      logicalMessageId,
+      proposal,
+      proposalHash,
+      checkpoint: {
+        turnCount: 1,
+        toolCallCount: 1,
+        lastEventSequence: 0,
+        progressHash: "authorized",
+        activeSkillNames: [],
+      },
+    });
+    await repository.markResponseStarted({
+      runId: run.id,
+      lease,
+      attemptId,
+      logicalMessageId,
+      proposalHash,
+    });
+    const commitInput = {
+      runId: run.id,
+      interviewId,
+      toolCallId: "submit-atomic",
+      lease,
+      logicalMessageId,
+      attemptId,
+      answerMessageId: answerMessage.id,
+      proposal,
+      proposalHash,
+      responseText: "你在项目中如何验证租约失效后的数据一致性？",
+      language: "zh" as const,
+    };
+    const [first, replay] = await Promise.all([
+      repository.commitTurnOutcome(commitInput),
+      repository.commitTurnOutcome(commitInput),
+    ]);
+    assert.deepEqual(replay, first);
+    assert.equal(first.messageId, logicalMessageId);
+
+    const [assessments, messages, questions, commits, events, persistedRun] = await Promise.all([
+      db.select().from(interviewAnswerAssessments)
+        .where(eq(interviewAnswerAssessments.interviewId, interviewId)),
+      db.select().from(interviewMessages)
+        .where(eq(interviewMessages.interviewId, interviewId)),
+      db.select().from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, interviewId)),
+      db.select().from(interviewAgentToolCommits)
+        .where(and(
+          eq(interviewAgentToolCommits.runId, run.id),
+          eq(interviewAgentToolCommits.toolName, "submit_interview_turn"),
+        )),
+      db.select().from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, run.id),
+        eq(interviewAgentEvents.type, "message_committed"),
+      )),
+      db.select().from(interviewAgentRuns).where(eq(interviewAgentRuns.id, run.id)),
+    ]);
+    assert.equal(assessments.length, 1);
+    assert.equal(messages.length, 2);
+    assert.equal(questions.length, 2);
+    assert.equal(commits.length, 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].attemptId, attemptId);
+    assert.equal(events[0].logicalMessageId, logicalMessageId);
+    assert.equal(persistedRun[0].phase, "acting");
+    assert.ok(persistedRun[0].proposalAuthorizedAt);
+    assert.ok(persistedRun[0].responseStartedAt);
+    const [technicalAggregate] = await db.select().from(interviewCoverage).where(and(
+      eq(interviewCoverage.interviewId, interviewId),
+      eq(interviewCoverage.category, "technical_depth"),
+      eq(interviewCoverage.topic, "__category__"),
+    ));
+    assert.equal(technicalAggregate.questionCount, 2);
+    assert.equal(technicalAggregate.status, "partial");
+
+    await db.update(interviewCoverage).set({
+      questionCount: 3,
+      status: "exhausted",
+    }).where(and(
+      eq(interviewCoverage.interviewId, interviewId),
+      eq(interviewCoverage.category, "technical_depth"),
+      eq(interviewCoverage.topic, "__category__"),
+    ));
+    const secondAttemptId = "attempt-category-limit";
+    const secondLogicalMessageId = randomUUID();
+    const limitedProposal: TurnProposalPrefix = {
+      assessment: null,
+      coverageChanges: [],
+      decision: {
+        action: "ask",
+        category: "technical_depth",
+        intent: "new_topic",
+        evidenceIds: ["resume:structured"],
+        coverageTarget: "验证新的技术主题",
+        estimatedInformationGain: "medium",
+      },
+    };
+    const limitedHash = hashTurnProposalPrefix(limitedProposal);
+    await repository.startAttempt(run.id, {
+      model: "test-model",
+      attemptId: secondAttemptId,
+      attemptNumber: 2,
+      provisionalMessageId: secondLogicalMessageId,
+      now: new Date(),
+    }, lease);
+    await assert.rejects(
+      repository.commitTurnOutcome(commitInput),
+      /attempt is stale/i,
+    );
+    await assert.rejects(repository.authorizeProposal({
+      runId: run.id,
+      lease,
+      attemptId,
+      logicalMessageId,
+      proposal,
+      proposalHash,
+      checkpoint: {
+        turnCount: 1,
+        toolCallCount: 1,
+        lastEventSequence: first.committedEventSequence,
+        progressHash: "stale-attempt",
+        activeSkillNames: [],
+      },
+    }), /attempt is stale/i);
+    await repository.authorizeProposal({
+      runId: run.id,
+      lease,
+      attemptId: secondAttemptId,
+      logicalMessageId: secondLogicalMessageId,
+      proposal: limitedProposal,
+      proposalHash: limitedHash,
+      checkpoint: {
+        turnCount: 2,
+        toolCallCount: 2,
+        lastEventSequence: first.committedEventSequence,
+        progressHash: "category-limit",
+        activeSkillNames: [],
+      },
+    });
+    await repository.markResponseStarted({
+      runId: run.id,
+      lease,
+      attemptId: secondAttemptId,
+      logicalMessageId: secondLogicalMessageId,
+      proposalHash: limitedHash,
+    });
+    await assert.rejects(repository.commitTurnOutcome({
+      runId: run.id,
+      interviewId,
+      toolCallId: "submit-language-mismatch",
+      lease,
+      logicalMessageId: secondLogicalMessageId,
+      attemptId: secondAttemptId,
+      answerMessageId: null,
+      proposal: limitedProposal,
+      proposalHash: limitedHash,
+      responseText: "请说明另一个技术主题？",
+      language: "en",
+    }), /language/i);
+    await assert.rejects(repository.commitTurnOutcome({
+      runId: run.id,
+      interviewId,
+      toolCallId: "submit-category-limit",
+      lease,
+      logicalMessageId: secondLogicalMessageId,
+      attemptId: secondAttemptId,
+      answerMessageId: null,
+      proposal: limitedProposal,
+      proposalHash: limitedHash,
+      responseText: "请说明另一个技术主题？",
+      language: "zh",
+    }), /CATEGORY_LIMIT/);
+
+    const [afterAssessments, afterMessages, afterQuestions, afterCommits, afterEvents] = await Promise.all([
+      db.select().from(interviewAnswerAssessments)
+        .where(eq(interviewAnswerAssessments.interviewId, interviewId)),
+      db.select().from(interviewMessages)
+        .where(eq(interviewMessages.interviewId, interviewId)),
+      db.select().from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, interviewId)),
+      db.select().from(interviewAgentToolCommits)
+        .where(and(
+          eq(interviewAgentToolCommits.runId, run.id),
+          eq(interviewAgentToolCommits.toolName, "submit_interview_turn"),
+        )),
+      db.select().from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, run.id),
+        eq(interviewAgentEvents.type, "message_committed"),
+      )),
+    ]);
+    assert.equal(afterAssessments.length, assessments.length);
+    assert.equal(afterMessages.length, messages.length);
+    assert.equal(afterQuestions.length, questions.length);
+    assert.equal(afterCommits.length, commits.length);
+    assert.equal(afterEvents.length, events.length);
+  } finally {
+    try {
+      if (interviewId) await db.delete(interviews).where(eq(interviews.id, interviewId));
+      await db.delete(resumes).where(eq(resumes.id, resumeId));
+      await db.delete(users).where(eq(users.id, userId));
+    } finally {
+      await client.end();
     }
   }
 });

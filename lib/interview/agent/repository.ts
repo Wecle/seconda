@@ -17,11 +17,20 @@ import type {
   AgentEventRecord,
   AgentEventVisibility,
   AgentExitReason,
+  CoverageStatus,
   InterviewAgentState,
   InterviewMessageKind,
+  QuestionCategory,
 } from "./contracts";
 import { agentExitMessage } from "./exit-messages";
-import { terminalRunPayloadSchema } from "./contracts";
+import { questionCategorySchema, terminalRunPayloadSchema } from "./contracts";
+import { authorizeTurnProposal, projectAssessmentCoverage } from "./turn-authorizer";
+import {
+  hashTurnProposalPrefix,
+  interviewTurnProposalSchema,
+  turnProposalPrefixSchema,
+  type TurnProposalPrefix,
+} from "./turn-proposal";
 
 export const MAX_AGENT_RUN_RESUMES = 2;
 
@@ -51,6 +60,12 @@ export interface InterviewAgentRepository {
     provisionalMessageId: string;
     now: Date;
   }, lease?: RunLeaseToken): Promise<void>;
+  authorizeProposal(input: AuthorizeProposalInput): Promise<{
+    authorized: true;
+    proposalHash: string;
+  }>;
+  markResponseStarted(input: MarkResponseStartedInput): Promise<void>;
+  commitTurnOutcome(input: CommitTurnOutcomeInput): Promise<CommittedTurnOutcome>;
   recordProviderProgress(runId: string, now: Date, lease?: RunLeaseToken): Promise<void>;
   saveRunTrigger(runId: string, trigger: AgentRunTrigger): Promise<void>;
   appendMessage(input: {
@@ -60,6 +75,7 @@ export interface InterviewAgentRepository {
     role: "user" | "assistant";
     kind: InterviewMessageKind;
     content: string;
+    questionId?: string | null;
     idempotencyKey?: string;
   }): Promise<{ id: string; sequence: number }>;
   loadState(interviewId: string): Promise<InterviewAgentState>;
@@ -89,6 +105,56 @@ export interface InterviewAgentRepository {
 export type RunLeaseToken = {
   owner: string;
   generation: number;
+};
+
+export type AuthorizeProposalInput = {
+  runId: string;
+  lease: RunLeaseToken;
+  attemptId: string;
+  logicalMessageId: string;
+  proposal: TurnProposalPrefix;
+  proposalHash: string;
+  checkpoint: AgentCheckpoint;
+  authorizedAt?: Date;
+};
+
+export type MarkResponseStartedInput = {
+  runId: string;
+  lease: RunLeaseToken;
+  attemptId: string;
+  logicalMessageId: string;
+  proposalHash: string;
+  startedAt?: Date;
+};
+
+export type CommitTurnOutcomeInput = {
+  runId: string;
+  interviewId: string;
+  toolCallId: string;
+  lease: RunLeaseToken;
+  logicalMessageId: string;
+  attemptId: string;
+  answerMessageId: string | null;
+  proposal: TurnProposalPrefix;
+  proposalHash: string;
+  responseText: string;
+  language: "zh" | "en" | "es" | "de";
+};
+
+export type CommittedTurnOutcome = {
+  messageId: string;
+  messageSequence: number;
+  responseText: string;
+  message: {
+    id: string;
+    runId: string;
+    sequence: number;
+    role: "assistant";
+    kind: "question" | "finish" | "clarification";
+    content: string;
+  };
+  committedEventSequence: number;
+  committed: true;
 };
 
 export type QuestionOutcomeInput = {
@@ -148,6 +214,8 @@ export type AgentRunRecord = {
   id: string;
   interviewId: string;
   status: "running" | "completed" | "failed";
+  phase?: AgentRunPhase;
+  attemptNumber?: number;
   exitReason: AgentExitReason | null;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
@@ -159,6 +227,20 @@ export type AgentRunRecord = {
   lastEventSequence: number;
 };
 
+export type AgentRunPhase =
+  | "accepted"
+  | "reasoning"
+  | "tool_running"
+  | "proposal_streaming"
+  | "authorized"
+  | "responding"
+  | "validating"
+  | "committing"
+  | "repairing"
+  | "acting"
+  | "scoring"
+  | "reporting";
+
 export type AgentRunTrigger = {
   mode: "opening" | "answer";
   instruction: string;
@@ -169,6 +251,7 @@ type MemoryRun = {
   interviewId: string;
   idempotencyKey: string;
   status: "running" | "completed" | "failed";
+  phase: AgentRunPhase;
   eventSequence: number;
   checkpoint?: AgentCheckpoint;
   exitReason: AgentExitReason | null;
@@ -185,10 +268,15 @@ type MemoryRun = {
   provisionalMessageId: string | null;
   lastProviderProgressAt: Date | null;
   trigger: AgentRunTrigger | null;
+  authorizedProposal: TurnProposalPrefix | null;
+  authorizedProposalHash: string | null;
+  proposalAuthorizedAt: Date | null;
+  responseStartedAt: Date | null;
 };
 
 export function createInMemoryInterviewAgentRepository(
   initialState?: InterviewAgentState,
+  authoritativeLanguage: CommitTurnOutcomeInput["language"] = "zh",
 ) {
   let id = 0;
   const runs = new Map<string, MemoryRun>();
@@ -196,23 +284,81 @@ export function createInMemoryInterviewAgentRepository(
   const messageKeys = new Map<string, { id: string; sequence: number }>();
   const messageSequences = new Map<string, number>();
   const interviewQuestionsById = new Map<string, Array<{ id: string; category: string; topic: string; question: string }>>();
-  const interviewMessagesById = new Map<string, Array<{ id: string; runId: string; questionId: string; content: string; sequence: number }>>();
+  const interviewMessagesById = new Map<string, Array<{
+    id: string;
+    runId: string;
+    questionId: string | null;
+    role: "user" | "assistant";
+    kind: InterviewMessageKind;
+    content: string;
+    sequence: number;
+  }>>();
+  const assessmentsByInterview = new Map<string, Array<{
+    id: string;
+    answerMessageId: string;
+    questionId: string;
+    assessment: NonNullable<TurnProposalPrefix["assessment"]>;
+  }>>();
+  const coverageByInterview = new Map<string, Array<{
+    category: string;
+    topic: string;
+    status: string;
+    resumeEvidenceIds: string[];
+    questionCount: number;
+    depth: number;
+    evidenceQuality: number;
+    lastAssessmentId: string | null;
+  }>>();
   const categoryCountsByInterview = new Map<string, Record<string, number>>();
   const targetRoleByInterview = new Map<string, QuestionOutcomeInput["targetRole"]>();
-  const toolCommits = new Map<string, unknown>();
+  const toolCommits = new Map<string, { toolName: string; result: unknown }>();
   const completingInterviews = new Set<string>();
   const states = new Map<string, InterviewAgentState>();
 
-  if (initialState) states.set(initialState.interviewId, initialState);
+  if (initialState) {
+    states.set(initialState.interviewId, initialState);
+    categoryCountsByInterview.set(
+      initialState.interviewId,
+      Object.fromEntries(Object.entries(initialState.categoryCounts).map(
+        ([category, count]) => [category, count ?? 0],
+      )),
+    );
+  }
 
   const repository: InterviewAgentRepository & {
     inspectRun(runId: string): MemoryRun | undefined;
     inspectInterview(interviewId: string): {
       status: "active" | "completing";
       questions: Array<{ id: string; category: string; topic: string; question: string }>;
-      messages: Array<{ id: string; runId: string; questionId: string; content: string; sequence: number }>;
+      messages: Array<{
+        id: string;
+        runId: string;
+        questionId: string | null;
+        role: "user" | "assistant";
+        kind: InterviewMessageKind;
+        content: string;
+        sequence: number;
+      }>;
       categoryCounts: Record<string, number>;
       targetRole: QuestionOutcomeInput["targetRole"];
+      assessments: Array<{
+        id: string;
+        answerMessageId: string;
+        questionId: string;
+        assessment: NonNullable<TurnProposalPrefix["assessment"]>;
+      }>;
+      coverage: Array<{
+        category: string;
+        topic: string;
+        status: string;
+        resumeEvidenceIds: string[];
+        questionCount: number;
+        depth: number;
+        evidenceQuality: number;
+        lastAssessmentId: string | null;
+      }>;
+      messageCommittedEvents: AgentEventRecord[];
+      submitTurnCommits: CommittedTurnOutcome[];
     };
   } = {
     async createRun(input) {
@@ -224,6 +370,7 @@ export function createInMemoryInterviewAgentRepository(
         interviewId: input.interviewId,
         idempotencyKey: input.idempotencyKey,
         status: "running",
+        phase: "accepted",
         eventSequence: 0,
         exitReason: null,
         leaseOwner: null,
@@ -239,6 +386,10 @@ export function createInMemoryInterviewAgentRepository(
         provisionalMessageId: null,
         lastProviderProgressAt: null,
         trigger: null,
+        authorizedProposal: null,
+        authorizedProposalHash: null,
+        proposalAuthorizedAt: null,
+        responseStartedAt: null,
       };
       runs.set(run.id, run);
       runKeys.set(key, run.id);
@@ -316,11 +467,55 @@ export function createInMemoryInterviewAgentRepository(
     async startAttempt(runId, input, lease) {
       const run = requireRunningMemoryRun(runs, runId);
       assertMemoryFence(run, lease);
+      if (input.attemptNumber <= run.attemptNumber) {
+        if (
+          input.attemptNumber === run.attemptNumber
+          && input.attemptId === run.attemptId
+          && input.provisionalMessageId === run.provisionalMessageId
+        ) return;
+        throw new Error("Agent attempt is stale");
+      }
       run.model = input.model;
       run.attemptId = input.attemptId;
       run.attemptNumber = input.attemptNumber;
       run.provisionalMessageId = input.provisionalMessageId;
       run.lastProviderProgressAt = input.now;
+      run.phase = "reasoning";
+      run.authorizedProposal = null;
+      run.authorizedProposalHash = null;
+      run.proposalAuthorizedAt = null;
+      run.responseStartedAt = null;
+    },
+    async authorizeProposal(input) {
+      const run = requireRunningMemoryRun(runs, input.runId);
+      assertMemoryAttemptFence(run, input);
+      if (![
+        "reasoning",
+        "tool_running",
+        "proposal_streaming",
+        "repairing",
+      ].includes(run.phase)) {
+        throw new Error("Agent proposal authorization phase is stale");
+      }
+      const proposal = parseAuthorizedProposal(input.proposal, input.proposalHash);
+      run.phase = "authorized";
+      run.authorizedProposal = proposal;
+      run.authorizedProposalHash = input.proposalHash;
+      run.proposalAuthorizedAt = input.authorizedAt ?? new Date();
+      run.checkpoint = input.checkpoint;
+      return { authorized: true, proposalHash: input.proposalHash };
+    },
+    async markResponseStarted(input) {
+      const run = requireRunningMemoryRun(runs, input.runId);
+      assertMemoryAttemptFence(run, input);
+      if (
+        run.phase !== "authorized"
+        || run.authorizedProposalHash !== input.proposalHash
+      ) {
+        throw new Error("Agent proposal hash is stale");
+      }
+      run.phase = "responding";
+      run.responseStartedAt = input.startedAt ?? new Date();
     },
     async recordProviderProgress(runId, now, lease) {
       const run = requireRunningMemoryRun(runs, runId);
@@ -340,18 +535,29 @@ export function createInMemoryInterviewAgentRepository(
       messageSequences.set(input.interviewId, sequence);
       const result = { id: input.id ?? `message-${++id}`, sequence };
       if (key) messageKeys.set(key, result);
+      interviewMessagesById.set(input.interviewId, [
+        ...(interviewMessagesById.get(input.interviewId) ?? []),
+        {
+          ...result,
+          runId: input.runId,
+          questionId: input.questionId ?? null,
+          role: input.role,
+          kind: input.kind,
+          content: input.content,
+        },
+      ]);
       return result;
     },
     async loadState(interviewId) {
-      return (
-        states.get(interviewId) ?? {
-          interviewId,
-          candidateRoundCount: 0,
-          categoryCounts: {},
-          recentQuestions: [],
-          requestedUserEnd: false,
-        }
-      );
+      return buildMemoryPolicyState({
+        interviewId,
+        states,
+        categoryCountsByInterview,
+        interviewQuestionsById,
+        assessmentsByInterview,
+        coverageByInterview,
+        completingInterviews,
+      });
     },
     async saveCheckpoint(runId, checkpoint, lease) {
       const run = requireMemoryRun(runs, runId);
@@ -395,12 +601,204 @@ export function createInMemoryInterviewAgentRepository(
       const result = await this.terminateRun(runId, { exitReason, error });
       if (!result.created) throw new Error(`Run ${runId} is already terminal`);
     },
+    async commitTurnOutcome(input) {
+      const run = requireRunningMemoryRun(runs, input.runId);
+      assertMemoryAttemptFence(run, input);
+      const key = `${input.runId}:${input.toolCallId}`;
+      const existing = toolCommits.get(key);
+      if (existing) {
+        if (existing.toolName !== "submit_interview_turn") {
+          throw new Error("Agent tool call id is already committed by another tool");
+        }
+        return existing.result as CommittedTurnOutcome;
+      }
+      if (
+        run.phase !== "responding"
+        || run.authorizedProposalHash !== input.proposalHash
+        || !run.responseStartedAt
+      ) {
+        throw new Error("Agent proposal hash is stale or response has not started");
+      }
+      if (input.language !== authoritativeLanguage) {
+        throw new Error("Interview language does not match authoritative configuration");
+      }
+      const terminalProposal = interviewTurnProposalSchema.parse({
+        ...input.proposal,
+        responseText: input.responseText,
+      });
+      const { responseText, ...proposalInput } = terminalProposal;
+      const proposal = parseAuthorizedProposal(proposalInput, input.proposalHash);
+      if (hashTurnProposalPrefix(run.authorizedProposal!) !== input.proposalHash) {
+        throw new Error("Agent proposal hash is stale");
+      }
+      if (proposal.coverageChanges.some((change) => change.topic === "__category__")) {
+        throw new Error("Reserved coverage topic cannot be proposed");
+      }
+
+      const messages = interviewMessagesById.get(input.interviewId) ?? [];
+      const questions = interviewQuestionsById.get(input.interviewId) ?? [];
+      const answerMessage = input.answerMessageId
+        ? messages.find((message) => message.id === input.answerMessageId)
+        : null;
+      const answerQuestion = answerMessage?.questionId
+        ? questions.find((question) => question.id === answerMessage.questionId)
+        : null;
+      if (input.answerMessageId && (
+        !answerMessage
+        || answerMessage.role !== "user"
+        || answerMessage.kind !== "answer"
+        || !answerQuestion
+      )) {
+        throw new Error("Answer message does not belong to this interview question");
+      }
+
+      const mode = input.answerMessageId ? "answer" as const : "opening" as const;
+      const answerCategory = answerQuestion
+        ? questionCategorySchema.parse(answerQuestion.category)
+        : null;
+      const state = buildMemoryPolicyState({
+        interviewId: input.interviewId,
+        states,
+        categoryCountsByInterview,
+        interviewQuestionsById,
+        assessmentsByInterview,
+        coverageByInterview,
+        completingInterviews,
+      });
+      const authorization = authorizeTurnProposal({
+        state,
+        mode,
+        answerCategory,
+        prefix: proposal,
+        responseText,
+      });
+      if (!authorization.allowed) {
+        throw new Error(`Turn proposal rejected: ${authorization.reason}`);
+      }
+
+      const now = new Date();
+      const assessmentId = proposal.assessment ? `assessment-${++id}` : null;
+      const nextQuestions = [...questions];
+      const nextMessages = [...messages];
+      const nextAssessments = [
+        ...(assessmentsByInterview.get(input.interviewId) ?? []),
+      ];
+      const nextCoverage = [
+        ...(coverageByInterview.get(input.interviewId) ?? []),
+      ].map((item) => ({ ...item, resumeEvidenceIds: [...item.resumeEvidenceIds] }));
+      const nextCounts = {
+        ...(categoryCountsByInterview.get(input.interviewId) ?? {}),
+      };
+
+      if (proposal.assessment && answerMessage && answerQuestion && assessmentId) {
+        if (nextAssessments.some((item) => item.answerMessageId === answerMessage.id)) {
+          throw new Error("Answer assessment already committed");
+        }
+        nextAssessments.push({
+          id: assessmentId,
+          answerMessageId: answerMessage.id,
+          questionId: answerQuestion.id,
+          assessment: proposal.assessment,
+        });
+        applyMemoryAssessmentCoverage(nextCoverage, {
+          interviewId: input.interviewId,
+          category: answerCategory!,
+          questionCount: nextCounts[answerCategory!] ?? 0,
+          assessmentId,
+          assessment: proposal.assessment,
+        });
+      }
+
+      for (const change of authorization.prefix.coverageChanges) {
+        upsertMemoryCoverage(nextCoverage, {
+          category: change.category,
+          topic: change.topic,
+          status: change.status,
+          resumeEvidenceIds: change.resumeEvidenceIds,
+          questionCount: 0,
+          depth: 0,
+          evidenceQuality: 0,
+          lastAssessmentId: null,
+        });
+      }
+
+      let questionId: string | null = null;
+      let kind: CommittedTurnOutcome["message"]["kind"];
+      if (proposal.decision.action === "finish") {
+        kind = "finish";
+      } else {
+        kind = proposal.decision.action === "clarify" ? "clarification" : "question";
+        const category = proposal.decision.category;
+        if ((nextCounts[category] ?? 0) >= 3) throw new Error("CATEGORY_LIMIT_REACHED");
+        questionId = `question-${++id}`;
+        nextQuestions.push({
+          id: questionId,
+          category,
+          topic: proposal.decision.coverageTarget,
+          question: responseText,
+        });
+        nextCounts[category] = (nextCounts[category] ?? 0) + 1;
+        incrementMemoryCategoryCoverage(nextCoverage, category, nextCounts[category], proposal.decision.evidenceIds);
+      }
+
+      const messageSequence = (messageSequences.get(input.interviewId) ?? 0) + 1;
+      const message: CommittedTurnOutcome["message"] = {
+        id: input.logicalMessageId,
+        runId: input.runId,
+        sequence: messageSequence,
+        role: "assistant",
+        kind,
+        content: responseText,
+      };
+      nextMessages.push({
+        ...message,
+        questionId,
+      });
+
+      run.eventSequence += 1;
+      const event: AgentEventRecord = {
+        id: `event-${++id}`,
+        runId: input.runId,
+        sequence: run.eventSequence,
+        type: "message_committed",
+        visibility: "public",
+        attemptId: input.attemptId,
+        logicalMessageId: input.logicalMessageId,
+        payload: {
+          runId: input.runId,
+          attemptId: input.attemptId,
+          logicalMessageId: input.logicalMessageId,
+          message,
+        },
+        createdAt: now.toISOString(),
+      };
+      const outcome: CommittedTurnOutcome = {
+        messageId: message.id,
+        messageSequence,
+        responseText,
+        message,
+        committedEventSequence: event.sequence,
+        committed: true,
+      };
+
+      interviewQuestionsById.set(input.interviewId, nextQuestions);
+      interviewMessagesById.set(input.interviewId, nextMessages);
+      assessmentsByInterview.set(input.interviewId, nextAssessments);
+      coverageByInterview.set(input.interviewId, nextCoverage);
+      categoryCountsByInterview.set(input.interviewId, nextCounts);
+      messageSequences.set(input.interviewId, messageSequence);
+      run.events.push(event);
+      run.phase = "acting";
+      if (proposal.decision.action === "finish") completingInterviews.add(input.interviewId);
+      toolCommits.set(key, { toolName: "submit_interview_turn", result: outcome });
+      return outcome;
+    },
     async commitQuestionOutcome(input) {
       const run = requireRunningMemoryRun(runs, input.runId);
       assertMemoryFence(run, input.lease);
       const key = `${input.runId}:${input.toolCallId}`;
       const existing = toolCommits.get(key);
-      if (existing) return existing as QuestionOutcome;
+      if (existing) return existing.result as QuestionOutcome;
       const counts = categoryCountsByInterview.get(input.interviewId) ?? {};
       if ((counts[input.category] ?? 0) >= 3) throw new Error("CATEGORY_LIMIT_REACHED");
       const questionId = `question-${++id}`;
@@ -419,12 +817,20 @@ export function createInMemoryInterviewAgentRepository(
       ]);
       interviewMessagesById.set(input.interviewId, [
         ...(interviewMessagesById.get(input.interviewId) ?? []),
-        { id: messageId, runId: input.runId, questionId, content: input.responseText, sequence },
+        {
+          id: messageId,
+          runId: input.runId,
+          questionId,
+          role: "assistant",
+          kind: "question",
+          content: input.responseText,
+          sequence,
+        },
       ]);
       messageSequences.set(input.interviewId, sequence);
       categoryCountsByInterview.set(input.interviewId, { ...counts, [input.category]: (counts[input.category] ?? 0) + 1 });
       if (input.targetRole) targetRoleByInterview.set(input.interviewId, input.targetRole);
-      toolCommits.set(key, outcome);
+      toolCommits.set(key, { toolName: "ask_interview_question", result: outcome });
       return outcome;
     },
     async commitCoverageUpdate(input) {
@@ -432,9 +838,9 @@ export function createInMemoryInterviewAgentRepository(
       assertMemoryFence(run, input.lease);
       const key = `${input.runId}:${input.toolCallId}`;
       const existing = toolCommits.get(key);
-      if (existing) return existing as { updated: true };
+      if (existing) return existing.result as { updated: true };
       const result = { updated: true as const };
-      toolCommits.set(key, result);
+      toolCommits.set(key, { toolName: "update_coverage", result });
       return result;
     },
     async commitFinishOutcome(input) {
@@ -442,7 +848,7 @@ export function createInMemoryInterviewAgentRepository(
       assertMemoryFence(run, input.lease);
       const key = `${input.runId}:${input.toolCallId}`;
       const existing = toolCommits.get(key);
-      if (existing) return existing as FinishOutcome;
+      if (existing) return existing.result as FinishOutcome;
       const sequence = (messageSequences.get(input.interviewId) ?? 0) + 1;
       const outcome: FinishOutcome = {
         messageId: `message-${++id}`,
@@ -455,14 +861,16 @@ export function createInMemoryInterviewAgentRepository(
         {
           id: outcome.messageId,
           runId: input.runId,
-          questionId: "",
+          questionId: null,
+          role: "assistant",
+          kind: "finish",
           content: input.closingMessage,
           sequence,
         },
       ]);
       messageSequences.set(input.interviewId, sequence);
       completingInterviews.add(input.interviewId);
-      toolCommits.set(key, outcome);
+      toolCommits.set(key, { toolName: "finish_interview", result: outcome });
       return outcome;
     },
     async markInterviewCompleting(interviewId) {
@@ -487,12 +895,21 @@ export function createInMemoryInterviewAgentRepository(
       return runs.get(runId);
     },
     inspectInterview(interviewId: string) {
+      const runsForInterview = [...runs.values()].filter((run) => run.interviewId === interviewId);
       return {
         status: completingInterviews.has(interviewId) ? "completing" : "active",
         questions: interviewQuestionsById.get(interviewId) ?? [],
         messages: interviewMessagesById.get(interviewId) ?? [],
         categoryCounts: categoryCountsByInterview.get(interviewId) ?? {},
         targetRole: targetRoleByInterview.get(interviewId),
+        assessments: assessmentsByInterview.get(interviewId) ?? [],
+        coverage: coverageByInterview.get(interviewId) ?? [],
+        messageCommittedEvents: runsForInterview.flatMap((run) => (
+          run.events.filter((event) => event.type === "message_committed")
+        )),
+        submitTurnCommits: [...toolCommits.values()]
+          .filter((commit) => commit.toolName === "submit_interview_turn")
+          .map((commit) => commit.result as CommittedTurnOutcome),
       };
     },
   };
@@ -504,6 +921,8 @@ function memoryRunRecord(run: MemoryRun): AgentRunRecord {
     id: run.id,
     interviewId: run.interviewId,
     status: run.status,
+    phase: run.phase,
+    attemptNumber: run.attemptNumber,
     exitReason: run.exitReason,
     leaseOwner: run.leaseOwner,
     leaseExpiresAt: run.leaseExpiresAt,
@@ -525,6 +944,160 @@ function assertMemoryFence(run: MemoryRun, lease?: RunLeaseToken) {
   ) {
     throw new Error("Agent run lease is stale");
   }
+}
+
+function assertMemoryAttemptFence(
+  run: MemoryRun,
+  input: {
+    lease: RunLeaseToken;
+    attemptId: string;
+    logicalMessageId: string;
+  },
+) {
+  assertMemoryFence(run, input.lease);
+  if (
+    run.attemptId !== input.attemptId
+    || run.provisionalMessageId !== input.logicalMessageId
+  ) {
+    throw new Error("Agent attempt is stale");
+  }
+}
+
+function parseAuthorizedProposal(
+  proposal: TurnProposalPrefix,
+  proposalHash: string,
+): TurnProposalPrefix {
+  const normalized = turnProposalPrefixSchema.parse(proposal);
+  if (hashTurnProposalPrefix(normalized) !== proposalHash) {
+    throw new Error("Agent proposal hash is stale");
+  }
+  if (normalized.coverageChanges.some((change) => change.topic === "__category__")) {
+    throw new Error("Reserved coverage topic cannot be proposed");
+  }
+  return normalized;
+}
+
+function buildMemoryPolicyState(input: {
+  interviewId: string;
+  states: Map<string, InterviewAgentState>;
+  categoryCountsByInterview: Map<string, Record<string, number>>;
+  interviewQuestionsById: Map<string, Array<{
+    id: string;
+    category: string;
+    topic: string;
+    question: string;
+  }>>;
+  assessmentsByInterview: Map<string, Array<{
+    assessment: NonNullable<TurnProposalPrefix["assessment"]>;
+  }>>;
+  coverageByInterview: Map<string, Array<{
+    category: string;
+    topic: string;
+    status: string;
+  }>>;
+  completingInterviews: Set<string>;
+}): InterviewAgentState {
+  const base = input.states.get(input.interviewId);
+  const counts = input.categoryCountsByInterview.get(input.interviewId) ?? {};
+  const aggregateCoverage = coverageStatusesForMemoryInterview(input.interviewId);
+  let consecutiveNoFollowUpAssessments =
+    base?.consecutiveNoFollowUpAssessments ?? 0;
+  for (const item of input.assessmentsByInterview.get(input.interviewId) ?? []) {
+    consecutiveNoFollowUpAssessments = item.assessment.followUpNeeded
+      ? 0
+      : consecutiveNoFollowUpAssessments + 1;
+  }
+  return {
+    interviewId: input.interviewId,
+    candidateRoundCount: base?.candidateRoundCount ?? 0,
+    categoryCounts: counts,
+    categoryStatuses: {
+      ...(base?.categoryStatuses ?? {}),
+      ...aggregateCoverage,
+    },
+    consecutiveNoFollowUpAssessments,
+    recentQuestions: [
+      ...(base?.recentQuestions ?? []),
+      ...(input.interviewQuestionsById.get(input.interviewId) ?? []).map(
+        (question) => question.question,
+      ),
+    ].slice(-10),
+    requestedUserEnd: input.completingInterviews.has(input.interviewId)
+      || (base?.requestedUserEnd ?? false),
+  };
+
+  function coverageStatusesForMemoryInterview(interviewId: string) {
+    const coverage = input.coverageByInterview.get(interviewId) ?? [];
+    return Object.fromEntries(
+      coverage
+        .filter((item) => item.topic === "__category__")
+        .map((item) => [item.category, item.status]),
+    ) as Partial<Record<QuestionCategory, CoverageStatus>>;
+  }
+}
+
+function upsertMemoryCoverage(
+  coverage: Array<{
+    category: string;
+    topic: string;
+    status: string;
+    resumeEvidenceIds: string[];
+    questionCount: number;
+    depth: number;
+    evidenceQuality: number;
+    lastAssessmentId: string | null;
+  }>,
+  value: (typeof coverage)[number],
+) {
+  const index = coverage.findIndex((item) => (
+    item.category === value.category && item.topic === value.topic
+  ));
+  if (index === -1) coverage.push({ ...value, resumeEvidenceIds: [...value.resumeEvidenceIds] });
+  else coverage[index] = { ...value, resumeEvidenceIds: [...value.resumeEvidenceIds] };
+}
+
+function applyMemoryAssessmentCoverage(
+  coverage: Parameters<typeof upsertMemoryCoverage>[0],
+  input: {
+    interviewId: string;
+    category: QuestionCategory;
+    questionCount: number;
+    assessmentId: string;
+    assessment: NonNullable<TurnProposalPrefix["assessment"]>;
+  },
+) {
+  const projected = projectAssessmentCoverage(input.assessment);
+  upsertMemoryCoverage(coverage, {
+    category: input.category,
+    topic: "__category__",
+    status: input.questionCount >= 3 ? "exhausted" : projected.status,
+    resumeEvidenceIds: [],
+    questionCount: input.questionCount,
+    depth: projected.depth,
+    evidenceQuality: projected.evidenceQuality,
+    lastAssessmentId: input.assessmentId,
+  });
+}
+
+function incrementMemoryCategoryCoverage(
+  coverage: Parameters<typeof upsertMemoryCoverage>[0],
+  category: QuestionCategory,
+  questionCount: number,
+  resumeEvidenceIds: string[],
+) {
+  const existing = coverage.find((item) => (
+    item.category === category && item.topic === "__category__"
+  ));
+  upsertMemoryCoverage(coverage, {
+    category,
+    topic: "__category__",
+    status: questionCount >= 3 ? "exhausted" : "partial",
+    resumeEvidenceIds,
+    questionCount,
+    depth: existing?.depth ?? 0,
+    evidenceQuality: existing?.evidenceQuality ?? 0,
+    lastAssessmentId: existing?.lastAssessmentId ?? null,
+  });
 }
 
 const RECOVERABLE_RUN_EXIT_REASONS: AgentExitReason[] = [
@@ -653,6 +1226,8 @@ export function createDrizzleInterviewAgentRepository(
         id: interviewAgentRuns.id,
         interviewId: interviewAgentRuns.interviewId,
         status: interviewAgentRuns.status,
+        phase: interviewAgentRuns.phase,
+        attemptNumber: interviewAgentRuns.attemptNumber,
         exitReason: interviewAgentRuns.exitReason,
         leaseOwner: interviewAgentRuns.leaseOwner,
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
@@ -734,6 +1309,8 @@ export function createDrizzleInterviewAgentRepository(
         id: interviewAgentRuns.id,
         interviewId: interviewAgentRuns.interviewId,
         status: interviewAgentRuns.status,
+        phase: interviewAgentRuns.phase,
+        attemptNumber: interviewAgentRuns.attemptNumber,
         exitReason: interviewAgentRuns.exitReason,
         leaseOwner: interviewAgentRuns.leaseOwner,
         leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
@@ -779,10 +1356,67 @@ export function createDrizzleInterviewAgentRepository(
         attemptId: input.attemptId,
         attemptNumber: input.attemptNumber,
         provisionalMessageId: input.provisionalMessageId,
+        phase: "reasoning",
+        authorizedProposalJson: null,
+        authorizedProposalHash: null,
+        proposalAuthorizedAt: null,
+        responseStartedAt: null,
         lastProviderProgressAt: input.now,
         updatedAt: input.now,
-      }).where(runFenceCondition(runId, lease)).returning({ id: interviewAgentRuns.id });
-      if (rows.length === 0) throw new Error("Agent run lease is stale");
+      }).where(and(
+        runFenceCondition(runId, lease),
+        sql`${interviewAgentRuns.attemptNumber} < ${input.attemptNumber}`,
+      )).returning({ id: interviewAgentRuns.id });
+      if (rows.length > 0) return;
+      const [current] = await database.select({
+        attemptId: interviewAgentRuns.attemptId,
+        attemptNumber: interviewAgentRuns.attemptNumber,
+        logicalMessageId: interviewAgentRuns.provisionalMessageId,
+      }).from(interviewAgentRuns).where(runFenceCondition(runId, lease)).limit(1);
+      if (
+        current
+        && current.attemptNumber === input.attemptNumber
+        && current.attemptId === input.attemptId
+        && current.logicalMessageId === input.provisionalMessageId
+      ) return;
+      throw new Error("Agent attempt is stale");
+    },
+    async authorizeProposal(input) {
+      const proposal = parseAuthorizedProposal(input.proposal, input.proposalHash);
+      const authorizedAt = input.authorizedAt ?? new Date();
+      const rows = await database.update(interviewAgentRuns).set({
+        phase: "authorized",
+        authorizedProposalJson: proposal,
+        authorizedProposalHash: input.proposalHash,
+        proposalAuthorizedAt: authorizedAt,
+        responseStartedAt: null,
+        checkpointJson: input.checkpoint,
+        turnCount: input.checkpoint.turnCount,
+        updatedAt: authorizedAt,
+      }).where(and(
+        runAttemptFenceCondition(input),
+        inArray(interviewAgentRuns.phase, [
+          "reasoning",
+          "tool_running",
+          "proposal_streaming",
+          "repairing",
+        ]),
+      )).returning({ id: interviewAgentRuns.id });
+      if (rows.length === 0) throw new Error("Agent attempt is stale");
+      return { authorized: true, proposalHash: input.proposalHash };
+    },
+    async markResponseStarted(input) {
+      const startedAt = input.startedAt ?? new Date();
+      const rows = await database.update(interviewAgentRuns).set({
+        phase: "responding",
+        responseStartedAt: startedAt,
+        updatedAt: startedAt,
+      }).where(and(
+        runAttemptFenceCondition(input),
+        eq(interviewAgentRuns.phase, "authorized"),
+        eq(interviewAgentRuns.authorizedProposalHash, input.proposalHash),
+      )).returning({ id: interviewAgentRuns.id });
+      if (rows.length === 0) throw new Error("Agent proposal hash is stale or attempt is stale");
     },
     async recordProviderProgress(runId, now, lease) {
       const rows = await database.update(interviewAgentRuns).set({
@@ -930,6 +1564,356 @@ export function createDrizzleInterviewAgentRepository(
     async failRun(runId, exitReason, error) {
       const result = await this.terminateRun(runId, { exitReason, error });
       if (!result.created) throw new Error(`Run ${runId} is already terminal`);
+    },
+    async commitTurnOutcome(input) {
+      return database.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.interviewId}))`);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.runId}))`);
+
+        const [run] = await tx.select({
+          interviewId: interviewAgentRuns.interviewId,
+          model: interviewAgentRuns.model,
+          phase: interviewAgentRuns.phase,
+          authorizedProposal: interviewAgentRuns.authorizedProposalJson,
+          authorizedProposalHash: interviewAgentRuns.authorizedProposalHash,
+          responseStartedAt: interviewAgentRuns.responseStartedAt,
+        }).from(interviewAgentRuns)
+          .where(runAttemptFenceCondition(input))
+          .limit(1);
+        if (!run) throw new Error("Agent attempt is stale");
+        if (run.interviewId !== input.interviewId) {
+          throw new Error("Agent run does not belong to interview");
+        }
+
+        const [existing] = await tx.select({
+          toolName: interviewAgentToolCommits.toolName,
+          result: interviewAgentToolCommits.resultJson,
+        })
+          .from(interviewAgentToolCommits)
+          .where(and(
+            eq(interviewAgentToolCommits.runId, input.runId),
+            eq(interviewAgentToolCommits.toolCallId, input.toolCallId),
+          ))
+          .limit(1);
+        if (existing) {
+          if (existing.toolName !== "submit_interview_turn") {
+            throw new Error("Agent tool call id is already committed by another tool");
+          }
+          return existing.result as CommittedTurnOutcome;
+        }
+        if (
+          run.phase !== "responding"
+          || !run.responseStartedAt
+          || run.authorizedProposalHash !== input.proposalHash
+        ) {
+          throw new Error("Agent proposal hash is stale or response has not started");
+        }
+        const terminalProposal = interviewTurnProposalSchema.parse({
+          ...input.proposal,
+          responseText: input.responseText,
+        });
+        const { responseText, ...proposalInput } = terminalProposal;
+        const proposal = parseAuthorizedProposal(proposalInput, input.proposalHash);
+        const storedProposal = turnProposalPrefixSchema.parse(run.authorizedProposal);
+        if (hashTurnProposalPrefix(storedProposal) !== input.proposalHash) {
+          throw new Error("Agent proposal hash is stale");
+        }
+        if (proposal.coverageChanges.some((change) => change.topic === "__category__")) {
+          throw new Error("Reserved coverage topic cannot be proposed");
+        }
+
+        const [interview] = await tx.select({
+          candidateRoundCount: interviews.candidateRoundCount,
+          status: interviews.status,
+          language: interviews.language,
+        }).from(interviews)
+          .where(eq(interviews.id, input.interviewId))
+          .limit(1);
+        if (!interview) throw new Error(`Unknown interview: ${input.interviewId}`);
+        if (interview.language !== input.language) {
+          throw new Error("Interview language does not match authoritative configuration");
+        }
+
+        let mode: "opening" | "answer" = "opening";
+        let answerCategory: QuestionCategory | null = null;
+        let answerQuestionId: string | null = null;
+        if (input.answerMessageId) {
+          const [answer] = await tx.select({
+            role: interviewMessages.role,
+            kind: interviewMessages.kind,
+            questionId: interviewMessages.questionId,
+          }).from(interviewMessages).where(and(
+            eq(interviewMessages.id, input.answerMessageId),
+            eq(interviewMessages.interviewId, input.interviewId),
+          )).limit(1);
+          if (!answer || answer.role !== "user" || answer.kind !== "answer" || !answer.questionId) {
+            throw new Error("Answer message does not belong to this interview question");
+          }
+          const [question] = await tx.select({
+            id: interviewQuestions.id,
+            category: interviewQuestions.questionType,
+          }).from(interviewQuestions).where(and(
+            eq(interviewQuestions.id, answer.questionId),
+            eq(interviewQuestions.interviewId, input.interviewId),
+          )).limit(1);
+          if (!question) throw new Error("Answer question does not belong to interview");
+          mode = "answer";
+          answerCategory = questionCategorySchema.parse(question.category);
+          answerQuestionId = question.id;
+        }
+
+        const [coverage, questions, assessments] = await Promise.all([
+          tx.select({
+            category: interviewCoverage.category,
+            questionCount: interviewCoverage.questionCount,
+            status: interviewCoverage.status,
+          }).from(interviewCoverage).where(and(
+            eq(interviewCoverage.interviewId, input.interviewId),
+            eq(interviewCoverage.topic, "__category__"),
+          )),
+          tx.select({ question: interviewQuestions.question })
+            .from(interviewQuestions)
+            .where(and(
+              eq(interviewQuestions.interviewId, input.interviewId),
+              isNotNull(interviewQuestions.askedAt),
+            ))
+            .orderBy(asc(interviewQuestions.questionIndex)),
+          tx.select({ followUpNeeded: interviewAnswerAssessments.followUpNeeded })
+            .from(interviewAnswerAssessments)
+            .where(eq(interviewAnswerAssessments.interviewId, input.interviewId))
+            .orderBy(desc(interviewAnswerAssessments.createdAt))
+            .limit(2),
+        ]);
+        const state: InterviewAgentState = {
+          interviewId: input.interviewId,
+          candidateRoundCount: interview.candidateRoundCount,
+          categoryCounts: Object.fromEntries(
+            coverage.map((item) => [item.category, item.questionCount]),
+          ),
+          categoryStatuses: Object.fromEntries(
+            coverage.map((item) => [item.category, item.status]),
+          ) as Partial<Record<QuestionCategory, CoverageStatus>>,
+          consecutiveNoFollowUpAssessments:
+            assessments.findIndex((item) => item.followUpNeeded !== 0) === -1
+              ? assessments.length
+              : assessments.findIndex((item) => item.followUpNeeded !== 0),
+          recentQuestions: questions.slice(-10).map((item) => item.question),
+          requestedUserEnd: interview.status === "completing",
+        };
+        const authorization = authorizeTurnProposal({
+          state,
+          mode,
+          answerCategory,
+          prefix: proposal,
+          responseText,
+        });
+        if (!authorization.allowed) {
+          throw new Error(`Turn proposal rejected: ${authorization.reason}`);
+        }
+        if (proposal.decision.action !== "finish" && interview.status !== "active") {
+          throw new Error("INTERVIEW_NOT_ACTIVE");
+        }
+
+        const now = new Date();
+        let assessmentId: string | null = null;
+        if (proposal.assessment && input.answerMessageId && answerQuestionId && answerCategory) {
+          const [assessment] = await tx.insert(interviewAnswerAssessments).values({
+            interviewId: input.interviewId,
+            questionId: answerQuestionId,
+            answerMessageId: input.answerMessageId,
+            completeness: proposal.assessment.completeness,
+            specificity: proposal.assessment.specificity,
+            evidenceStrength: proposal.assessment.evidenceStrength,
+            reflectionDepth: proposal.assessment.reflectionDepth,
+            followUpNeeded: proposal.assessment.followUpNeeded ? 1 : 0,
+            missingPoints: proposal.assessment.missingPoints,
+            extractedEvidence: proposal.assessment.extractedEvidence,
+            publicSummary: proposal.assessment.publicSummary,
+            model: run.model,
+          }).returning({ id: interviewAnswerAssessments.id });
+          assessmentId = assessment.id;
+          const projected = projectAssessmentCoverage(proposal.assessment);
+          await tx.insert(interviewCoverage).values({
+            interviewId: input.interviewId,
+            category: answerCategory,
+            topic: "__category__",
+            resumeEvidenceIds: [],
+            questionCount: state.categoryCounts[answerCategory] ?? 0,
+            depth: projected.depth,
+            evidenceQuality: projected.evidenceQuality,
+            status: (state.categoryCounts[answerCategory] ?? 0) >= 3
+              ? "exhausted"
+              : projected.status,
+            lastAssessmentId: assessmentId,
+          }).onConflictDoUpdate({
+            target: [
+              interviewCoverage.interviewId,
+              interviewCoverage.category,
+              interviewCoverage.topic,
+            ],
+            set: {
+              depth: projected.depth,
+              evidenceQuality: projected.evidenceQuality,
+              status: (state.categoryCounts[answerCategory] ?? 0) >= 3
+                ? "exhausted"
+                : projected.status,
+              lastAssessmentId: assessmentId,
+              updatedAt: now,
+            },
+          });
+        }
+
+        for (const change of authorization.prefix.coverageChanges) {
+          await tx.insert(interviewCoverage).values({
+            interviewId: input.interviewId,
+            category: change.category,
+            topic: change.topic,
+            status: change.status,
+            resumeEvidenceIds: change.resumeEvidenceIds,
+          }).onConflictDoUpdate({
+            target: [
+              interviewCoverage.interviewId,
+              interviewCoverage.category,
+              interviewCoverage.topic,
+            ],
+            set: {
+              status: change.status,
+              resumeEvidenceIds: change.resumeEvidenceIds,
+              updatedAt: now,
+            },
+          });
+        }
+
+        let questionId: string | null = null;
+        let messageKind: CommittedTurnOutcome["message"]["kind"];
+        if (proposal.decision.action === "finish") {
+          if (interview.status !== "active" && interview.status !== "completing") {
+            throw new Error("INTERVIEW_NOT_ACTIVE");
+          }
+          const changed = await tx.update(interviews).set({
+            status: "scoring",
+            updatedAt: now,
+          }).where(and(
+            eq(interviews.id, input.interviewId),
+            inArray(interviews.status, ["active", "completing"]),
+          )).returning({ id: interviews.id });
+          if (changed.length === 0) throw new Error("INTERVIEW_NOT_ACTIVE");
+          await tx.insert(interviewCompletionJobs).values({
+            interviewId: input.interviewId,
+          }).onConflictDoNothing({ target: interviewCompletionJobs.interviewId });
+          messageKind = "finish";
+        } else {
+          const category = proposal.decision.category;
+          const [indexRow] = await tx.select({
+            next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1`,
+          }).from(interviewQuestions)
+            .where(eq(interviewQuestions.interviewId, input.interviewId));
+          const [question] = await tx.insert(interviewQuestions).values({
+            interviewId: input.interviewId,
+            questionIndex: Number(indexRow.next),
+            questionType: category,
+            topic: proposal.decision.coverageTarget,
+            question: responseText,
+            tip: "",
+          }).returning({ id: interviewQuestions.id });
+          questionId = question.id;
+          const [categoryCoverage] = await tx.insert(interviewCoverage).values({
+            interviewId: input.interviewId,
+            category,
+            topic: "__category__",
+            resumeEvidenceIds: proposal.decision.evidenceIds,
+            questionCount: 1,
+            status: "partial",
+          }).onConflictDoUpdate({
+            target: [
+              interviewCoverage.interviewId,
+              interviewCoverage.category,
+              interviewCoverage.topic,
+            ],
+            set: {
+              questionCount: sql`${interviewCoverage.questionCount} + 1`,
+              resumeEvidenceIds: proposal.decision.evidenceIds,
+              status: sql`CASE WHEN ${interviewCoverage.questionCount} + 1 >= 3 THEN 'exhausted' ELSE 'partial' END`,
+              updatedAt: now,
+            },
+          }).returning({ count: interviewCoverage.questionCount });
+          if (categoryCoverage.count > 3) throw new Error("CATEGORY_LIMIT_REACHED");
+          messageKind = proposal.decision.action === "clarify"
+            ? "clarification"
+            : "question";
+        }
+
+        const [sequenceRow] = await tx.select({
+          sequence: sql<number>`coalesce(max(${interviewMessages.sequence}), 0) + 1`,
+        }).from(interviewMessages)
+          .where(eq(interviewMessages.interviewId, input.interviewId));
+        const messageSequence = Number(sequenceRow.sequence);
+        const [createdMessage] = await tx.insert(interviewMessages).values({
+          id: input.logicalMessageId,
+          interviewId: input.interviewId,
+          runId: input.runId,
+          sequence: messageSequence,
+          role: "assistant",
+          kind: messageKind,
+          content: responseText,
+          questionId,
+          metadata: {
+            proposalHash: input.proposalHash,
+            decision: proposal.decision,
+            assessmentId,
+          },
+        }).returning({ id: interviewMessages.id });
+        const message: CommittedTurnOutcome["message"] = {
+          id: createdMessage.id,
+          runId: input.runId,
+          sequence: messageSequence,
+          role: "assistant",
+          kind: messageKind,
+          content: responseText,
+        };
+        const [updatedRun] = await tx.update(interviewAgentRuns).set({
+          phase: "acting",
+          lastEventSequence: sql`${interviewAgentRuns.lastEventSequence} + 1`,
+          updatedAt: now,
+        }).where(runAttemptFenceCondition(input)).returning({
+          sequence: interviewAgentRuns.lastEventSequence,
+        });
+        if (!updatedRun) throw new Error("Agent attempt is stale");
+        await tx.insert(interviewAgentEvents).values({
+          runId: input.runId,
+          sequence: updatedRun.sequence,
+          attemptId: input.attemptId,
+          logicalMessageId: input.logicalMessageId,
+          visibility: "public",
+          type: "message_committed",
+          payload: {
+            runId: input.runId,
+            attemptId: input.attemptId,
+            logicalMessageId: input.logicalMessageId,
+            message,
+          },
+        });
+        const outcome: CommittedTurnOutcome = {
+          messageId: message.id,
+          messageSequence,
+          responseText,
+          message,
+          committedEventSequence: updatedRun.sequence,
+          committed: true,
+        };
+        await tx.insert(interviewAgentToolCommits).values({
+          runId: input.runId,
+          toolCallId: input.toolCallId,
+          toolName: "submit_interview_turn",
+          resultJson: outcome,
+        });
+        await notifyAgentEventAppend(
+          (query) => tx.execute(query),
+          input.runId,
+          updatedRun.sequence,
+        );
+        return outcome;
+      });
     },
     async commitQuestionOutcome(input) {
       return database.transaction(async (tx) => {
@@ -1188,6 +2172,8 @@ function parseRunRecord(row: {
   id: string;
   interviewId: string;
   status: string;
+  phase: string;
+  attemptNumber: number;
   exitReason: string | null;
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
@@ -1201,10 +2187,24 @@ function parseRunRecord(row: {
   return {
     ...row,
     status: row.status as AgentRunRecord["status"],
+    phase: row.phase as AgentRunPhase,
     exitReason: row.exitReason as AgentExitReason | null,
     checkpoint: row.checkpoint as AgentCheckpoint | null,
     trigger: row.trigger as AgentRunTrigger | null,
   };
+}
+
+function runAttemptFenceCondition(input: {
+  runId: string;
+  lease: RunLeaseToken;
+  attemptId: string;
+  logicalMessageId: string;
+}) {
+  return and(
+    runFenceCondition(input.runId, input.lease),
+    eq(interviewAgentRuns.attemptId, input.attemptId),
+    eq(interviewAgentRuns.provisionalMessageId, input.logicalMessageId),
+  );
 }
 
 function runFenceCondition(runId: string, lease?: RunLeaseToken) {
