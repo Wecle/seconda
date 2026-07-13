@@ -72,6 +72,7 @@ export async function runInterviewAgent(options: {
   let planningStepCount = checkpoint?.turnCount ?? 0;
   let terminalAttemptCount = checkpoint?.terminalAttemptCount ?? 0;
   let invalidModelActionCount = checkpoint?.invalidModelActionCount ?? 0;
+  let attemptNumberOffset = persistedRun?.attemptNumber ?? 0;
   let phase: RuntimePhase = checkpoint?.phase === "terminal" ? "terminal" : "planning";
   let pendingToolCall = checkpoint?.pendingToolCall;
 
@@ -143,6 +144,7 @@ export async function runInterviewAgent(options: {
           description: describeTool(name),
         })),
         signal: options.signal,
+        attemptNumberOffset,
         promptContext: options.promptContext,
       };
       if (options.model.nextStepStream) {
@@ -153,6 +155,7 @@ export async function runInterviewAgent(options: {
               ...attempt,
               now: new Date(),
             }, options.lease);
+            attemptNumberOffset = attempt.attemptNumber;
           },
           onProviderProgress: async () => {
             await options.repository.recordProviderProgress(options.runId, new Date(), options.lease);

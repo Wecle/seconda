@@ -41,6 +41,7 @@ export type ProvisionalDelta = {
 
 type NextStepInput = {
   runId: string;
+  attemptNumberOffset?: number;
   messages: readonly AgentRuntimeMessage[];
   tools: readonly AgentToolDescriptor[];
   signal: AbortSignal;
@@ -118,6 +119,7 @@ export function createStreamingInterviewAgentModelPort(options: {
         sleep: options.sleep,
         random: options.random,
         createId: options.createAttemptId,
+        attemptNumberOffset: input.attemptNumberOffset,
         onAttemptStarted: async (attempt) => {
           const messageId = options.createMessageId?.() ?? randomUUID();
           messageIds.set(attempt.attemptId, messageId);

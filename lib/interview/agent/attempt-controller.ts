@@ -22,11 +22,12 @@ export async function runAgentAttempts<T>(options: {
   random?: () => number;
   createId?: (model: string, attemptNumber: number) => string;
   signal?: AbortSignal;
+  attemptNumberOffset?: number;
 }): Promise<{ value: T; model: string; attemptId: string; attemptNumber: number }> {
   const random = options.random ?? Math.random;
   const createId = options.createId ?? (() => randomUUID());
   const sleep = options.sleep ?? defaultSleep;
-  let attemptNumber = 0;
+  let attemptNumber = options.attemptNumberOffset ?? 0;
   let finalError: unknown = new Error("No Agent model candidates configured");
 
   for (const candidate of options.candidates) {

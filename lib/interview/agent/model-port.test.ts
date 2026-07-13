@@ -93,6 +93,40 @@ test("emits only growing question suffixes with one provisional identity", async
   assert.equal(result.attemptId, "attempt-1");
 });
 
+test("continues provider attempt numbers across logical model calls", async () => {
+  const started: number[] = [];
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "fast" }],
+    classifyError: () => "fatal",
+    createAttemptId: (_model, number) => `attempt-${number}`,
+    onAttemptStarted: async ({ attemptNumber }) => {
+      started.push(attemptNumber);
+    },
+    streamCandidate: async () => ({
+      partialOutputStream: (async function* () {})(),
+      output: Promise.resolve({
+        type: "tool_call",
+        callId: "call",
+        toolName: "ask_interview_question",
+        args: askArgs,
+      }),
+    }),
+  });
+  const input = {
+    runId: "run",
+    messages: [],
+    tools: askTool,
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onProvisionalDelta: async () => {},
+  };
+
+  await port.nextStepStream!({ ...input, attemptNumberOffset: 4 });
+  await port.nextStepStream!({ ...input, attemptNumberOffset: 5 });
+
+  assert.deepEqual(started, [5, 6]);
+});
+
 test("aborts an idle provider stream", async () => {
   const port = createStreamingInterviewAgentModelPort({
     candidates: [{ model: "fast" }],
