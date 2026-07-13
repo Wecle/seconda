@@ -13,20 +13,14 @@ import {
 import type { InterviewSkill } from "./skills";
 import { renderSkillInstructions } from "./skills";
 import { publicArtifactFromToolCompletion } from "./public-events";
-
-const MAX_MODEL_TURNS = 8;
-const MAX_TOOL_REPAIR_TURNS = 2;
-const MAX_PROVIDER_CALLS = MAX_MODEL_TURNS + MAX_TOOL_REPAIR_TURNS;
-const MAX_PROVIDER_ATTEMPTS = 10;
-const REPAIRABLE_TOOL_ERRORS = new Set([
-  "INVALID_TOOL_INPUT",
-  "EVIDENCE_NOT_FOUND",
-  "SOURCE_NOT_FOUND",
-]);
-const TERMINAL_TOOLS = new Set([
-  "ask_interview_question",
-  "finish_interview",
-]);
+import {
+  MAX_INVALID_MODEL_ACTIONS,
+  MAX_PLANNING_STEPS,
+  MAX_TERMINAL_ATTEMPTS,
+  isTerminalTool,
+  toolsForRuntimePhase,
+  type RuntimePhase,
+} from "./runtime-policy";
 
 export async function runInterviewAgent(options: {
   interviewId: string;
@@ -54,9 +48,11 @@ export async function runInterviewAgent(options: {
   const loopDetector = new AgentLoopDetector();
   let lastEventSequence = 0;
   let toolCallCount = 0;
-  let productiveTurnCount = 0;
-  let repairTurnCount = 0;
-  let providerAttemptCount = 0;
+  let modelCallCount = 0;
+  let planningStepCount = 0;
+  let terminalAttemptCount = 0;
+  let invalidModelActionCount = 0;
+  let phase: RuntimePhase = "planning";
 
   lastEventSequence = (await options.repository.appendEvent(options.runId, {
     type: "run_started",
@@ -80,30 +76,31 @@ export async function runInterviewAgent(options: {
     })).sequence;
   }
 
-  for (
-    let providerCall = 1;
-    providerCall <= MAX_PROVIDER_CALLS && productiveTurnCount < MAX_MODEL_TURNS;
-    providerCall += 1
-  ) {
+  while (true) {
     if (options.signal.aborted) {
-      return failRun(options, "aborted_streaming", options.signal.reason, productiveTurnCount);
+      return failRun(options, "aborted_streaming", options.signal.reason, planningStepCount);
     }
+    if (planningStepCount >= MAX_PLANNING_STEPS) phase = "terminal";
+    const availableTools = toolsForRuntimePhase(options.tools, phase);
+    modelCallCount += 1;
 
     await options.repository.saveCheckpoint(options.runId, {
-      turnCount: productiveTurnCount,
+      turnCount: planningStepCount,
       toolCallCount,
       lastEventSequence,
       progressHash: options.progressHash(),
       activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
-      phase: "planning",
+      phase,
+      terminalAttemptCount,
       phaseProgressId: options.phaseProgressId,
     });
     lastEventSequence = (await options.repository.appendEvent(options.runId, {
       type: "model_started",
       payload: {
-        turn: providerCall,
-        attemptedProductiveTurn: productiveTurnCount + 1,
-        repairAttemptsUsed: repairTurnCount,
+        turn: modelCallCount,
+        phase,
+        planningStepsUsed: planningStepCount,
+        terminalAttemptsUsed: terminalAttemptCount,
       },
     })).sequence;
 
@@ -115,7 +112,7 @@ export async function runInterviewAgent(options: {
       const modelInput = {
         runId: options.runId,
         messages,
-        tools: [...options.tools.keys()].map((name) => ({
+        tools: [...availableTools.keys()].map((name) => ({
           name,
           description: describeTool(name),
         })),
@@ -126,12 +123,6 @@ export async function runInterviewAgent(options: {
         const streamed = await options.model.nextStepStream({
           ...modelInput,
           onAttemptStarted: async (attempt) => {
-            providerAttemptCount += 1;
-            if (providerAttemptCount > MAX_PROVIDER_ATTEMPTS) {
-              throw Object.assign(new Error("Agent reached the provider attempt limit"), {
-                code: "PROVIDER_ATTEMPT_LIMIT",
-              });
-            }
             await options.repository.startAttempt(options.runId, {
               ...attempt,
               now: new Date(),
@@ -152,24 +143,34 @@ export async function runInterviewAgent(options: {
         step = await options.model.nextStep(modelInput);
       }
     } catch (error) {
-      if ((error as { code?: unknown })?.code === "PROVIDER_ATTEMPT_LIMIT") {
-        return failRun(options, "max_turns", error, productiveTurnCount);
-      }
-      return failRun(options, "aborted_streaming", error, productiveTurnCount);
+      return options.signal.aborted
+        ? failRun(options, "aborted_streaming", error, planningStepCount)
+        : failRun(options, "provider_failed", error, planningStepCount);
     }
 
     if (step.type === "final") {
-      productiveTurnCount += 1;
+      invalidModelActionCount += 1;
       messages.push({
         role: "system",
-        content:
-          "最终文本不会直接展示给候选人。请调用 ask_interview_question 或 finish_interview。",
+        content: "该输出不是可执行的面试动作。请调用当前可用工具。",
       });
+      if (invalidModelActionCount >= MAX_INVALID_MODEL_ACTIONS) {
+        if (phase === "terminal") {
+          return failRun(
+            options,
+            "terminal_action_failed",
+            new Error("Agent repeatedly returned invalid terminal actions"),
+            planningStepCount,
+          );
+        }
+        phase = "terminal";
+        invalidModelActionCount = 0;
+      }
       continue;
     }
 
     toolCallCount += 1;
-    const definition = options.tools.get(step.toolName);
+    const definition = availableTools.get(step.toolName);
     if (!definition) {
       const loop = loopDetector.record({
         toolName: step.toolName,
@@ -177,7 +178,7 @@ export async function runInterviewAgent(options: {
         result: { code: "UNKNOWN_TOOL" },
         progressHash: options.progressHash(),
         unknownTool: true,
-        phase: "planning",
+        phase: phase === "terminal" ? "acting" : "planning",
         phaseProgressId: options.phaseProgressId,
       });
       messages.push({
@@ -185,9 +186,30 @@ export async function runInterviewAgent(options: {
         content: JSON.stringify({ callId: step.callId, error: "UNKNOWN_TOOL" }),
       });
       const handled = await handleLoopDecision(options, loop, messages);
-      productiveTurnCount += 1;
-      if (handled) return { exitReason: handled, turnCount: productiveTurnCount };
+      if (handled) return { exitReason: handled, turnCount: planningStepCount };
+      invalidModelActionCount += 1;
+      if (invalidModelActionCount >= MAX_INVALID_MODEL_ACTIONS) {
+        if (phase === "terminal") {
+          return failRun(
+            options,
+            "terminal_action_failed",
+            new Error("Agent repeatedly called unavailable terminal tools"),
+            planningStepCount,
+          );
+        }
+        phase = "terminal";
+        invalidModelActionCount = 0;
+      }
       continue;
+    }
+
+    invalidModelActionCount = 0;
+    const terminal = isTerminalTool(step.toolName);
+    if (terminal) {
+      phase = "terminal";
+      terminalAttemptCount += 1;
+    } else {
+      planningStepCount += 1;
     }
 
     const result = await executeInterviewTool({
@@ -203,17 +225,11 @@ export async function runInterviewAgent(options: {
     });
 
     if (options.signal.aborted) {
-      return failRun(options, "aborted_tools", options.signal.reason, productiveTurnCount);
+      return failRun(options, "aborted_tools", options.signal.reason, planningStepCount);
     }
     if (!result.ok && result.error.code === "HOOK_STOPPED") {
-      return failRun(options, "hook_stopped", new Error(result.error.message), productiveTurnCount);
+      return failRun(options, "hook_stopped", new Error(result.error.message), planningStepCount);
     }
-
-    const repairableFailure = !result.ok &&
-      result.error.retryable &&
-      REPAIRABLE_TOOL_ERRORS.has(result.error.code);
-    if (repairableFailure) repairTurnCount += 1;
-    else productiveTurnCount += 1;
 
     messages.push({
       role: "tool",
@@ -224,7 +240,7 @@ export async function runInterviewAgent(options: {
       args: step.args,
       result,
       progressHash: options.progressHash(),
-      phase: TERMINAL_TOOLS.has(step.toolName) ? "acting" : "planning",
+      phase: terminal ? "acting" : "planning",
       phaseProgressId: options.phaseProgressId,
     });
     if (result.ok) {
@@ -240,18 +256,18 @@ export async function runInterviewAgent(options: {
         })).sequence;
       }
     }
-    const handled = await handleLoopDecision(options, loop, messages);
-    if (handled) return { exitReason: handled, turnCount: productiveTurnCount };
-    if (repairTurnCount > MAX_TOOL_REPAIR_TURNS) {
+    if (terminal && !result.ok && terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
       return failRun(
         options,
-        "blocking_limit",
-        new Error("Agent exhausted the tool argument repair budget"),
-        productiveTurnCount,
+        "terminal_action_failed",
+        new Error("Agent exhausted terminal action attempts"),
+        planningStepCount,
       );
     }
+    const handled = await handleLoopDecision(options, loop, messages);
+    if (handled) return { exitReason: handled, turnCount: planningStepCount };
 
-    if (result.ok && TERMINAL_TOOLS.has(step.toolName)) {
+    if (result.ok && terminal) {
       const committed = readCommittedMessage(result.output);
       if (committed) {
         const publicDeltas = committed.responseText
@@ -279,24 +295,19 @@ export async function runInterviewAgent(options: {
         })).sequence;
       }
       await options.repository.saveCheckpoint(options.runId, {
-        turnCount: productiveTurnCount,
+        turnCount: planningStepCount,
         toolCallCount,
         lastEventSequence,
         progressHash: options.progressHash(),
         activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
         phase: "acting",
+        terminalAttemptCount,
         phaseProgressId: options.phaseProgressId,
       });
       await options.repository.terminateRun(options.runId, { exitReason: "completed" });
-      return { exitReason: "completed", turnCount: productiveTurnCount };
+      return { exitReason: "completed", turnCount: planningStepCount };
     }
   }
-
-  await options.repository.terminateRun(options.runId, {
-    exitReason: "max_turns",
-    error: new Error("Agent reached the model turn limit"),
-  });
-  return { exitReason: "max_turns", turnCount: productiveTurnCount };
 }
 
 function chunkResponse(value: string) {

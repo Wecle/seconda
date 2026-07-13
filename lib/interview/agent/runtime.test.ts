@@ -17,7 +17,11 @@ function tool(name: string): InterviewToolDefinition<unknown, unknown> {
   };
 }
 
-async function fixture(steps: AgentModelStep[], tools = [tool("get_coverage_state"), tool("ask_interview_question"), tool("finish_interview")]) {
+async function fixture(
+  steps: AgentModelStep[],
+  tools = [tool("get_coverage_state"), tool("ask_interview_question"), tool("finish_interview")],
+  options: { progressHash?: (modelCalls: number) => string } = {},
+) {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
   let index = 0;
@@ -29,7 +33,7 @@ async function fixture(steps: AgentModelStep[], tools = [tool("get_coverage_stat
     tools: new Map(tools.map((definition) => [definition.name, definition])),
     initialMessages: [{ role: "user", content: "start" }],
     signal: new AbortController().signal,
-    progressHash: () => "same",
+    progressHash: () => options.progressHash?.(index) ?? "same",
   });
   return { result, repository, run, modelCalls: index };
 }
@@ -43,41 +47,64 @@ test("completes after a domain tool commits a candidate-visible outcome", async 
   assert.equal(repository.inspectRun(run.id)?.status, "completed");
 });
 
-test("exits after eight model turns without a committed outcome", async () => {
-  const steps = Array.from({ length: 8 }, (_, index) => ({
-    type: "final" as const,
-    content: `uncommitted-${index}`,
-  }));
-  const { result } = await fixture(steps);
-  assert.equal(result.exitReason, "max_turns");
-});
-
-test("allows two retryable tool argument repairs outside the productive turn budget", async () => {
-  const strictTool = tool("get_coverage_state");
-  strictTool.inputSchema = z.object({ required: z.string() });
-  const steps = [
-    { type: "tool_call" as const, callId: "bad-1", toolName: "get_coverage_state", args: {} },
-    { type: "tool_call" as const, callId: "bad-2", toolName: "get_coverage_state", args: {} },
-    ...Array.from({ length: 8 }, (_, index) => ({ type: "final" as const, content: `final-${index}` })),
-  ];
-  const { result, modelCalls } = await fixture(steps, [strictTool]);
-  assert.equal(result.exitReason, "max_turns");
-  assert.equal(result.turnCount, 8);
-  assert.equal(modelCalls, 10);
-});
-
-test("breaks after a third retryable tool argument failure", async () => {
-  const strictTool = tool("get_coverage_state");
-  strictTool.inputSchema = z.object({ required: z.string() });
-  const steps = Array.from({ length: 3 }, (_, index) => ({
+test("enters terminal phase after fifteen planning tools and still asks", async () => {
+  const planning = Array.from({ length: 15 }, (_, index) => ({
     type: "tool_call" as const,
-    callId: `bad-${index}`,
-    toolName: "get_coverage_state",
-    args: {},
+    callId: `plan-${index}`,
+    toolName: ["get_coverage_state", "get_interview_history", "get_resume_evidence"][index % 3],
+    args: { index },
   }));
-  const { result, modelCalls } = await fixture(steps, [strictTool]);
-  assert.equal(result.exitReason, "blocking_limit");
+  const { result, modelCalls } = await fixture([
+    ...planning,
+    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: {} },
+  ], [
+    tool("get_coverage_state"),
+    tool("get_interview_history"),
+    tool("get_resume_evidence"),
+    tool("ask_interview_question"),
+    tool("finish_interview"),
+  ], { progressHash: String });
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 15);
+  assert.equal(modelCalls, 16);
+});
+
+test("does not count an early terminal action as a planning step", async () => {
+  const { result, modelCalls } = await fixture([
+    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: {} },
+  ]);
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 0);
+  assert.equal(modelCalls, 1);
+});
+
+test("allows one terminal action and two repairs", async () => {
+  const terminal = tool("ask_interview_question");
+  terminal.validateBusiness = async () => ({
+    code: "SOURCE_NOT_FOUND",
+    message: "missing",
+    retryable: true,
+  });
+  const { result, modelCalls } = await fixture(Array.from({ length: 4 }, (_, index) => ({
+    type: "tool_call" as const,
+    callId: `terminal-${index}`,
+    toolName: "ask_interview_question",
+    args: {},
+  })), [terminal]);
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal(result.turnCount, 0);
   assert.equal(modelCalls, 3);
+});
+
+test("moves repeated invalid model output to terminal failure without consuming planning", async () => {
+  const steps = Array.from({ length: 6 }, (_, index) => ({
+    type: "final" as const,
+    content: `invalid-${index}`,
+  }));
+  const { result, modelCalls } = await fixture(steps);
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal(result.turnCount, 0);
+  assert.equal(modelCalls, 6);
 });
 
 test("completes a grounded opening after bounded evidence reads", async () => {
@@ -187,10 +214,11 @@ test("commits the same message identity used by provisional deltas", async () =>
   assert.ok(types.indexOf("text_delta") < types.indexOf("message_committed"));
 });
 
-test("caps actual provider attempts across logical model calls", async () => {
+test("keeps provider attempts local to each logical model call", async () => {
   const repository = createInMemoryInterviewAgentRepository();
-  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "attempt-cap" });
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "attempt-local" });
   let attempts = 0;
+  let logicalCalls = 0;
   const result = await runInterviewAgent({
     interviewId: "interview",
     runId: run.id,
@@ -198,7 +226,9 @@ test("caps actual provider attempts across logical model calls", async () => {
     model: {
       async nextStep() { throw new Error("unused"); },
       async nextStepStream(input) {
-        for (let index = 0; index < 3; index += 1) {
+        logicalCalls += 1;
+        const attemptsForCall = logicalCalls === 5 ? 1 : 3;
+        for (let index = 0; index < attemptsForCall; index += 1) {
           attempts += 1;
           await input.onAttemptStarted?.({
             model: "fast",
@@ -208,19 +238,79 @@ test("caps actual provider attempts across logical model calls", async () => {
           });
         }
         return {
-          step: { type: "final" as const, content: "internal" },
+          step: logicalCalls === 5
+            ? { type: "tool_call" as const, callId: "ask", toolName: "ask_interview_question", args: {} }
+            : { type: "tool_call" as const, callId: `plan-${logicalCalls}`, toolName: "get_coverage_state", args: { logicalCalls } },
           attemptId: "selected",
           provisionalMessageId: null,
         };
       },
     },
-    tools: new Map([["get_coverage_state", tool("get_coverage_state")]]),
+    tools: new Map([
+      ["get_coverage_state", tool("get_coverage_state")],
+      ["ask_interview_question", tool("ask_interview_question")],
+    ]),
+    initialMessages: [],
+    signal: new AbortController().signal,
+    progressHash: () => String(logicalCalls),
+  });
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 4);
+  assert.equal(attempts, 13);
+});
+
+test("maps provider exceptions separately from aborted streaming", async () => {
+  const providerRepository = createInMemoryInterviewAgentRepository();
+  const providerRun = await providerRepository.createRun({ interviewId: "interview", idempotencyKey: "provider" });
+  const providerResult = await runInterviewAgent({
+    interviewId: "interview",
+    runId: providerRun.id,
+    repository: providerRepository,
+    model: { async nextStep() { throw new Error("provider unavailable"); } },
+    tools: new Map([["ask_interview_question", tool("ask_interview_question")]]),
     initialMessages: [],
     signal: new AbortController().signal,
     progressHash: () => "same",
   });
-  assert.equal(result.exitReason, "max_turns");
-  assert.equal(attempts, 11);
+  assert.equal(providerResult.exitReason, "provider_failed");
+
+  const controller = new AbortController();
+  const abortedRepository = createInMemoryInterviewAgentRepository();
+  const abortedRun = await abortedRepository.createRun({ interviewId: "interview", idempotencyKey: "aborted-provider" });
+  const abortedResult = await runInterviewAgent({
+    interviewId: "interview",
+    runId: abortedRun.id,
+    repository: abortedRepository,
+    model: { async nextStep() { controller.abort(); throw new Error("aborted"); } },
+    tools: new Map([["ask_interview_question", tool("ask_interview_question")]]),
+    initialMessages: [],
+    signal: controller.signal,
+    progressHash: () => "same",
+  });
+  assert.equal(abortedResult.exitReason, "aborted_streaming");
+});
+
+test("recovers the observed history coverage and evidence planning sequence", async () => {
+  const steps: AgentModelStep[] = [
+    { type: "tool_call", callId: "history", toolName: "get_interview_history", args: { limit: 10 } },
+    { type: "tool_call", callId: "coverage", toolName: "get_coverage_state", args: {} },
+    { type: "tool_call", callId: "partial", toolName: "update_coverage", args: { status: "partial" } },
+    { type: "tool_call", callId: "bad-evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["intro_01"] } },
+    { type: "tool_call", callId: "raw-evidence", toolName: "get_resume_evidence", args: { evidenceIds: ["resume:raw"] } },
+    { type: "tool_call", callId: "sufficient", toolName: "update_coverage", args: { status: "sufficient" } },
+    { type: "tool_call", callId: "ask", toolName: "ask_interview_question", args: {} },
+  ];
+  const tools = [
+    tool("get_interview_history"),
+    tool("get_coverage_state"),
+    tool("update_coverage"),
+    tool("get_resume_evidence"),
+    tool("ask_interview_question"),
+  ];
+  const { result, modelCalls } = await fixture(steps, tools, { progressHash: String });
+  assert.equal(result.exitReason, "completed");
+  assert.equal(result.turnCount, 6);
+  assert.equal(modelCalls, 7);
 });
 
 test("attributes synthesized response deltas to the selected attempt", async () => {
