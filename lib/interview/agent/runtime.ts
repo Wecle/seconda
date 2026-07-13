@@ -256,7 +256,18 @@ export async function runInterviewAgent(options: {
       }
     }
     if (terminal && !result.ok) {
+      phase = planningStepCount >= MAX_PLANNING_STEPS ? "terminal" : "planning";
       if (terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
+        await options.repository.saveCheckpoint(options.runId, {
+          turnCount: planningStepCount,
+          toolCallCount,
+          lastEventSequence,
+          progressHash: options.progressHash(),
+          activeSkillNames: options.activeSkills?.map((skill) => skill.name) ?? [],
+          phase,
+          terminalAttemptCount,
+          phaseProgressId: options.phaseProgressId,
+        });
         return failRun(
           options,
           "terminal_action_failed",
@@ -264,7 +275,6 @@ export async function runInterviewAgent(options: {
           planningStepCount,
         );
       }
-      phase = planningStepCount >= MAX_PLANNING_STEPS ? "terminal" : "planning";
     }
     const handled = await handleLoopDecision(options, loop, messages);
     if (handled) return { exitReason: handled, turnCount: planningStepCount };
