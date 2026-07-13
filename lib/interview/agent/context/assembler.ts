@@ -22,7 +22,14 @@ export function assembleAgentContext(input: {
   cacheEpoch: number;
   checkpointSummary: string;
   coverage: unknown;
-  recentMessages: Array<{ sequence: number; role: string; kind: string; content: string }>;
+  recentMessages: Array<{
+    id: string;
+    sequence: number;
+    role: string;
+    kind: string;
+    content: string;
+    sourceId?: string;
+  }>;
   currentInstruction: string;
   runId: string;
   latestAssessment?: { id: string; publicSummary: string; followUpNeeded: boolean } | null;
@@ -129,6 +136,7 @@ export async function loadAgentContext(
       status: interviewCoverage.status,
     }).from(interviewCoverage).where(eq(interviewCoverage.interviewId, input.interviewId)),
     database.select({
+      id: interviewMessages.id,
       sequence: interviewMessages.sequence,
       role: interviewMessages.role,
       kind: interviewMessages.kind,
@@ -168,9 +176,12 @@ export async function loadAgentContext(
     cacheEpoch: snapshot?.cacheEpoch ?? 0,
     checkpointSummary: snapshot?.summary ?? "",
     coverage,
-    recentMessages: messages.reverse().filter(
-      (message) => message.sequence > (snapshot?.throughMessageSequence ?? 0),
-    ),
+    recentMessages: messages.reverse()
+      .filter((message) => message.sequence > (snapshot?.throughMessageSequence ?? 0))
+      .map((message) => ({
+        ...message,
+        ...(message.role === "user" ? { sourceId: `answer:${message.id}` } : {}),
+      })),
     currentInstruction: input.currentInstruction,
     runId: input.runId,
     latestAssessment: assessments[0] ? {
