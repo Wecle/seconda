@@ -206,7 +206,6 @@ export async function runInterviewAgent(options: {
     invalidModelActionCount = 0;
     const terminal = isTerminalTool(step.toolName);
     if (terminal) {
-      phase = "terminal";
       terminalAttemptCount += 1;
     } else {
       planningStepCount += 1;
@@ -256,13 +255,16 @@ export async function runInterviewAgent(options: {
         })).sequence;
       }
     }
-    if (terminal && !result.ok && terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
-      return failRun(
-        options,
-        "terminal_action_failed",
-        new Error("Agent exhausted terminal action attempts"),
-        planningStepCount,
-      );
+    if (terminal && !result.ok) {
+      if (terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
+        return failRun(
+          options,
+          "terminal_action_failed",
+          new Error("Agent exhausted terminal action attempts"),
+          planningStepCount,
+        );
+      }
+      phase = planningStepCount >= MAX_PLANNING_STEPS ? "terminal" : "planning";
     }
     const handled = await handleLoopDecision(options, loop, messages);
     if (handled) return { exitReason: handled, turnCount: planningStepCount };
