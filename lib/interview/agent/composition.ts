@@ -23,7 +23,7 @@ import { effectiveContextBudget } from "./context/budget";
 import { compactInterviewContextIfNeeded } from "./context/persisted-compaction";
 import { resolveRunSkills } from "./skills";
 import { ensureLatestAnswerAssessment } from "./assessment-service";
-import { composeCandidateResponse, validateGroundedClaims } from "./grounding";
+import { composeCandidateResponse } from "./grounding";
 
 export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
   const repository = createDrizzleInterviewAgentRepository(db);
@@ -91,20 +91,19 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
           const index = await loadInterviewEvidenceIndex(context.interviewId);
           return loadResumeEvidence(index, evidenceIds).missingIds;
         },
-        async validateGroundedResponse(toolInput, context) {
+        async validateClaimSourceIds(sourceIds, context) {
           const [index, answers] = await Promise.all([
             loadInterviewEvidenceIndex(context.interviewId),
-            db.select({ id: interviewMessages.id, content: interviewMessages.content })
+            db.select({ id: interviewMessages.id })
               .from(interviewMessages)
               .where(and(eq(interviewMessages.interviewId, context.interviewId), eq(interviewMessages.role, "user"))),
           ]);
-          const sources = new Map<string, string>([
-            ...index.records.map((record) => [record.id, record.content] as const),
-            ["resume:raw", index.rawText],
-            ...answers.map((answer) => [`answer:${answer.id}`, answer.content] as const),
+          const valid = new Set([
+            ...index.records.map((record) => record.id),
+            "resume:raw",
+            ...answers.map((answer) => `answer:${answer.id}`),
           ]);
-          const result = validateGroundedClaims(toolInput, sources);
-          return result.ok ? [] : result.unsupportedClaims;
+          return sourceIds.filter((sourceId) => !valid.has(sourceId));
         },
         async loadActionInput(toolInput) {
           const state = await repository.loadState(input.interviewId);

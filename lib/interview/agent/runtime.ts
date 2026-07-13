@@ -21,7 +21,7 @@ const MAX_PROVIDER_ATTEMPTS = 10;
 const REPAIRABLE_TOOL_ERRORS = new Set([
   "INVALID_TOOL_INPUT",
   "EVIDENCE_NOT_FOUND",
-  "UNSUPPORTED_FACT",
+  "SOURCE_NOT_FOUND",
 ]);
 const TERMINAL_TOOLS = new Set([
   "ask_interview_question",
