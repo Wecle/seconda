@@ -290,7 +290,40 @@ async function migrate() {
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS compaction_output_tokens INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_runs ADD COLUMN IF NOT EXISTS cache_metrics_available INTEGER NOT NULL DEFAULT 0`;
   await sql`ALTER TABLE interview_agent_events ADD COLUMN IF NOT EXISTS dedupe_key TEXT`;
+  await sql`ALTER TABLE interview_agent_events ADD COLUMN IF NOT EXISTS attempt_id TEXT`;
+  await sql`ALTER TABLE interview_agent_events ADD COLUMN IF NOT EXISTS logical_message_id TEXT`;
+  await sql`ALTER TABLE interview_agent_events ADD COLUMN IF NOT EXISTS visibility TEXT`;
+  await sql`
+    UPDATE interview_agent_events
+    SET visibility = 'public'
+    WHERE visibility IS NULL
+      AND type IN ('artifact_committed', 'run_completed', 'run_failed')
+  `;
+  await sql`
+    UPDATE interview_agent_events
+    SET visibility = 'internal'
+    WHERE visibility IS NULL
+  `;
+  await sql`ALTER TABLE interview_agent_events ALTER COLUMN visibility SET DEFAULT 'internal'`;
+  await sql`ALTER TABLE interview_agent_events ALTER COLUMN visibility SET NOT NULL`;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'interview_agent_events_visibility_check'
+          AND conrelid = 'interview_agent_events'::regclass
+      ) THEN
+        ALTER TABLE interview_agent_events
+          ADD CONSTRAINT interview_agent_events_visibility_check
+          CHECK (visibility IN ('public', 'internal'));
+      END IF;
+    END;
+    $$
+  `;
   await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_agent_events_dedupe ON interview_agent_events(run_id, dedupe_key) WHERE dedupe_key IS NOT NULL`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_agent_events_public_replay ON interview_agent_events(run_id, sequence) WHERE visibility = 'public'`;
   await sql`
     CREATE TABLE IF NOT EXISTS interview_agent_tool_commits (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
