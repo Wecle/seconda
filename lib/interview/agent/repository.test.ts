@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createInMemoryInterviewAgentRepository } from "./repository";
+import type { AnswerAssessment } from "./contracts";
+import {
+  createInMemoryInterviewAgentRepository,
+  type CommitTurnOutcomeInput,
+  type RunLeaseToken,
+} from "./repository";
+import { hashTurnProposalPrefix, type TurnProposalPrefix } from "./turn-proposal";
 
 test("allocates monotonic event and message sequences", async () => {
   const repository = createInMemoryInterviewAgentRepository();
@@ -347,4 +353,424 @@ test("never commits a fourth question in one category under concurrent attempts 
   });
   assert.equal(first.questionId, (results[0] as PromiseFulfilledResult<typeof first>).value.questionId);
   assert.equal(repository.inspectInterview("interview").categoryCounts.technical_depth, 3);
+});
+
+function answerAssessment(overrides: Partial<AnswerAssessment> = {}): AnswerAssessment {
+  return {
+    completeness: "high" as const,
+    specificity: "high" as const,
+    evidenceStrength: "strong" as const,
+    reflectionDepth: "surface" as const,
+    followUpNeeded: true,
+    missingPoints: ["一致性边界"],
+    extractedEvidence: ["使用租约与幂等键"],
+    publicSummary: "回答包含可靠性机制，但仍需验证一致性边界。",
+    ...overrides,
+  };
+}
+
+function nextQuestionProposal(
+  overrides: Partial<TurnProposalPrefix> = {},
+): TurnProposalPrefix {
+  return {
+    assessment: answerAssessment(),
+    coverageChanges: [{
+      category: "technical_depth",
+      topic: "可靠性机制",
+      status: "partial",
+      resumeEvidenceIds: ["project:seconda"],
+    }],
+    decision: {
+      action: "ask",
+      category: "resume_project",
+      intent: "new_topic",
+      evidenceIds: ["project:seconda"],
+      coverageTarget: "验证项目中的一致性设计",
+      estimatedInformationGain: "high",
+    },
+    ...overrides,
+  };
+}
+
+async function createAnsweredTurnFixture() {
+  const repository = createInMemoryInterviewAgentRepository({
+    interviewId: "atomic-interview",
+    candidateRoundCount: 1,
+    categoryCounts: {},
+    categoryStatuses: {},
+    recentQuestions: [],
+    requestedUserEnd: false,
+    consecutiveNoFollowUpAssessments: 0,
+  });
+  const run = await repository.createRun({
+    interviewId: "atomic-interview",
+    idempotencyKey: "atomic-turn",
+  });
+  const claimed = await repository.claimRun(run.id, "atomic-worker", new Date(0), 60_000);
+  const lease: RunLeaseToken = {
+    owner: "atomic-worker",
+    generation: claimed.run!.leaseGeneration,
+  };
+  const asked = await repository.commitQuestionOutcome({
+    runId: run.id,
+    interviewId: "atomic-interview",
+    toolCallId: "seed-question",
+    lease,
+    category: "technical_depth",
+    topic: "可靠性",
+    question: "你如何保证服务可靠性？",
+    responseText: "你如何保证服务可靠性？",
+    resumeEvidenceIds: ["project:seconda"],
+  });
+  const answer = await repository.appendMessage({
+    interviewId: "atomic-interview",
+    runId: run.id,
+    role: "user",
+    kind: "answer",
+    content: "我使用租约与幂等键。",
+    questionId: asked.questionId,
+  });
+  const attemptId = "attempt-1";
+  const logicalMessageId = "logical-message-1";
+  await repository.startAttempt(run.id, {
+    model: "test-model",
+    attemptId,
+    attemptNumber: 1,
+    provisionalMessageId: logicalMessageId,
+    now: new Date(1),
+  }, lease);
+  const proposal = nextQuestionProposal();
+  const proposalHash = hashTurnProposalPrefix(proposal);
+  await repository.authorizeProposal({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposal,
+    proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: "authorized",
+      activeSkillNames: [],
+    },
+  });
+  await repository.markResponseStarted({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposalHash,
+  });
+  const input: CommitTurnOutcomeInput = {
+    runId: run.id,
+    interviewId: "atomic-interview",
+    toolCallId: "submit-1",
+    lease,
+    logicalMessageId,
+    attemptId,
+    answerMessageId: answer.id,
+    proposal,
+    proposalHash,
+    responseText: "你在项目中如何验证租约失效后的数据一致性？",
+    language: "zh",
+  };
+  return { repository, run, lease, input };
+}
+
+async function prepareFixtureAttempt(
+  fixture: Awaited<ReturnType<typeof createAnsweredTurnFixture>>,
+  proposal: TurnProposalPrefix,
+  input: { attemptId: string; logicalMessageId: string; attemptNumber?: number },
+) {
+  const proposalHash = hashTurnProposalPrefix(proposal);
+  await fixture.repository.startAttempt(fixture.run.id, {
+    model: "test-model",
+    attemptId: input.attemptId,
+    attemptNumber: input.attemptNumber ?? 2,
+    provisionalMessageId: input.logicalMessageId,
+    now: new Date(input.attemptNumber ?? 2),
+  }, fixture.lease);
+  await fixture.repository.authorizeProposal({
+    runId: fixture.run.id,
+    lease: fixture.lease,
+    attemptId: input.attemptId,
+    logicalMessageId: input.logicalMessageId,
+    proposal,
+    proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: input.attemptId,
+      activeSkillNames: [],
+    },
+  });
+  await fixture.repository.markResponseStarted({
+    runId: fixture.run.id,
+    lease: fixture.lease,
+    attemptId: input.attemptId,
+    logicalMessageId: input.logicalMessageId,
+    proposalHash,
+  });
+  return { proposalHash };
+}
+
+test("commits assessment coverage message and committed event once", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const [first, replay] = await Promise.all([
+    fixture.repository.commitTurnOutcome(fixture.input),
+    fixture.repository.commitTurnOutcome(fixture.input),
+  ]);
+
+  assert.equal(replay.messageId, first.messageId);
+  assert.equal(first.messageId, fixture.input.logicalMessageId);
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 1);
+  assert.equal(snapshot.questions.length, 2);
+  assert.equal(snapshot.messageCommittedEvents.length, 1);
+  assert.equal(snapshot.submitTurnCommits.length, 1);
+  assert.equal(snapshot.coverage.find((item) => (
+    item.category === "technical_depth" && item.topic === "__category__"
+  ))?.lastAssessmentId, snapshot.assessments[0].id);
+  assert.equal(snapshot.messageCommittedEvents[0].attemptId, fixture.input.attemptId);
+  assert.deepEqual(
+    (snapshot.messageCommittedEvents[0].payload as { message: unknown }).message,
+    first.message,
+  );
+});
+
+test("rejects committed-tool replay from a stale attempt or lease", async () => {
+  const staleAttemptFixture = await createAnsweredTurnFixture();
+  await staleAttemptFixture.repository.commitTurnOutcome(staleAttemptFixture.input);
+  await staleAttemptFixture.repository.startAttempt(staleAttemptFixture.run.id, {
+    model: "test-model",
+    attemptId: "attempt-2",
+    attemptNumber: 2,
+    provisionalMessageId: "logical-message-2",
+    now: new Date(2),
+  }, staleAttemptFixture.lease);
+  await assert.rejects(
+    staleAttemptFixture.repository.commitTurnOutcome(staleAttemptFixture.input),
+    /attempt is stale/i,
+  );
+
+  const staleLeaseFixture = await createAnsweredTurnFixture();
+  await staleLeaseFixture.repository.commitTurnOutcome(staleLeaseFixture.input);
+  const takeover = await staleLeaseFixture.repository.claimRun(
+    staleLeaseFixture.run.id,
+    "new-worker",
+    new Date(61_000),
+    60_000,
+  );
+  assert.equal(takeover.claimed, true);
+  await assert.rejects(
+    staleLeaseFixture.repository.commitTurnOutcome(staleLeaseFixture.input),
+    /lease is stale/i,
+  );
+});
+
+test("normalizes the authoritative response text before committing", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const outcome = await fixture.repository.commitTurnOutcome({
+    ...fixture.input,
+    responseText: `  ${fixture.input.responseText}  `,
+  });
+
+  assert.equal(outcome.responseText, fixture.input.responseText);
+  assert.equal(outcome.message.content, fixture.input.responseText);
+  assert.equal(
+    fixture.repository.inspectInterview(fixture.input.interviewId).questions.at(-1)?.question,
+    fixture.input.responseText,
+  );
+});
+
+test("rejects blank and oversized finish responses without domain writes", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const finishProposal: TurnProposalPrefix = {
+    assessment: answerAssessment(),
+    coverageChanges: [{
+      category: "technical_depth",
+      topic: "可靠性机制",
+      status: "partial",
+      resumeEvidenceIds: ["project:seconda"],
+    }],
+    decision: {
+      action: "finish",
+      completionReason: "coverage_sufficient",
+    },
+  };
+  const { proposalHash } = await prepareFixtureAttempt(fixture, finishProposal, {
+    attemptId: "attempt-finish-validation",
+    logicalMessageId: "logical-finish-validation",
+  });
+  const invalidInput = {
+    ...fixture.input,
+    toolCallId: "submit-finish-validation",
+    attemptId: "attempt-finish-validation",
+    logicalMessageId: "logical-finish-validation",
+    proposal: finishProposal,
+    proposalHash,
+  };
+
+  await assert.rejects(
+    fixture.repository.commitTurnOutcome({ ...invalidInput, responseText: "   " }),
+  );
+  await assert.rejects(
+    fixture.repository.commitTurnOutcome({ ...invalidInput, responseText: "长".repeat(2_001) }),
+  );
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+  assert.equal(snapshot.submitTurnCommits.length, 0);
+});
+
+test("returns a sufficient category to partial when asking another question", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const proposal = nextQuestionProposal({
+    assessment: answerAssessment({ followUpNeeded: false }),
+    coverageChanges: [{
+      category: "technical_depth",
+      topic: "可靠性机制",
+      status: "sufficient",
+      resumeEvidenceIds: ["project:seconda"],
+    }],
+    decision: {
+      action: "ask",
+      category: "technical_depth",
+      intent: "follow_up",
+      evidenceIds: ["project:seconda"],
+      coverageTarget: "继续验证可靠性边界",
+      estimatedInformationGain: "high",
+    },
+  });
+  const { proposalHash } = await prepareFixtureAttempt(fixture, proposal, {
+    attemptId: "attempt-sufficient",
+    logicalMessageId: "logical-sufficient",
+  });
+  await fixture.repository.commitTurnOutcome({
+    ...fixture.input,
+    toolCallId: "submit-sufficient",
+    attemptId: "attempt-sufficient",
+    logicalMessageId: "logical-sufficient",
+    proposal,
+    proposalHash,
+  });
+
+  const aggregate = fixture.repository.inspectInterview(fixture.input.interviewId).coverage.find(
+    (item) => item.category === "technical_depth" && item.topic === "__category__",
+  );
+  assert.equal(aggregate?.questionCount, 2);
+  assert.equal(aggregate?.status, "partial");
+});
+
+test("rejects a non-authoritative interview language without domain writes", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  await assert.rejects(fixture.repository.commitTurnOutcome({
+    ...fixture.input,
+    language: "en",
+  }), /language/i);
+
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+});
+
+test("a stale proposal hash leaves no partial turn writes", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  await assert.rejects(fixture.repository.commitTurnOutcome({
+    ...fixture.input,
+    proposalHash: "0".repeat(64),
+  }), /proposal hash/i);
+
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.questions.length, 1);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+  assert.equal(snapshot.submitTurnCommits.length, 0);
+});
+
+test("fences delayed callbacks from an older attempt under the same lease", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  await fixture.repository.startAttempt(fixture.run.id, {
+    model: "test-model",
+    attemptId: "attempt-2",
+    attemptNumber: 2,
+    provisionalMessageId: "logical-message-2",
+    now: new Date(2),
+  }, fixture.lease);
+  await assert.rejects(fixture.repository.startAttempt(fixture.run.id, {
+    model: "test-model",
+    attemptId: fixture.input.attemptId,
+    attemptNumber: 1,
+    provisionalMessageId: fixture.input.logicalMessageId,
+    now: new Date(3),
+  }, fixture.lease), /attempt is stale/i);
+
+  await assert.rejects(
+    fixture.repository.commitTurnOutcome(fixture.input),
+    /attempt is stale/i,
+  );
+  await assert.rejects(fixture.repository.authorizeProposal({
+    runId: fixture.run.id,
+    lease: fixture.lease,
+    attemptId: fixture.input.attemptId,
+    logicalMessageId: fixture.input.logicalMessageId,
+    proposal: fixture.input.proposal,
+    proposalHash: fixture.input.proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: "stale",
+      activeSkillNames: [],
+    },
+  }), /attempt is stale/i);
+
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.messageCommittedEvents.length, 0);
+});
+
+test("rejects model writes to the reserved category aggregate before response starts", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const proposal = nextQuestionProposal({
+    coverageChanges: [{
+      category: "technical_depth",
+      topic: "__category__",
+      status: "partial",
+      resumeEvidenceIds: ["project:seconda"],
+    }],
+  });
+  const proposalHash = hashTurnProposalPrefix(proposal);
+  await fixture.repository.startAttempt(fixture.run.id, {
+    model: "test-model",
+    attemptId: "attempt-reserved",
+    attemptNumber: 2,
+    provisionalMessageId: "logical-reserved",
+    now: new Date(2),
+  }, fixture.lease);
+  await assert.rejects(fixture.repository.authorizeProposal({
+    runId: fixture.run.id,
+    lease: fixture.lease,
+    attemptId: "attempt-reserved",
+    logicalMessageId: "logical-reserved",
+    proposal,
+    proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: "reserved",
+      activeSkillNames: [],
+    },
+  }), /reserved coverage topic/i);
+  assert.equal(fixture.repository.inspectRun(fixture.run.id)?.responseStartedAt, null);
+  assert.equal(
+    fixture.repository.inspectInterview(fixture.input.interviewId).assessments.length,
+    0,
+  );
 });
