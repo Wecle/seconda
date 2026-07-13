@@ -78,6 +78,21 @@ test("persists run_failed before exposing failed status", async () => {
   assert.equal((await repository.getRun(run.id))?.status, "failed");
 });
 
+test("uses the precise terminal action failure message", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-failure" });
+  await repository.terminateRun(run.id, {
+    exitReason: "terminal_action_failed",
+    error: new Error("invalid terminal action"),
+  });
+  const event = (await repository.listEvents(run.id, 0)).at(-1);
+  assert.equal(event?.type, "run_failed");
+  assert.equal(
+    (event?.payload as { userMessage?: string }).userMessage,
+    "本轮问题生成未能通过运行规则，请重试。",
+  );
+});
+
 test("persists and reloads checkpoints and interview state", async () => {
   const repository = createInMemoryInterviewAgentRepository({
     interviewId: "interview-1",

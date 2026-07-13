@@ -6,6 +6,7 @@ import { interviews, resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { isInterviewAgentEnabled } from "@/lib/interview/agent/feature";
 import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
+import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),
@@ -40,6 +41,7 @@ export async function GET(
     id: run.id,
     status: run.status,
     exitReason: run.exitReason,
+    userMessage: agentExitMessage(run.exitReason),
     lastEventSequence: run.lastEventSequence,
   });
 }

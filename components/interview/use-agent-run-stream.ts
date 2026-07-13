@@ -7,6 +7,7 @@ export type AgentRunStreamStatus = {
   id: string;
   status: "running" | "completed" | "failed";
   exitReason: string | null;
+  userMessage: string | null;
   lastEventSequence: number;
 };
 

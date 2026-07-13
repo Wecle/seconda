@@ -119,7 +119,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     setBusy(false);
     if (terminal.status === "failed") {
       dispatch({ type: "run_failed", runId: terminal.id });
-      setError(`本轮处理已终止${terminal.exitReason ? `（${terminal.exitReason}）` : ""}。`);
+      setError(terminal.userMessage ?? "本轮生成未完成，请重新提交或稍后重试。");
     }
     await refresh();
   }, [refresh]);
@@ -154,7 +154,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     const data = await response.json() as { runId: string; message: { id: string; sequence: number; content: string } };
     dispatch({ type: "candidate_committed", localId, runId: data.runId, message: data.message });
     dispatch({ type: "run_accepted", runId: data.runId });
-    setRun({ id: data.runId, status: "running", exitReason: null, lastEventSequence: 0 });
+    setRun({ id: data.runId, status: "running", exitReason: null, userMessage: null, lastEventSequence: 0 });
   };
 
   const end = async () => {
