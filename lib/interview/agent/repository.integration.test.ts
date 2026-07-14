@@ -39,6 +39,10 @@ function publicReasoningEvent(
   };
 }
 
+function postgresClockMilliseconds() {
+  return sql<number>`FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`;
+}
+
 test("real database fences stale workers, notifies durable events and preserves atomic idempotency", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
 }, async () => {
@@ -237,7 +241,7 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(coverage[0].questionCount, 3);
 
     const [terminationStartedAt] = await db.select({
-      value: sql<number>`(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`,
+      value: postgresClockMilliseconds(),
     }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
     const expectedBackoffMs = Math.min(
       300_000,
@@ -248,7 +252,7 @@ test("real database fences stale workers, notifies durable events and preserves 
       error: new Error("fixture provider failure"),
     }, secondLease);
     const [terminationFinishedAt] = await db.select({
-      value: sql<number>`(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`,
+      value: postgresClockMilliseconds(),
     }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
 
     assert.equal(terminated.status, "failed");
