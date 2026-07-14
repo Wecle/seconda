@@ -498,7 +498,7 @@ export async function runInterviewAgent(
       );
     }
 
-    const availableTools = planningStepCount >= MAX_PLANNING_STEPS
+    const availableTools = terminalAttemptCount > 0 || planningStepCount >= MAX_PLANNING_STEPS
       ? new Map([...options.tools].filter(([name]) => isTerminalTool(name)))
       : new Map(options.tools);
     let step: AgentModelStep;
@@ -1134,7 +1134,41 @@ function isInjectedProcessCrash(error: unknown) {
 }
 
 function repairInstruction(error: unknown) {
-  return `上一 attempt 已丢弃（${classifyAttemptFailure(error)}）。重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+  const code = classifyAttemptFailure(error);
+  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code)}重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+}
+
+function repairGuidance(code: string) {
+  if (code === "UNAUTHORIZED_TERM") {
+    return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
+  }
+  if (code === "MULTIPLE_QUESTIONS" || code === "FINISH_ASKS_QUESTION") {
+    return "本轮只保留一个明确问题；结束语不得继续提问。";
+  }
+  if (
+    code === "RESPONSE_BEFORE_AUTHORIZATION"
+    || code === "TERMINAL_STREAM_INCOMPLETE"
+    || code === "AUTHORIZED_PREFIX_CHANGED"
+    || code === "RESPONSE_REWRITTEN"
+    || code === "RESPONSE_STREAM_INCOMPLETE"
+    || code === "MODEL_STREAM_PROTOCOL_ERROR"
+  ) {
+    return "先完整输出且保持结构化提案前缀不变，再按协议增量输出 responseText。";
+  }
+  if (code === "MODEL_TOOL_CALL_REQUIRED" || code === "TOOL_CALL_REQUIRED") {
+    return "必须调用当前可用的面试工具，不得返回普通最终文本。";
+  }
+  if (code === "MODEL_TOOL_ACTION_INVALID" || code === "INVALID_TOOL_INPUT") {
+    return "严格按当前工具 Schema 重新生成参数，不得添加未定义字段。";
+  }
+  if (
+    code === "EVIDENCE_NOT_FOUND"
+    || code === "SOURCE_NOT_FOUND"
+    || code === "UNAUTHORIZED_SOURCE"
+  ) {
+    return "仅引用当前简历快照或已提交回答中存在的来源。";
+  }
+  return "根据失败代码修正结构化行动。";
 }
 
 async function failRun(

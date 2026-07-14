@@ -1146,6 +1146,172 @@ test("keeps planning protocol repairs separate from three terminal attempts", as
   );
 });
 
+test("locks terminal repair mode to the submit tool and never executes a read", async () => {
+  const invalid = openingProposal({
+    decision: {
+      action: "ask",
+      category: "technical_depth",
+      intent: "new_topic",
+      evidenceIds: ["resume:project"],
+      coverageTarget: "系统设计",
+      estimatedInformationGain: "high",
+    },
+  });
+  let readExecutions = 0;
+  let repairTools: string[] = [];
+  const attemptedRead: StreamScript = async (input, callNumber) => {
+    repairTools = input.tools.map((tool) => tool.name);
+    return readToolScriptWith({ callId: `forbidden-repair-read-${callNumber}` })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    initialState: {
+      interviewId: "interview",
+      candidateRoundCount: 3,
+      categoryCounts: { technical_depth: 3 },
+      recentQuestions: [],
+      requestedUserEnd: false,
+    },
+    model: scriptedModel([
+      streamingTerminalScript({ proposal: invalid }),
+      attemptedRead,
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+  const tools = new Map(fixture.runOptions.tools);
+  const readDefinition = tools.get("get_coverage_state")!;
+  tools.set("get_coverage_state", {
+    ...readDefinition,
+    async execute(input, context) {
+      readExecutions += 1;
+      return readDefinition.execute(input, context);
+    },
+  });
+  fixture.runOptions.tools = tools;
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.deepEqual(repairTools, ["submit_interview_turn"]);
+  assert.equal(readExecutions, 0);
+});
+
+test("repeated terminal repairs exhaust terminal attempts instead of the read loop detector", async () => {
+  const invalid = openingProposal({
+    decision: {
+      action: "ask",
+      category: "technical_depth",
+      intent: "new_topic",
+      evidenceIds: ["resume:project"],
+      coverageTarget: "系统设计",
+      estimatedInformationGain: "high",
+    },
+  });
+  const observedTools: string[][] = [];
+  const terminalFailure: StreamScript = async (input, callNumber) => {
+    observedTools.push(input.tools.map((tool) => tool.name));
+    return streamingTerminalScript({ proposal: invalid })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    initialState: {
+      interviewId: "interview",
+      candidateRoundCount: 3,
+      categoryCounts: { technical_depth: 3 },
+      recentQuestions: [],
+      requestedUserEnd: false,
+    },
+    model: scriptedModel([terminalFailure]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal(observedTools.length, 3);
+  assert.deepEqual(observedTools[1], ["submit_interview_turn"]);
+  assert.deepEqual(observedTools[2], ["submit_interview_turn"]);
+});
+
+test("worker recovery preserves terminal-only repair mode", async () => {
+  const invalid = openingProposal({
+    decision: {
+      action: "ask",
+      category: "technical_depth",
+      intent: "new_topic",
+      evidenceIds: ["resume:project"],
+      coverageTarget: "系统设计",
+      estimatedInformationGain: "high",
+    },
+  });
+  let recoveredTools: string[] = [];
+  const recoveredTerminal: StreamScript = async (input, callNumber) => {
+    recoveredTools = input.tools.map((tool) => tool.name);
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    initialState: {
+      interviewId: "interview",
+      candidateRoundCount: 3,
+      categoryCounts: { technical_depth: 3 },
+      recentQuestions: [],
+      requestedUserEnd: false,
+    },
+    model: scriptedModel([
+      streamingTerminalScript({ proposal: invalid }),
+      recoveredTerminal,
+    ]),
+  });
+  const crashingRepository = crashDuringRepair(fixture.repository, "after_discard_event");
+
+  await assert.rejects(runInterviewAgent({
+    ...fixture.runOptions,
+    repository: crashingRepository,
+    tools: runtimeTools(crashingRepository),
+  }), /injected crash/);
+  const claimed = await fixture.repository.claimRun(
+    fixture.run.id,
+    "terminal-mode-recovery",
+    new Date(Date.now() + 120_000),
+    60_000,
+  );
+  assert.equal(claimed.claimed, true);
+  const result = await runInterviewAgent({
+    ...fixture.runOptions,
+    lease: {
+      owner: "terminal-mode-recovery",
+      generation: claimed.run!.leaseGeneration,
+    },
+  });
+
+  assert.equal(result.exitReason, "completed");
+  assert.deepEqual(recoveredTools, ["submit_interview_turn"]);
+});
+
+test("pre-terminal invalid repairs retain planning read tools", async () => {
+  let repairTools: string[] = [];
+  let repairMessages: readonly { role: string; content: string }[] = [];
+  const captureTerminal: StreamScript = async (input, callNumber) => {
+    repairTools = input.tools.map((tool) => tool.name);
+    repairMessages = input.messages;
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      failedModelAttempt(Object.assign(new Error("SECRET_SHOULD_NOT_BE_PERSISTED"), {
+        code: "MODEL_TOOL_CALL_REQUIRED",
+      })),
+      captureTerminal,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(repairTools.includes("get_coverage_state"), true);
+  assert.equal(repairTools.includes("submit_interview_turn"), true);
+  const serializedMessages = JSON.stringify(repairMessages);
+  assert.equal(serializedMessages.includes("必须调用当前可用的面试工具"), true);
+  assert.equal(serializedMessages.includes("SECRET_SHOULD_NOT_BE_PERSISTED"), false);
+});
+
 test("bounds repeated nonterminal provisional protocol failures", async () => {
   const modelCalls: StreamScript[] = [1, 2, 3, 4].map((index) =>
     planningProtocolFailure(`planning-protocol-${index}`));
@@ -1282,6 +1448,10 @@ test("repairs nested Runtime validation failures after a public terminal respons
   assert.equal(checkpoint?.invalidModelActionCount, 0);
   assert.equal(checkpoint?.runtimeMessages?.some((message) => (
     message.role === "system" && message.content.includes("UNAUTHORIZED_TERM")
+  )), true);
+  assert.equal(checkpoint?.runtimeMessages?.some((message) => (
+    message.role === "system"
+    && message.content.includes("仅使用简历或已提交上下文授权的实体与数字")
   )), true);
   const events = await fixture.publicEvents();
   assert.equal(events.filter((event) => event.type === "response_started").length, 3);
