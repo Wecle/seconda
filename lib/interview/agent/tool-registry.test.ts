@@ -69,7 +69,14 @@ test("exposes the candidate response contract in the provider JSON Schema", () =
   );
   assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*只能包含一个疑问句.*一个.*[?？]/);
   assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得.*[?？]/);
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /开场.*简短问候.*岗位或方向.*自我介绍邀请/);
+  assert.match(
+    RESPONSE_TEXT_SCHEMA_DESCRIPTION,
+    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*一次自我介绍邀请/,
+  );
+  assert.match(
+    RESPONSE_TEXT_SCHEMA_DESCRIPTION,
+    /岗位方向置信度不足.*decision.action 为 clarify.*一个岗位方向澄清问题.*暂缓.*自我介绍/,
+  );
   assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /不得枚举或复述简历/);
 });
 
