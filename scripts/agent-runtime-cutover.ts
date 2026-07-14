@@ -77,7 +77,6 @@ export function createDrizzleAgentRuntimeCutoverStore(
       const anomalousRuns = await database.select({
         id: interviewAgentRuns.id,
         interviewId: interviewAgentRuns.interviewId,
-        interviewStatus: interviews.status,
       }).from(interviewAgentRuns)
         .innerJoin(
           interviews,
@@ -116,7 +115,12 @@ export function createDrizzleAgentRuntimeCutoverStore(
             status: interviewAgentRuns.status,
             exitReason: interviewAgentRuns.exitReason,
             completedAt: interviewAgentRuns.completedAt,
+            interviewStatus: interviews.status,
           }).from(interviewAgentRuns)
+            .innerJoin(
+              interviews,
+              eq(interviews.id, interviewAgentRuns.interviewId),
+            )
             .where(and(
               eq(interviewAgentRuns.id, run.id),
               eq(interviewAgentRuns.interviewId, run.interviewId),
@@ -124,7 +128,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
             .limit(1);
           if (current) {
             await ensureTerminalRunInvariant(tx, current, {
-              clearResumeState: run.interviewStatus !== "active",
+              clearResumeState: current.interviewStatus !== "active",
             });
           }
         });
