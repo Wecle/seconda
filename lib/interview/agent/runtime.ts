@@ -1044,7 +1044,9 @@ function classifyRepairCharge(
   if (error instanceof FatalRunFailure) return null;
   const provisionalAbort = readErrorCode(error) === "PROVISIONAL_STREAM_ABORTED";
   const protocolError = findErrorByCode(error, "MODEL_STREAM_PROTOCOL_ERROR");
-  if (provisionalAbort && !protocolError) return null;
+  const toolCallRequired = findErrorByCode(error, "MODEL_TOOL_CALL_REQUIRED");
+  const invalidToolAction = findErrorByCode(error, "MODEL_TOOL_ACTION_INVALID");
+  if (provisionalAbort && !protocolError && !toolCallRequired && !invalidToolAction) return null;
   if (
     readErrorCode(error) === "UNKNOWN_TOOL"
     || readProtocolKind(protocolError) === "inactive_tool"
@@ -1054,7 +1056,12 @@ function classifyRepairCharge(
     || attempt?.authorized
     || attempt?.responseStarted
   ) return "terminal";
-  if (error instanceof AttemptFailure || protocolError) return "invalid";
+  if (
+    error instanceof AttemptFailure
+    || protocolError
+    || toolCallRequired
+    || invalidToolAction
+  ) return "invalid";
   return null;
 }
 

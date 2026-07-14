@@ -569,6 +569,38 @@ test("rejects an unknown tool input start before publishing its input", async ()
   assert.deepEqual(events, []);
 });
 
+test("classifies malformed active-tool arguments as a model action error", async () => {
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "fast" }],
+    classifyError: () => "fatal",
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => ({
+      fullStream: parts({
+        type: "tool-call",
+        toolCallId: "call-malformed",
+        toolName: "get_coverage_state",
+        input: { unexpected: true },
+      }),
+    }),
+  });
+
+  await assert.rejects(port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: [{ name: "get_coverage_state", description: "coverage" }],
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => false,
+  }), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, "MODEL_TOOL_ACTION_INVALID");
+    assert.deepEqual((error as { modelAction?: unknown }).modelAction, {
+      kind: "malformed_tool_arguments",
+      toolName: "get_coverage_state",
+    });
+    return true;
+  });
+});
+
 test("a false durable ack preserves pre-public retry", async () => {
   const calls: string[] = [];
   const port = createStreamingInterviewAgentModelPort({
