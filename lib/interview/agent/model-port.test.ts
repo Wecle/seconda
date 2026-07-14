@@ -36,7 +36,14 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /公开.*进度/);
   assert.match(AGENT_SYSTEM_PROMPT, /隐藏.*推理/);
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
-  assert.match(AGENT_SYSTEM_PROMPT, /开场 responseText.*简短问候.*岗位或方向.*自我介绍邀请/);
+  assert.match(
+    AGENT_SYSTEM_PROMPT,
+    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*一次自我介绍邀请/,
+  );
+  assert.match(
+    AGENT_SYSTEM_PROMPT,
+    /岗位方向置信度不足.*decision.action 为 clarify.*一个岗位方向澄清问题.*暂缓.*自我介绍/,
+  );
   assert.match(AGENT_SYSTEM_PROMPT, /不得枚举或复述简历/);
   assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*只能包含一个疑问句.*一个.*[?？]/);
   assert.match(AGENT_SYSTEM_PROMPT, /另外.*以及.*并且.*追加/);
@@ -137,6 +144,10 @@ test("production DeepSeek Agent wiring sends a conversational required-tool requ
   assert.equal(
     JSON.stringify(body.tools).includes(RESPONSE_TEXT_SCHEMA_DESCRIPTION),
     true,
+  );
+  assert.match(
+    JSON.stringify(body.tools),
+    /岗位方向置信度不足.*decision.action 为 clarify.*岗位方向澄清问题/,
   );
 });
 
