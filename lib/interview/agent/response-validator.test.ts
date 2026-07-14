@@ -40,6 +40,55 @@ test("rejects unsafe response progress before a complete question is required", 
   }).ok, false);
 });
 
+test("defers only trailing grounded token prefixes during response progress", () => {
+  assert.deepEqual(validateResponseProgress({
+    action: "ask",
+    language: "zh",
+    text: "你提到了 React 和 Vu",
+    allowedTerms: ["React", "Vue"],
+  }), { ok: true });
+  assert.deepEqual(validateResponseProgress({
+    action: "ask",
+    language: "zh",
+    text: "恢复时间是 3",
+    allowedTerms: ["30 秒"],
+  }), { ok: true });
+
+  for (const input of [
+    { text: "你提到了 React 和 Foo", allowedTerms: ["React", "Vue"] },
+    { text: "恢复时间是 60", allowedTerms: ["30 秒"] },
+    { text: "你提到了 React 和 Vu，", allowedTerms: ["React", "Vue"] },
+    { text: "恢复时间是 3 秒", allowedTerms: ["30 秒"] },
+    { text: "你提到了 React 和 Vu", allowedTerms: ["ReactAndVue"] },
+    { text: "恢复时间是 3", allowedTerms: ["metric30"] },
+  ]) {
+    const result = validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    });
+    assert.equal(result.ok, false, input.text);
+    if (!result.ok) assert.equal(result.code, "UNAUTHORIZED_TERM", input.text);
+  }
+});
+
+test("keeps final grounding strict for incomplete token prefixes", () => {
+  for (const input of [
+    { text: "你提到了 React 和 Vu", allowedTerms: ["React", "Vue"] },
+    { text: "恢复时间是 3", allowedTerms: ["30 秒"] },
+  ]) {
+    const result = validateFinalResponse({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    });
+    assert.equal(result.ok, false, input.text);
+    if (!result.ok) assert.equal(result.code, "UNAUTHORIZED_TERM", input.text);
+  }
+});
+
 test("accepts one grounded question and rejects unsafe final text", () => {
   assert.deepEqual(validateFinalResponse({
     action: "ask",
