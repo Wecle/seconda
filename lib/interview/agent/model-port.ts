@@ -182,8 +182,26 @@ export function createStreamingInterviewAgentModelPort(options: {
               if (part.type === "reasoning-delta") continue;
 
               if (part.type === "text-delta") {
-                if (finalToolCall) throw protocolError("Text arrived after the final tool call");
-                if (startedTool) throw protocolError("Text arrived after tool input started");
+                if (finalToolCall) {
+                  throw protocolError(
+                    "Text arrived after the final tool call",
+                    protocolMetadata(
+                      "text_after_final_tool_call",
+                      "text-delta",
+                      "final_tool_call",
+                    ),
+                  );
+                }
+                if (startedTool) {
+                  throw protocolError(
+                    "Text arrived after tool input started",
+                    protocolMetadata(
+                      "text_after_tool_input",
+                      "text-delta",
+                      toolInputStage(startedTool),
+                    ),
+                  );
+                }
                 const text = (part as { text?: unknown }).text;
                 if (typeof text !== "string" || !text) continue;
                 await publishStreamEvent(input.onStreamEvent, {
@@ -196,17 +214,52 @@ export function createStreamingInterviewAgentModelPort(options: {
 
               if (part.type === "tool-input-start") {
                 const { id, toolName } = part as { id?: unknown; toolName?: unknown };
-                if (finalToolCall) throw protocolError("Tool input started after the final tool call");
+                if (finalToolCall) {
+                  throw protocolError(
+                    "Tool input started after the final tool call",
+                    protocolMetadata(
+                      "tool_input_start_after_final",
+                      "tool-input-start",
+                      "final_tool_call",
+                    ),
+                  );
+                }
                 if (typeof id !== "string" || !id || typeof toolName !== "string" || !toolName) {
-                  throw protocolError("Tool input start is malformed");
+                  throw protocolError(
+                    "Tool input start is malformed",
+                    protocolMetadata(
+                      "malformed_tool_input_start",
+                      "tool-input-start",
+                      "before_tool_input",
+                    ),
+                  );
                 }
                 if (!activeToolNames.has(toolName)) {
-                  throw protocolError(`Tool input started for inactive tool: ${toolName}`, {
-                    kind: "inactive_tool",
-                    toolName,
-                  });
+                  throw protocolError(
+                    `Tool input started for inactive tool: ${toolName}`,
+                    protocolMetadata(
+                      "inactive_tool_input_start",
+                      "tool-input-start",
+                      "before_tool_input",
+                      toolName,
+                    ),
+                  );
                 }
-                if (startedTool) throw protocolError("Multiple tool input streams are not allowed");
+                if (startedTool) {
+                  const duplicate = id === startedTool.id && toolName === startedTool.name;
+                  throw protocolError(
+                    duplicate
+                      ? "Tool input started more than once"
+                      : "Multiple tool input streams are not allowed",
+                    protocolMetadata(
+                      duplicate
+                        ? "duplicate_tool_input_start"
+                        : "parallel_tool_input_start",
+                      "tool-input-start",
+                      toolInputStage(startedTool),
+                    ),
+                  );
+                }
                 startedTool = { id, name: toolName, ended: false };
                 toolNames.set(id, toolName);
                 toolInputTexts.set(id, "");
@@ -215,14 +268,46 @@ export function createStreamingInterviewAgentModelPort(options: {
 
               if (part.type === "tool-input-delta") {
                 const { id, delta } = part as { id?: unknown; delta?: unknown };
-                if (finalToolCall) throw protocolError("Tool input arrived after the final tool call");
+                if (finalToolCall) {
+                  throw protocolError(
+                    "Tool input arrived after the final tool call",
+                    protocolMetadata(
+                      "tool_input_delta_after_final",
+                      "tool-input-delta",
+                      "final_tool_call",
+                    ),
+                  );
+                }
                 if (typeof id !== "string" || typeof delta !== "string") {
-                  throw protocolError("Tool input delta is malformed");
+                  throw protocolError(
+                    "Tool input delta is malformed",
+                    protocolMetadata(
+                      "malformed_tool_input_delta",
+                      "tool-input-delta",
+                      startedTool ? toolInputStage(startedTool) : "before_tool_input",
+                    ),
+                  );
                 }
                 if (!startedTool || id !== startedTool.id) {
-                  throw protocolError("Tool input delta does not match its start event");
+                  throw protocolError(
+                    "Tool input delta does not match its start event",
+                    protocolMetadata(
+                      "mismatched_tool_input_delta",
+                      "tool-input-delta",
+                      startedTool ? toolInputStage(startedTool) : "before_tool_input",
+                    ),
+                  );
                 }
-                if (startedTool.ended) throw protocolError("Tool input arrived after its end event");
+                if (startedTool.ended) {
+                  throw protocolError(
+                    "Tool input arrived after its end event",
+                    protocolMetadata(
+                      "tool_input_delta_after_end",
+                      "tool-input-delta",
+                      "tool_input_ended",
+                    ),
+                  );
+                }
                 const toolName = toolNames.get(id)!;
                 const inputText = `${toolInputTexts.get(id) ?? ""}${delta}`;
                 toolInputTexts.set(id, inputText);
@@ -240,11 +325,36 @@ export function createStreamingInterviewAgentModelPort(options: {
 
               if (part.type === "tool-input-end") {
                 const { id } = part as { id?: unknown };
-                if (finalToolCall) throw protocolError("Tool input ended after the final tool call");
-                if (typeof id !== "string" || !startedTool || id !== startedTool.id) {
-                  throw protocolError("Tool input end does not match its start event");
+                if (finalToolCall) {
+                  throw protocolError(
+                    "Tool input ended after the final tool call",
+                    protocolMetadata(
+                      "tool_input_end_after_final",
+                      "tool-input-end",
+                      "final_tool_call",
+                    ),
+                  );
                 }
-                if (startedTool.ended) throw protocolError("Tool input ended more than once");
+                if (typeof id !== "string" || !startedTool || id !== startedTool.id) {
+                  throw protocolError(
+                    "Tool input end does not match its start event",
+                    protocolMetadata(
+                      "mismatched_tool_input_end",
+                      "tool-input-end",
+                      startedTool ? toolInputStage(startedTool) : "before_tool_input",
+                    ),
+                  );
+                }
+                if (startedTool.ended) {
+                  throw protocolError(
+                    "Tool input ended more than once",
+                    protocolMetadata(
+                      "duplicate_tool_input_end",
+                      "tool-input-end",
+                      "tool_input_ended",
+                    ),
+                  );
+                }
                 startedTool.ended = true;
                 continue;
               }
@@ -255,26 +365,54 @@ export function createStreamingInterviewAgentModelPort(options: {
                   toolName?: unknown;
                   input?: unknown;
                 };
-                if (finalToolCall) throw protocolError("Multiple final tool calls are not allowed");
+                if (finalToolCall) {
+                  throw protocolError(
+                    "Multiple final tool calls are not allowed",
+                    protocolMetadata(
+                      "multiple_final_tool_calls",
+                      "tool-call",
+                      "final_tool_call",
+                    ),
+                  );
+                }
                 if (
                   typeof toolCall.toolCallId !== "string" ||
                   !toolCall.toolCallId ||
                   typeof toolCall.toolName !== "string" ||
                   !toolCall.toolName
                 ) {
-                  throw protocolError("Final tool call is malformed");
+                  throw protocolError(
+                    "Final tool call is malformed",
+                    protocolMetadata(
+                      "malformed_final_tool_call",
+                      "tool-call",
+                      startedTool ? toolInputStage(startedTool) : "before_tool_input",
+                    ),
+                  );
                 }
                 if (!activeToolNames.has(toolCall.toolName)) {
-                  throw protocolError(`Final call used inactive tool: ${toolCall.toolName}`, {
-                    kind: "inactive_tool",
-                    toolName: toolCall.toolName,
-                  });
+                  throw protocolError(
+                    `Final call used inactive tool: ${toolCall.toolName}`,
+                    protocolMetadata(
+                      "inactive_final_tool_call",
+                      "tool-call",
+                      startedTool ? toolInputStage(startedTool) : "before_tool_input",
+                      toolCall.toolName,
+                    ),
+                  );
                 }
                 if (startedTool && (
                   toolCall.toolCallId !== startedTool.id ||
                   toolCall.toolName !== startedTool.name
                 )) {
-                  throw protocolError("Final tool call does not match its input stream");
+                  throw protocolError(
+                    "Final tool call does not match its input stream",
+                    protocolMetadata(
+                      "mismatched_final_tool_call",
+                      "tool-call",
+                      toolInputStage(startedTool),
+                    ),
+                  );
                 }
                 try {
                   finalToolCall = providerSchema.parse({
@@ -412,17 +550,79 @@ async function publishStreamEvent(
 
 function protocolError(
   message: string,
-  protocol: {
-    kind: "inactive_tool";
-    toolName: string;
-  } | {
-    kind: "malformed_stream";
-  } = { kind: "malformed_stream" },
+  protocol: StreamProtocolMetadata,
 ) {
   return Object.assign(new Error(message), {
     code: "MODEL_STREAM_PROTOCOL_ERROR",
     protocol,
   });
+}
+
+type StreamProtocolReason =
+  | "text_after_final_tool_call"
+  | "text_after_tool_input"
+  | "tool_input_start_after_final"
+  | "malformed_tool_input_start"
+  | "inactive_tool_input_start"
+  | "duplicate_tool_input_start"
+  | "parallel_tool_input_start"
+  | "tool_input_delta_after_final"
+  | "malformed_tool_input_delta"
+  | "mismatched_tool_input_delta"
+  | "tool_input_delta_after_end"
+  | "tool_input_end_after_final"
+  | "mismatched_tool_input_end"
+  | "duplicate_tool_input_end"
+  | "multiple_final_tool_calls"
+  | "malformed_final_tool_call"
+  | "inactive_final_tool_call"
+  | "mismatched_final_tool_call";
+
+type StreamProtocolEventType =
+  | "text-delta"
+  | "tool-input-start"
+  | "tool-input-delta"
+  | "tool-input-end"
+  | "tool-call";
+
+type StreamProtocolStage =
+  | "before_tool_input"
+  | "tool_input_streaming"
+  | "tool_input_ended"
+  | "final_tool_call";
+
+type StreamProtocolMetadata = {
+  kind: "malformed_stream" | "inactive_tool";
+  reason: StreamProtocolReason;
+  eventType: StreamProtocolEventType;
+  stage: StreamProtocolStage;
+  toolName?: string;
+};
+
+function protocolMetadata(
+  reason: StreamProtocolReason,
+  eventType: StreamProtocolEventType,
+  stage: StreamProtocolStage,
+  inactiveToolName?: string,
+): StreamProtocolMetadata {
+  return inactiveToolName
+    ? {
+        kind: "inactive_tool",
+        toolName: inactiveToolName,
+        reason,
+        eventType,
+        stage,
+      }
+    : {
+        kind: "malformed_stream",
+        reason,
+        eventType,
+        stage,
+      };
+}
+
+function toolInputStage(startedTool: { ended: boolean }): StreamProtocolStage {
+  return startedTool.ended ? "tool_input_ended" : "tool_input_streaming";
 }
 
 function modelActionError(toolName: string, cause: unknown) {

@@ -1329,6 +1329,45 @@ test("pre-terminal invalid repairs retain planning read tools", async () => {
   assert.equal(serializedMessages.includes("SECRET_SHOULD_NOT_BE_PERSISTED"), false);
 });
 
+test("repairs parallel tool starts with dedicated fixed guidance", async () => {
+  let repairMessages: readonly { role: string; content: string }[] = [];
+  const captureTerminal: StreamScript = async (input, callNumber) => {
+    repairMessages = input.messages;
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const protocolFailure = Object.assign(
+    new Error("candidate@example.com resume and answer text"),
+    {
+      code: "MODEL_STREAM_PROTOCOL_ERROR",
+      protocol: {
+        kind: "malformed_stream",
+        reason: "parallel_tool_input_start",
+        eventType: "tool-input-start",
+        stage: "tool_input_streaming",
+      },
+    },
+  );
+  const wrapped = Object.assign(
+    new Error("provider stream failed", { cause: protocolFailure }),
+    { code: "PROVISIONAL_STREAM_ABORTED" },
+  );
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      failedModelAttempt(wrapped),
+      captureTerminal,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const serializedMessages = JSON.stringify(repairMessages);
+  assert.equal(serializedMessages.includes("不得并行或在同一轮调用多个工具"), true);
+  assert.equal(serializedMessages.includes("只选择一个当前可用工具"), true);
+  assert.equal(serializedMessages.includes("candidate@example.com"), false);
+  assert.equal(serializedMessages.includes("resume and answer text"), false);
+});
+
 test("bounds repeated nonterminal provisional protocol failures", async () => {
   const modelCalls: StreamScript[] = [1, 2, 3, 4].map((index) =>
     planningProtocolFailure(`planning-protocol-${index}`));

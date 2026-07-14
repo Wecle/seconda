@@ -19,3 +19,36 @@ test("sanitizes provider errors without retaining credentials, PII, bodies, or m
   assert.match(serialized, /api\.deepseek\.com/);
   assert.match(serialized, /request-123/);
 });
+
+test("retains only fixed protocol diagnostics from nested Agent stream failures", () => {
+  const protocolFailure = Object.assign(
+    new Error("candidate@example.com resume and answer text"),
+    {
+      code: "MODEL_STREAM_PROTOCOL_ERROR",
+      protocol: {
+        kind: "malformed_stream",
+        reason: "parallel_tool_input_start",
+        eventType: "tool-input-start",
+        stage: "tool_input_streaming",
+        toolName: "candidate@example.com",
+        arbitraryText: "resume and answer text",
+      },
+    },
+  );
+  const wrapped = Object.assign(
+    new Error("provider stream failed", { cause: protocolFailure }),
+    { code: "PROVISIONAL_STREAM_ABORTED" },
+  );
+
+  const sanitized = sanitizeAIError(wrapped);
+
+  assert.deepEqual(sanitized.protocol, {
+    kind: "malformed_stream",
+    reason: "parallel_tool_input_start",
+    eventType: "tool-input-start",
+    stage: "tool_input_streaming",
+  });
+  const serialized = JSON.stringify(sanitized);
+  assert.equal(serialized.includes("candidate@example.com"), false);
+  assert.equal(serialized.includes("resume and answer text"), false);
+});
