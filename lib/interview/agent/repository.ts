@@ -449,6 +449,14 @@ export function createInMemoryInterviewAgentRepository(
         run.exitReason = null;
         run.nextResumeAt = null;
       }
+      for (const event of run.events) {
+        if (
+          event.visibility === "public"
+          && (event.type === "run_completed" || event.type === "run_failed")
+        ) {
+          event.visibility = "internal";
+        }
+      }
       run.leaseOwner = owner;
       run.leaseExpiresAt = new Date(now.getTime() + leaseMs);
       return { claimed: true, run: memoryRunRecord(run) };
@@ -1302,59 +1310,64 @@ export function createDrizzleInterviewAgentRepository(
     },
     async claimRun(runId, owner, now, leaseMs) {
       const expiresAt = new Date(now.getTime() + leaseMs);
-      const [claimed] = await database.update(interviewAgentRuns).set({
-        status: "running",
-        exitReason: null,
-        errorJson: null,
-        completedAt: null,
-        resumeCount: sql`CASE WHEN ${interviewAgentRuns.status} = 'failed' OR ${interviewAgentRuns.leaseOwner} IS NOT NULL THEN ${interviewAgentRuns.resumeCount} + 1 ELSE ${interviewAgentRuns.resumeCount} END`,
-        nextResumeAt: null,
-        leaseOwner: owner,
-        leaseExpiresAt: expiresAt,
-        leaseGeneration: sql`${interviewAgentRuns.leaseGeneration} + 1`,
-        updatedAt: now,
-      }).where(and(
-        eq(interviewAgentRuns.id, runId),
-        or(
-          and(
-            eq(interviewAgentRuns.status, "running"),
-            or(
-              isNull(interviewAgentRuns.leaseExpiresAt),
-              lte(interviewAgentRuns.leaseExpiresAt, now),
+      const claimed = await database.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${runId}))`);
+        const [row] = await tx.update(interviewAgentRuns).set({
+          status: "running",
+          exitReason: null,
+          errorJson: null,
+          completedAt: null,
+          resumeCount: sql`CASE WHEN ${interviewAgentRuns.status} = 'failed' OR ${interviewAgentRuns.leaseOwner} IS NOT NULL THEN ${interviewAgentRuns.resumeCount} + 1 ELSE ${interviewAgentRuns.resumeCount} END`,
+          nextResumeAt: null,
+          leaseOwner: owner,
+          leaseExpiresAt: expiresAt,
+          leaseGeneration: sql`${interviewAgentRuns.leaseGeneration} + 1`,
+          updatedAt: now,
+        }).where(and(
+          eq(interviewAgentRuns.id, runId),
+          or(
+            and(
+              eq(interviewAgentRuns.status, "running"),
+              or(
+                isNull(interviewAgentRuns.leaseExpiresAt),
+                lte(interviewAgentRuns.leaseExpiresAt, now),
+              ),
+              or(
+                isNull(interviewAgentRuns.leaseOwner),
+                sql`${interviewAgentRuns.resumeCount} < ${MAX_AGENT_RUN_RESUMES}`,
+              ),
             ),
-            or(
-              isNull(interviewAgentRuns.leaseOwner),
+            and(
+              eq(interviewAgentRuns.status, "failed"),
+              inArray(interviewAgentRuns.exitReason, RECOVERABLE_RUN_EXIT_REASONS),
+              isNotNull(interviewAgentRuns.triggerJson),
               sql`${interviewAgentRuns.resumeCount} < ${MAX_AGENT_RUN_RESUMES}`,
+              or(
+                isNull(interviewAgentRuns.nextResumeAt),
+                lte(interviewAgentRuns.nextResumeAt, now),
+              ),
             ),
           ),
-          and(
-            eq(interviewAgentRuns.status, "failed"),
-            inArray(interviewAgentRuns.exitReason, RECOVERABLE_RUN_EXIT_REASONS),
-            isNotNull(interviewAgentRuns.triggerJson),
-            sql`${interviewAgentRuns.resumeCount} < ${MAX_AGENT_RUN_RESUMES}`,
-            or(
-              isNull(interviewAgentRuns.nextResumeAt),
-              lte(interviewAgentRuns.nextResumeAt, now),
-            ),
-          ),
-        ),
-      )).returning({
-        id: interviewAgentRuns.id,
-        interviewId: interviewAgentRuns.interviewId,
-        status: interviewAgentRuns.status,
-        phase: interviewAgentRuns.phase,
-        attemptId: interviewAgentRuns.attemptId,
-        attemptNumber: interviewAgentRuns.attemptNumber,
-        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
-        exitReason: interviewAgentRuns.exitReason,
-        leaseOwner: interviewAgentRuns.leaseOwner,
-        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
-        leaseGeneration: interviewAgentRuns.leaseGeneration,
-        resumeCount: interviewAgentRuns.resumeCount,
-        nextResumeAt: interviewAgentRuns.nextResumeAt,
-        checkpoint: interviewAgentRuns.checkpointJson,
-        trigger: interviewAgentRuns.triggerJson,
-        lastEventSequence: interviewAgentRuns.lastEventSequence,
+        )).returning({
+          id: interviewAgentRuns.id,
+          interviewId: interviewAgentRuns.interviewId,
+          status: interviewAgentRuns.status,
+          phase: interviewAgentRuns.phase,
+          attemptId: interviewAgentRuns.attemptId,
+          attemptNumber: interviewAgentRuns.attemptNumber,
+          provisionalMessageId: interviewAgentRuns.provisionalMessageId,
+          exitReason: interviewAgentRuns.exitReason,
+          leaseOwner: interviewAgentRuns.leaseOwner,
+          leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+          leaseGeneration: interviewAgentRuns.leaseGeneration,
+          resumeCount: interviewAgentRuns.resumeCount,
+          nextResumeAt: interviewAgentRuns.nextResumeAt,
+          checkpoint: interviewAgentRuns.checkpointJson,
+          trigger: interviewAgentRuns.triggerJson,
+          lastEventSequence: interviewAgentRuns.lastEventSequence,
+        });
+        if (row) await archivePublicTerminalEvents(tx, runId);
+        return row;
       });
       if (claimed) return { claimed: true, run: parseRunRecord(claimed) };
       return { claimed: false, run: await this.getRun(runId) };
@@ -2181,7 +2194,7 @@ export function createDrizzleInterviewAgentRepository(
           .from(interviewAgentRuns).where(and(
           eq(interviewAgentRuns.interviewId, interviewId),
           eq(interviewAgentRuns.status, "running"),
-        ));
+        )).orderBy(asc(interviewAgentRuns.id));
         const invalidatedRunIds: string[] = [];
         for (const run of activeRuns) {
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.id}))`);

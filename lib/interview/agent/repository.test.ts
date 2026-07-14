@@ -231,6 +231,12 @@ test("reopens a retryable failed run with its durable trigger and checkpoint", a
   assert.equal(claimed.run?.resumeCount, 1);
   assert.equal(claimed.run?.trigger?.instruction, "continue accepted answer");
   assert.equal(claimed.run?.checkpoint?.progressHash, "durable");
+  assert.deepEqual(
+    (await repository.listEvents(run.id, 0))
+      .filter((event) => event.type === "run_failed")
+      .map((event) => event.visibility),
+    ["internal"],
+  );
 });
 
 test("exhausts Agent recovery after two resumed executions", async () => {

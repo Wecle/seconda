@@ -316,6 +316,24 @@ test("real database fences stale workers, notifies durable events and preserves 
       },
     ]);
 
+    const recoveredClaim = await repository.claimRun(
+      runId,
+      "worker-recovered",
+      new Date(failedRun.nextResumeAt.getTime() + 1_000),
+      60_000,
+    );
+    assert.equal(recoveredClaim.claimed, true);
+    assert.deepEqual(
+      await db.select({ visibility: interviewAgentEvents.visibility })
+        .from(interviewAgentEvents)
+        .where(and(
+          eq(interviewAgentEvents.runId, runId),
+          inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+          eq(interviewAgentEvents.visibility, "public"),
+        )),
+      [],
+    );
+
     const answerEndRace = await Promise.allSettled([
       store.acceptCandidateMessage({
         interviewId,
