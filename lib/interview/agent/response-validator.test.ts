@@ -125,6 +125,7 @@ test("handles compact units, decimal chunks, and normalized numeric grounding", 
 
   for (const input of [
     { text: "恢复时间是 3", allowedTerms: ["metric30"] },
+    { text: "metric3", allowedTerms: ["metric30"] },
     { text: "误差是 3.", allowedTerms: ["30%"] },
     { text: "误差是 3,", allowedTerms: ["30%"] },
   ]) {
@@ -137,6 +138,32 @@ test("handles compact units, decimal chunks, and normalized numeric grounding", 
     assert.equal(result.ok, false, input.text);
     if (!result.ok) assert.equal(result.code, "UNAUTHORIZED_TERM", input.text);
   }
+
+  for (const input of [
+    { text: "metric30", allowedTerms: ["metric30"] },
+    { text: "v1.2", allowedTerms: ["v1.2"] },
+    { text: "Vue3", allowedTerms: ["Vue3"] },
+    { text: "恢复耗时30秒", allowedTerms: ["恢复耗时30秒"] },
+  ]) {
+    assert.deepEqual(validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    }), { ok: true }, input.text);
+  }
+  assert.deepEqual(validateFinalResponse({
+    action: "ask",
+    language: "zh",
+    text: "你使用 Vue3 完成了升级，主要难点是什么？",
+    allowedTerms: ["Vue3"],
+  }), { ok: true });
+  assert.deepEqual(validateFinalResponse({
+    action: "ask",
+    language: "zh",
+    text: "恢复耗时30秒，主要瓶颈是什么？",
+    allowedTerms: ["恢复耗时30秒"],
+  }), { ok: true });
 });
 
 test("accepts one grounded question and rejects unsafe final text", () => {
