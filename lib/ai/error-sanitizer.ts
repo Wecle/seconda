@@ -160,8 +160,13 @@ function readSafeProtocolDiagnostic(error: unknown): SafeProtocolDiagnostic | nu
   const seen = new Set<object>();
   while (current && typeof current === "object" && !seen.has(current)) {
     seen.add(current);
-    const protocol = (current as { protocol?: unknown }).protocol;
-    if (protocol && typeof protocol === "object") {
+    const coded = current as { code?: unknown; protocol?: unknown; cause?: unknown };
+    const protocol = coded.protocol;
+    if (
+      coded.code === "MODEL_STREAM_PROTOCOL_ERROR"
+      && protocol
+      && typeof protocol === "object"
+    ) {
       const value = protocol as Record<string, unknown>;
       if (
         safeProtocolKinds.has(value.kind as SafeProtocolDiagnostic["kind"])
@@ -177,7 +182,7 @@ function readSafeProtocolDiagnostic(error: unknown): SafeProtocolDiagnostic | nu
         };
       }
     }
-    current = (current as { cause?: unknown }).cause;
+    current = coded.cause;
   }
   return null;
 }
