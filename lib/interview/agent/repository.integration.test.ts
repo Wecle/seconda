@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
@@ -240,6 +240,16 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(commits.length, 3);
     assert.equal(coverage[0].questionCount, 3);
 
+    const legacyTerminal = await repository.appendEvent(runId, {
+      type: "run_failed",
+      visibility: "public",
+      payload: {
+        runId,
+        exitReason: "aborted_streaming",
+        retryable: true,
+        userMessage: "old failure",
+      },
+    }, secondLease);
     const [terminationStartedAt] = await db.select({
       value: postgresClockMilliseconds(),
     }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
@@ -288,15 +298,23 @@ test("real database fences stale workers, notifies durable events and preserves 
     const terminalEvents = await db.select({
       sequence: interviewAgentEvents.sequence,
       type: interviewAgentEvents.type,
+      visibility: interviewAgentEvents.visibility,
     }).from(interviewAgentEvents).where(and(
       eq(interviewAgentEvents.runId, runId),
       inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
-    ));
-    assert.equal(terminalEvents.length, 1);
-    assert.deepEqual(terminalEvents[0], {
-      sequence: failedRun.lastEventSequence,
-      type: "run_failed",
-    });
+    )).orderBy(asc(interviewAgentEvents.sequence));
+    assert.deepEqual(terminalEvents, [
+      {
+        sequence: legacyTerminal.sequence,
+        type: "run_failed",
+        visibility: "internal",
+      },
+      {
+        sequence: failedRun.lastEventSequence,
+        type: "run_failed",
+        visibility: "public",
+      },
+    ]);
 
     const answerEndRace = await Promise.allSettled([
       store.acceptCandidateMessage({

@@ -574,6 +574,14 @@ export function createInMemoryInterviewAgentRepository(
         return { status: run.status, eventSequence: run.eventSequence, created: false };
       }
       const completed = input.exitReason === "completed";
+      for (const event of run.events) {
+        if (
+          event.visibility === "public"
+          && (event.type === "run_completed" || event.type === "run_failed")
+        ) {
+          event.visibility = "internal";
+        }
+      }
       run.eventSequence += 1;
       run.events.push({
         id: `event-${++id}`,
@@ -1135,6 +1143,20 @@ function requireRunningMemoryRun(runs: Map<string, MemoryRun>, runId: string) {
 }
 
 type AgentDatabase = typeof import("@/lib/db").db;
+type AgentTransaction = Parameters<Parameters<AgentDatabase["transaction"]>[0]>[0];
+
+async function archivePublicTerminalEvents(
+  tx: AgentTransaction,
+  runId: string,
+) {
+  await tx.update(interviewAgentEvents).set({
+    visibility: "internal",
+  }).where(and(
+    eq(interviewAgentEvents.runId, runId),
+    eq(interviewAgentEvents.visibility, "public"),
+    inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+  ));
+}
 
 async function notifyAgentEventAppend(
   execute: (query: SQL) => Promise<unknown>,
@@ -1540,6 +1562,7 @@ export function createDrizzleInterviewAgentRepository(
         }
         const completed = input.exitReason === "completed";
         const now = new Date();
+        await archivePublicTerminalEvents(tx, runId);
         const [updated] = await tx.update(interviewAgentRuns).set({
           status: completed ? "completed" : "failed",
           exitReason: input.exitReason,
@@ -2161,6 +2184,7 @@ export function createDrizzleInterviewAgentRepository(
         ));
         const invalidatedRunIds: string[] = [];
         for (const run of activeRuns) {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.id}))`);
           const [invalidated] = await tx.update(interviewAgentRuns).set({
             status: "failed",
             exitReason: "aborted_tools",
@@ -2176,6 +2200,7 @@ export function createDrizzleInterviewAgentRepository(
             eq(interviewAgentRuns.status, "running"),
           )).returning({ sequence: interviewAgentRuns.lastEventSequence });
           if (!invalidated) continue;
+          await archivePublicTerminalEvents(tx, run.id);
           await tx.insert(interviewAgentEvents).values({
             runId: run.id,
             sequence: invalidated.sequence,
