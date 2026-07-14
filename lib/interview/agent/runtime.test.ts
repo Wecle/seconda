@@ -1237,6 +1237,58 @@ for (const modelActionCase of [
   });
 }
 
+test("repairs nested Runtime validation failures after a public terminal response starts", async () => {
+  const proposal = openingProposal({
+    responseText: "请说明你如何使用 Kubernetes 设计回退机制？",
+  });
+  const serialized = JSON.stringify(proposal);
+  const splitAt = serialized.indexOf("Kubernetes");
+  assert.ok(splitAt > 0);
+  const invalid = invalidProviderModel(() => [
+    {
+      type: "tool-input-start",
+      id: "terminal-validation",
+      toolName: "submit_interview_turn",
+    },
+    {
+      type: "tool-input-delta",
+      id: "terminal-validation",
+      delta: serialized.slice(0, splitAt),
+    },
+    {
+      type: "tool-input-delta",
+      id: "terminal-validation",
+      delta: serialized.slice(splitAt),
+    },
+    {
+      type: "tool-input-end",
+      id: "terminal-validation",
+    },
+    {
+      type: "tool-call",
+      toolCallId: "terminal-validation",
+      toolName: "submit_interview_turn",
+      input: proposal,
+    },
+  ]);
+  const fixture = await createRuntimeFixture({ model: invalid.model });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal(invalid.providerCalls(), 3);
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.terminalAttemptCount, 3);
+  assert.equal(checkpoint?.invalidModelActionCount, 0);
+  assert.equal(checkpoint?.runtimeMessages?.some((message) => (
+    message.role === "system" && message.content.includes("UNAUTHORIZED_TERM")
+  )), true);
+  const events = await fixture.publicEvents();
+  assert.equal(events.filter((event) => event.type === "response_started").length, 3);
+  assert.equal(events.filter((event) => event.type === "response_discarded").length, 3);
+  assert.equal(events.some((event) => event.type === "message_committed"), false);
+});
+
 test("bounds inactive model tools with aborted_tools", async () => {
   const inactiveTool = Object.assign(new Error("inactive tool"), {
     code: "MODEL_STREAM_PROTOCOL_ERROR",
