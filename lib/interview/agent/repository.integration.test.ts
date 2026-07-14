@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
@@ -236,7 +236,9 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(commits.length, 3);
     assert.equal(coverage[0].questionCount, 3);
 
-    const terminationStartedAt = Date.now();
+    const [terminationStartedAt] = await db.select({
+      value: sql<number>`(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`,
+    }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
     const expectedBackoffMs = Math.min(
       300_000,
       30_000 * (2 ** secondClaim.run!.resumeCount),
@@ -245,6 +247,9 @@ test("real database fences stale workers, notifies durable events and preserves 
       exitReason: "aborted_streaming",
       error: new Error("fixture provider failure"),
     }, secondLease);
+    const [terminationFinishedAt] = await db.select({
+      value: sql<number>`(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`,
+    }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
 
     assert.equal(terminated.status, "failed");
     assert.equal(terminated.created, true);
@@ -262,11 +267,12 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(failedRun.leaseExpiresAt, null);
     assert.ok(failedRun.nextResumeAt);
     assert.ok(
-      Math.abs(
-        failedRun.nextResumeAt.getTime()
-          - terminationStartedAt
-          - expectedBackoffMs,
-      ) < 5_000,
+      failedRun.nextResumeAt.getTime()
+        >= terminationStartedAt.value + expectedBackoffMs,
+    );
+    assert.ok(
+      failedRun.nextResumeAt.getTime()
+        <= terminationFinishedAt.value + expectedBackoffMs,
     );
 
     const replayedTermination = await repository.terminateRun(runId, {
@@ -280,12 +286,13 @@ test("real database fences stale workers, notifies durable events and preserves 
       type: interviewAgentEvents.type,
     }).from(interviewAgentEvents).where(and(
       eq(interviewAgentEvents.runId, runId),
-      eq(interviewAgentEvents.type, "run_failed"),
+      inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
     ));
-    assert.deepEqual(terminalEvents, [{
+    assert.equal(terminalEvents.length, 1);
+    assert.deepEqual(terminalEvents[0], {
       sequence: failedRun.lastEventSequence,
       type: "run_failed",
-    }]);
+    });
 
     const answerEndRace = await Promise.allSettled([
       store.acceptCandidateMessage({
