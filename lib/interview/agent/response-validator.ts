@@ -96,7 +96,7 @@ export function validateFinalResponse(input: {
   text: string;
   allowedTerms: readonly string[];
 }): ResponseValidationResult {
-  const progress = validateResponseProgress(input);
+  const progress = validateResponse(input, false);
   if (!progress.ok) return progress;
 
   const questionCount = countQuestions(input.text);
@@ -116,6 +116,15 @@ export function validateResponseProgress(input: {
   text: string;
   allowedTerms: readonly string[];
 }): ResponseValidationResult {
+  return validateResponse(input, true);
+}
+
+function validateResponse(input: {
+  action: "ask" | "clarify" | "finish";
+  language: ResponseLanguage;
+  text: string;
+  allowedTerms: readonly string[];
+}, allowTrailingGroundingPrefix: boolean): ResponseValidationResult {
   if ([...input.text].length > MAX_RESPONSE_CHARACTERS) {
     return invalid("RESPONSE_TOO_LONG", "回复超过允许长度。");
   }
@@ -148,6 +157,7 @@ export function validateResponseProgress(input: {
     input.text,
     input.allowedTerms,
     input.language,
+    allowTrailingGroundingPrefix,
   );
   if (unauthorizedTerm) {
     return invalid(
@@ -255,15 +265,22 @@ function findUnauthorizedTerm(
   text: string,
   allowedTerms: readonly string[],
   language: ResponseLanguage,
+  allowTrailingGroundingPrefix: boolean,
 ): string | null {
   const normalizedAllowedTerms = allowedTerms.map(normalizeGroundingTerm);
-  const allowedNumbers = new Set(
-    allowedTerms.flatMap((term) => term.match(/\d+(?:[.,]\d+)?/gu) ?? [])
-      .map(normalizeNumber),
-  );
-  const numbers = text.match(/\d+(?:[.,]\d+)?/gu) ?? [];
-  for (const number of numbers) {
-    if (!allowedNumbers.has(normalizeNumber(number))) {
+  const allowedNumbers = allowedTerms
+    .flatMap((term) => term.match(/\d+(?:[.,]\d+)?/gu) ?? [])
+    .map(normalizeNumber);
+  const allowedNumberSet = new Set(allowedNumbers);
+  const numbers = text.matchAll(/\d+(?:[.,]\d+)?/gu);
+  for (const match of numbers) {
+    const number = match[0];
+    if (!allowedNumberSet.has(normalizeNumber(number))) {
+      if (
+        allowTrailingGroundingPrefix
+        && isTrailingToken(text, match.index, number)
+        && isStrictPrefixOfAllowedNumber(number, allowedTerms)
+      ) continue;
       return number;
     }
   }
@@ -293,6 +310,11 @@ function findUnauthorizedTerm(
 
     const isAtSentenceStart = isSentenceStart(text, candidate.index ?? 0);
     if (isAtSentenceStart && sentenceInitialCommonWords.has(normalizedTerm)) continue;
+    if (
+      allowTrailingGroundingPrefix
+      && isTrailingToken(text, candidate.index ?? 0, term)
+      && isStrictPrefixOfAllowedNamedToken(term, allowedTerms)
+    ) continue;
     return term;
   }
 
@@ -323,6 +345,38 @@ function isStrongEntitySignal(term: string): boolean {
 
 function normalizeNumber(value: string): string {
   return value.replace(",", ".");
+}
+
+function isTrailingToken(text: string, index: number, token: string): boolean {
+  return index + token.length === text.length;
+}
+
+function isStrictPrefixOfAllowedNumber(
+  number: string,
+  allowedTerms: readonly string[],
+): boolean {
+  const normalizedNumber = normalizeNumber(number);
+  return allowedTerms.some((allowedTerm) => (
+    [...allowedTerm.normalize("NFKC").matchAll(
+      /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)(?![\p{L}\p{N}])/gu,
+    )].some((match) => {
+      const allowedNumber = normalizeNumber(match[1]);
+      return allowedNumber.length > normalizedNumber.length
+        && allowedNumber.startsWith(normalizedNumber);
+    })
+  ));
+}
+
+function isStrictPrefixOfAllowedNamedToken(
+  term: string,
+  allowedTerms: readonly string[],
+): boolean {
+  const escapedTerm = term.normalize("NFKC").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const strictPrefixPattern = new RegExp(
+    `(?:^|[^\\p{Script=Latin}\\p{N}])${escapedTerm}[\\p{Script=Latin}\\p{N}_+.#/-]+(?![\\p{Script=Latin}\\p{N}])`,
+    "iu",
+  );
+  return allowedTerms.some((allowedTerm) => strictPrefixPattern.test(allowedTerm.normalize("NFKC")));
 }
 
 function isAllowedNamedTerm(
