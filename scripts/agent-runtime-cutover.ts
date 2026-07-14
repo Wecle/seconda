@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   interviewAgentEvents,
   interviewAgentRuns,
@@ -26,6 +26,7 @@ import {
 type AgentDatabase = typeof import("../lib/db").db;
 
 export interface AgentRuntimeCutoverStore {
+  normalizePublicTerminalEvents(): Promise<void>;
   prepareMissingOpeningRuns(): Promise<string[]>;
   listCandidateRunIds(): Promise<string[]>;
   reconcileRun(
@@ -39,6 +40,8 @@ export async function reconcileAgentRuntimeCutover(
 ): Promise<{ completed: string[]; resumed: string[] }> {
   const completed: string[] = [];
   const resumed: string[] = [];
+
+  await store.normalizePublicTerminalEvents();
 
   const openingRunIds = await store.prepareMissingOpeningRuns();
   for (const runId of openingRunIds) {
@@ -66,6 +69,36 @@ export function createDrizzleAgentRuntimeCutoverStore(
     ? inArray(interviews.id, options.interviewIds)
     : undefined;
   return {
+    async normalizePublicTerminalEvents() {
+      await database.transaction(async (tx) => {
+        const duplicateRuns = await tx.select({
+          id: interviewAgentEvents.runId,
+        }).from(interviewAgentEvents)
+          .innerJoin(
+            interviewAgentRuns,
+            eq(interviewAgentRuns.id, interviewAgentEvents.runId),
+          )
+          .innerJoin(
+            interviews,
+            eq(interviews.id, interviewAgentRuns.interviewId),
+          )
+          .where(and(
+            eq(interviews.status, "active"),
+            interviewScope,
+            eq(interviewAgentEvents.visibility, "public"),
+            inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+          ))
+          .groupBy(interviewAgentEvents.runId)
+          .having(sql`count(*) > 1`)
+          .orderBy(asc(interviewAgentEvents.runId));
+
+        for (const run of duplicateRuns) {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.id}))`);
+          await normalizePublicTerminalEventsForRun(tx, run.id);
+        }
+      });
+    },
+
     async prepareMissingOpeningRuns() {
       const candidates = await database.select({
         interviewId: interviews.id,
@@ -210,17 +243,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
           .limit(1);
 
         if (assistantMessage) {
-          const [terminalEvent] = await tx.select({
-            id: interviewAgentEvents.id,
-            sequence: interviewAgentEvents.sequence,
-            type: interviewAgentEvents.type,
-          })
-            .from(interviewAgentEvents)
-            .where(and(
-              eq(interviewAgentEvents.runId, runId),
-              inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
-            ))
-            .limit(1);
+          const terminalEvent = await normalizePublicTerminalEventsForRun(tx, runId);
           const appendTerminal = !terminalEvent;
           const [updated] = await tx.update(interviewAgentRuns).set({
             status: "completed",
@@ -306,6 +329,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
           ? run.trigger
           : await recoverMissingTrigger(tx, run);
         const discardEvent = await buildDiscardEvent(tx, run);
+        await archivePublicTerminalEventsForRun(tx, runId);
         const [updated] = await tx.update(interviewAgentRuns).set({
           status: "running",
           phase: "accepted",
@@ -366,16 +390,7 @@ async function retireSupersededRun(
   },
 ) {
   const discardEvent = await buildDiscardEvent(tx, run);
-  const [terminalEvent] = await tx.select({
-    id: interviewAgentEvents.id,
-    type: interviewAgentEvents.type,
-  })
-    .from(interviewAgentEvents)
-    .where(and(
-      eq(interviewAgentEvents.runId, run.id),
-      inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
-    ))
-    .limit(1);
+  const terminalEvent = await normalizePublicTerminalEventsForRun(tx, run.id);
   const appendedEvents = [
     ...(discardEvent ? [discardEvent] : []),
     ...(!terminalEvent ? [{
@@ -441,6 +456,47 @@ async function retireSupersededRun(
   if (appendedEvents.length > 0) {
     await notifyPublicEvent(tx, run.id, updated.sequence);
   }
+}
+
+async function normalizePublicTerminalEventsForRun(
+  tx: Transaction,
+  runId: string,
+) {
+  const publicTerminals = await tx.select({
+    id: interviewAgentEvents.id,
+    sequence: interviewAgentEvents.sequence,
+    type: interviewAgentEvents.type,
+  })
+    .from(interviewAgentEvents)
+    .where(and(
+      eq(interviewAgentEvents.runId, runId),
+      eq(interviewAgentEvents.visibility, "public"),
+      inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+    ))
+    .orderBy(desc(interviewAgentEvents.sequence));
+  const [authoritative, ...superseded] = publicTerminals;
+  if (superseded.length > 0) {
+    await tx.update(interviewAgentEvents).set({
+      visibility: "internal",
+    }).where(inArray(
+      interviewAgentEvents.id,
+      superseded.map((event) => event.id),
+    ));
+  }
+  return authoritative;
+}
+
+async function archivePublicTerminalEventsForRun(
+  tx: Transaction,
+  runId: string,
+) {
+  await tx.update(interviewAgentEvents).set({
+    visibility: "internal",
+  }).where(and(
+    eq(interviewAgentEvents.runId, runId),
+    eq(interviewAgentEvents.visibility, "public"),
+    inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+  ));
 }
 
 function activeCutoverRunFence(runId: string, interviewId: string) {
@@ -534,17 +590,76 @@ async function notifyPublicEvent(
   )`);
 }
 
+export async function runAgentRuntimeCutoverCommand(input: {
+  store: AgentRuntimeCutoverStore;
+  executeRun: (runId: string) => Promise<void>;
+  drain?: () => Promise<void>;
+  close: () => Promise<void>;
+  writeOutput?: (line: string) => void;
+}) {
+  try {
+    let result: { completed: string[]; resumed: string[] };
+    try {
+      result = await reconcileAgentRuntimeCutover(
+        input.store,
+        input.executeRun,
+      );
+    } finally {
+      await input.drain?.();
+    }
+    (input.writeOutput ?? ((line) => { process.stdout.write(line); }))(
+      `${JSON.stringify(result)}\n`,
+    );
+    return result;
+  } finally {
+    await input.close();
+  }
+}
+
+export function createDeferredTaskCollector() {
+  const pending = new Set<Promise<void>>();
+  return {
+    defer(task: () => Promise<void>) {
+      const execution = Promise.resolve().then(task);
+      pending.add(execution);
+      void execution.catch(() => {});
+    },
+    async drain() {
+      const errors: unknown[] = [];
+      while (pending.size > 0) {
+        const batch = [...pending];
+        const results = await Promise.allSettled(batch);
+        for (const task of batch) pending.delete(task);
+        for (const result of results) {
+          if (result.status === "rejected") errors.push(result.reason);
+        }
+      }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "Deferred cutover tasks failed");
+      }
+    },
+  };
+}
+
 export async function main() {
-  const [{ db }, { createProductionAgentDependencies }, { executeClaimedRun }] =
+  const [
+    { db, closeDatabaseConnection },
+    { createProductionAgentDependencies },
+    { executeClaimedRun },
+  ] =
     await Promise.all([
       import("../lib/db"),
       import("../lib/interview/agent/composition"),
       import("../lib/interview/agent/worker"),
     ]);
-  const dependencies = createProductionAgentDependencies();
-  const result = await reconcileAgentRuntimeCutover(
-    createDrizzleAgentRuntimeCutoverStore(db),
-    async (runId) => {
+  const deferredTasks = createDeferredTaskCollector();
+  const dependencies = createProductionAgentDependencies({
+    defer: deferredTasks.defer,
+  });
+  return runAgentRuntimeCutoverCommand({
+    store: createDrizzleAgentRuntimeCutoverStore(db),
+    executeRun: async (runId) => {
       const execution = await executeClaimedRun({
         runId,
         owner: `cutover:${randomUUID()}`,
@@ -555,9 +670,9 @@ export async function main() {
         throw new Error(`Cutover could not execute run ${runId}: ${execution.status}`);
       }
     },
-  );
-  process.stdout.write(`${JSON.stringify(result)}\n`);
-  return result;
+    drain: deferredTasks.drain,
+    close: closeDatabaseConnection,
+  });
 }
 
 if (

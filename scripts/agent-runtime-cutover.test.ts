@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "../lib/db/schema";
@@ -21,8 +21,15 @@ import { createDrizzleInterviewAgentRepository } from "../lib/interview/agent/re
 import {
   createDrizzleAgentRuntimeCutoverStore,
   reconcileAgentRuntimeCutover,
+  runAgentRuntimeCutoverCommand,
   type AgentRuntimeCutoverStore,
 } from "./agent-runtime-cutover";
+
+type FixtureTerminalEvent = {
+  sequence: number;
+  type: "run_completed" | "run_failed";
+  visibility: "public" | "internal";
+};
 
 type CutoverRun = {
   id: string;
@@ -32,6 +39,7 @@ type CutoverRun = {
   checkpoint: unknown;
   authoritative: boolean;
   pendingSchedule: boolean;
+  terminalEvents: FixtureTerminalEvent[];
 };
 
 function runningRun(
@@ -45,14 +53,29 @@ function runningRun(
     checkpoint: overrides.checkpoint ?? { phase: "reasoning" },
     authoritative: overrides.authoritative ?? true,
     pendingSchedule: overrides.pendingSchedule ?? false,
+    terminalEvents: overrides.terminalEvents ?? [],
   };
 }
 
-function cutoverFixture(initial: CutoverRun[], missingOpeningRuns: string[] = []) {
+function cutoverFixture(
+  initial: CutoverRun[],
+  missingOpeningRuns: string[] = [],
+  executionTerminals: Record<string, FixtureTerminalEvent["type"]> = {},
+) {
   const rows = new Map(initial.map((run) => [run.id, structuredClone(run)]));
   const executedRuns: string[] = [];
   let pendingOpeningRuns = [...missingOpeningRuns];
   const store: AgentRuntimeCutoverStore = {
+    async normalizePublicTerminalEvents() {
+      for (const run of rows.values()) {
+        const publicTerminals = run.terminalEvents
+          .filter((event) => event.visibility === "public")
+          .toSorted((left, right) => right.sequence - left.sequence);
+        for (const terminal of publicTerminals.slice(1)) {
+          terminal.visibility = "internal";
+        }
+      }
+    },
     async prepareMissingOpeningRuns() {
       const created = pendingOpeningRuns;
       pendingOpeningRuns = [];
@@ -77,7 +100,23 @@ function cutoverFixture(initial: CutoverRun[], missingOpeningRuns: string[] = []
       run.leaseGeneration += 1;
       run.checkpoint = null;
       if (!run.assistantMessage && !run.authoritative) return "skipped";
-      if (run.assistantMessage) return "completed";
+      if (run.assistantMessage) {
+        const authoritativeTerminal = run.terminalEvents
+          .filter((event) => event.visibility === "public")
+          .toSorted((left, right) => right.sequence - left.sequence)[0];
+        if (authoritativeTerminal) authoritativeTerminal.type = "run_completed";
+        else {
+          run.terminalEvents.push({
+            sequence: Math.max(0, ...run.terminalEvents.map((event) => event.sequence)) + 1,
+            type: "run_completed",
+            visibility: "public",
+          });
+        }
+        return "completed";
+      }
+      for (const terminal of run.terminalEvents) {
+        if (terminal.visibility === "public") terminal.visibility = "internal";
+      }
       run.pendingSchedule = true;
       return "resume";
     },
@@ -86,12 +125,122 @@ function cutoverFixture(initial: CutoverRun[], missingOpeningRuns: string[] = []
     store,
     executeRun: async (runId: string) => {
       executedRuns.push(runId);
-      rows.get(runId)!.pendingSchedule = false;
+      const run = rows.get(runId)!;
+      run.pendingSchedule = false;
+      const terminalType = executionTerminals[runId];
+      if (terminalType) {
+        run.terminalEvents.push({
+          sequence: Math.max(0, ...run.terminalEvents.map((event) => event.sequence)) + 1,
+          type: terminalType,
+          visibility: "public",
+        });
+      }
     },
     executedRuns,
     run: (runId: string) => rows.get(runId)!,
   };
 }
+
+test("normalizes duplicate public terminals before reconciling active runs", async () => {
+  const fixture = cutoverFixture([
+    runningRun({
+      id: "duplicate-terminal",
+      streamMode: "durable_provisional",
+      terminalEvents: [
+        { sequence: 2, type: "run_failed", visibility: "public" },
+        { sequence: 5, type: "run_failed", visibility: "public" },
+      ],
+    }),
+  ]);
+
+  await reconcileAgentRuntimeCutover(fixture.store, fixture.executeRun);
+
+  assert.deepEqual(fixture.run("duplicate-terminal").terminalEvents, [
+    { sequence: 2, type: "run_failed", visibility: "internal" },
+    { sequence: 5, type: "run_failed", visibility: "public" },
+  ]);
+});
+
+test("archives a legacy terminal before a resumed run publishes its authoritative terminal", async () => {
+  const fixture = cutoverFixture([
+    runningRun({
+      id: "retry-failure",
+      terminalEvents: [{ sequence: 3, type: "run_failed", visibility: "public" }],
+    }),
+    runningRun({
+      id: "retry-success",
+      terminalEvents: [{ sequence: 7, type: "run_failed", visibility: "public" }],
+    }),
+  ], [], {
+    "retry-failure": "run_failed",
+    "retry-success": "run_completed",
+  });
+
+  await reconcileAgentRuntimeCutover(fixture.store, fixture.executeRun);
+
+  assert.deepEqual(
+    fixture.run("retry-failure").terminalEvents.filter((event) => event.visibility === "public"),
+    [{ sequence: 4, type: "run_failed", visibility: "public" }],
+  );
+  assert.deepEqual(
+    fixture.run("retry-success").terminalEvents.filter((event) => event.visibility === "public"),
+    [{ sequence: 8, type: "run_completed", visibility: "public" }],
+  );
+});
+
+test("cutover command closes its database dependency after success", async () => {
+  const fixture = cutoverFixture([]);
+  const output: string[] = [];
+  let closeCount = 0;
+
+  const result = await runAgentRuntimeCutoverCommand({
+    store: fixture.store,
+    executeRun: fixture.executeRun,
+    close: async () => { closeCount += 1; },
+    writeOutput: (line) => { output.push(line); },
+  });
+
+  assert.deepEqual(result, { completed: [], resumed: [] });
+  assert.deepEqual(output, ['{"completed":[],"resumed":[]}\n']);
+  assert.equal(closeCount, 1);
+});
+
+test("cutover command closes its database dependency after reconciliation failure", async () => {
+  let closeCount = 0;
+  const failure = new Error("fixture cutover failure");
+  const store: AgentRuntimeCutoverStore = {
+    async normalizePublicTerminalEvents() {},
+    async prepareMissingOpeningRuns() { return []; },
+    async listCandidateRunIds() { throw failure; },
+    async reconcileRun() { return "skipped"; },
+  };
+
+  await assert.rejects(
+    runAgentRuntimeCutoverCommand({
+      store,
+      executeRun: async () => {},
+      close: async () => { closeCount += 1; },
+      writeOutput: () => { throw new Error("failure path must not print success"); },
+    }),
+    failure,
+  );
+  assert.equal(closeCount, 1);
+});
+
+test("cutover command drains deferred completion work before output and close", async () => {
+  const fixture = cutoverFixture([]);
+  const order: string[] = [];
+
+  await runAgentRuntimeCutoverCommand({
+    store: fixture.store,
+    executeRun: fixture.executeRun,
+    drain: async () => { order.push("drain"); },
+    writeOutput: () => { order.push("output"); },
+    close: async () => { order.push("close"); },
+  });
+
+  assert.deepEqual(order, ["drain", "output", "close"]);
+});
 
 test("fences unfinished runs and resumes only uncommitted work", async () => {
   const fixture = cutoverFixture([
@@ -311,12 +460,12 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
     await database.update(interviewAgentRuns).set({
       status: "failed",
       exitReason: "aborted_streaming",
-      lastEventSequence: 1,
+      lastEventSequence: 2,
       completedAt: new Date(),
     }).where(eq(interviewAgentRuns.id, committedRun.id));
-    await database.insert(interviewAgentEvents).values({
+    await database.insert(interviewAgentEvents).values([1, 2].map((sequence) => ({
       runId: committedRun.id,
-      sequence: 1,
+      sequence,
       visibility: "public",
       type: "run_failed",
       payload: {
@@ -325,7 +474,7 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
         retryable: true,
         userMessage: "流式响应中断，请重试。",
       },
-    });
+    })));
 
     const unfinishedRun = await repository.createRun({
       interviewId: reconciliationInterviewId,
@@ -393,6 +542,22 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       (await cutover.listCandidateRunIds()).toSorted(),
       [committedRun.id, unfinishedRun.id, authoritativeRun.id].toSorted(),
     );
+    await cutover.normalizePublicTerminalEvents();
+    assert.deepEqual(
+      await database.select({
+        sequence: interviewAgentEvents.sequence,
+        visibility: interviewAgentEvents.visibility,
+      }).from(interviewAgentEvents)
+        .where(and(
+          eq(interviewAgentEvents.runId, committedRun.id),
+          inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+        ))
+        .orderBy(asc(interviewAgentEvents.sequence)),
+      [
+        { sequence: 1, visibility: "internal" },
+        { sequence: 2, visibility: "public" },
+      ],
+    );
     assert.equal(await cutover.reconcileRun(committedRun.id), "completed");
     assert.equal(await cutover.reconcileRun(unfinishedRun.id), "skipped");
     assert.equal(await cutover.reconcileRun(unfinishedRun.id), "skipped");
@@ -409,13 +574,21 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       streamMode: "durable_provisional",
       leaseGeneration: 1,
     });
-    const committedTerminal = await database.select({ type: interviewAgentEvents.type })
+    const committedTerminal = await database.select({
+      sequence: interviewAgentEvents.sequence,
+      type: interviewAgentEvents.type,
+      visibility: interviewAgentEvents.visibility,
+    })
       .from(interviewAgentEvents)
       .where(and(
         eq(interviewAgentEvents.runId, committedRun.id),
-        eq(interviewAgentEvents.type, "run_completed"),
-      ));
-    assert.equal(committedTerminal.length, 1);
+        inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+      ))
+      .orderBy(asc(interviewAgentEvents.sequence));
+    assert.deepEqual(committedTerminal, [
+      { sequence: 1, type: "run_failed", visibility: "internal" },
+      { sequence: 2, type: "run_completed", visibility: "public" },
+    ]);
 
     const [unfinished] = await database.select({
       status: interviewAgentRuns.status,
@@ -500,6 +673,85 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       await reconcileAgentRuntimeCutover(cutover, async () => {}),
       { completed: [], resumed: [] },
     );
+
+    const verifyLegacyRetryTerminal = async (
+      terminalExitReason: "completed" | "aborted_streaming",
+    ) => {
+      const retryInterviewId = await createInterview();
+      const retryRun = await repository.createRun({
+        interviewId: retryInterviewId,
+        idempotencyKey: `legacy-retry-${terminalExitReason}`,
+      });
+      await repository.saveRunTrigger(retryRun.id, {
+        mode: "opening",
+        instruction: "continue",
+      });
+      await database.update(interviewAgentRuns).set({
+        status: "failed",
+        streamMode: "non_streaming",
+        exitReason: "aborted_streaming",
+        lastEventSequence: 1,
+        completedAt: new Date(),
+      }).where(eq(interviewAgentRuns.id, retryRun.id));
+      await database.insert(interviewAgentEvents).values({
+        runId: retryRun.id,
+        sequence: 1,
+        visibility: "public",
+        type: "run_failed",
+        payload: {
+          runId: retryRun.id,
+          exitReason: "aborted_streaming",
+          retryable: true,
+          userMessage: "流式响应中断，请重试。",
+        },
+      });
+
+      const retryCutover = createDrizzleAgentRuntimeCutoverStore(database, {
+        interviewIds: [retryInterviewId],
+      });
+      assert.equal(await retryCutover.reconcileRun(retryRun.id), "resume");
+      const [archivedTerminal] = await database.select({
+        visibility: interviewAgentEvents.visibility,
+      }).from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, retryRun.id),
+        eq(interviewAgentEvents.sequence, 1),
+      ));
+      assert.equal(archivedTerminal.visibility, "internal");
+
+      const owner = `retry-worker-${terminalExitReason}`;
+      const claim = await repository.claimRun(retryRun.id, owner, new Date(), 60_000);
+      assert.equal(claim.claimed, true);
+      assert.ok(claim.run);
+      await repository.terminateRun(retryRun.id, {
+        exitReason: terminalExitReason,
+        ...(terminalExitReason === "completed"
+          ? {}
+          : { error: new Error("fixture retry failure") }),
+      }, {
+        owner,
+        generation: claim.run.leaseGeneration,
+      });
+
+      const terminals = await database.select({
+        sequence: interviewAgentEvents.sequence,
+        type: interviewAgentEvents.type,
+        visibility: interviewAgentEvents.visibility,
+      }).from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, retryRun.id),
+        inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+      )).orderBy(asc(interviewAgentEvents.sequence));
+      assert.deepEqual(terminals, [
+        { sequence: 1, type: "run_failed", visibility: "internal" },
+        {
+          sequence: 2,
+          type: terminalExitReason === "completed" ? "run_completed" : "run_failed",
+          visibility: "public",
+        },
+      ]);
+    };
+
+    await verifyLegacyRetryTerminal("aborted_streaming");
+    await verifyLegacyRetryTerminal("completed");
 
     const endingInterviewId = await createInterview();
     const endingRun = await repository.createRun({

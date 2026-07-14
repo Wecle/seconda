@@ -9,3 +9,7 @@ if (!connectionString) {
 
 const client = postgres(connectionString, { prepare: false });
 export const db = drizzle(client, { schema });
+
+export async function closeDatabaseConnection() {
+  await client.end({ timeout: 5 });
+}

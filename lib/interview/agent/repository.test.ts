@@ -157,6 +157,33 @@ test("replays only explicitly public events for SSE", async () => {
   assert.deepEqual(events.map((event) => event.type), ["reasoning_delta"]);
 });
 
+test("archives a stale public terminal before publishing a new terminal", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "terminal-retry" });
+  await repository.appendEvent(run.id, {
+    type: "run_failed",
+    visibility: "public",
+    payload: {
+      runId: run.id,
+      exitReason: "aborted_streaming",
+      retryable: true,
+      userMessage: "old failure",
+    },
+  });
+
+  await repository.terminateRun(run.id, { exitReason: "completed" });
+
+  const terminals = (await repository.listEvents(run.id, 0))
+    .filter((event) => event.type === "run_completed" || event.type === "run_failed");
+  assert.deepEqual(terminals.map((event) => ({
+    type: event.type,
+    visibility: event.visibility,
+  })), [
+    { type: "run_failed", visibility: "internal" },
+    { type: "run_completed", visibility: "public" },
+  ]);
+});
+
 test("materializes a complete stable envelope for in-memory events", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "envelope" });
