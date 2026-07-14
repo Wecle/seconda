@@ -52,3 +52,19 @@ test("retains only fixed protocol diagnostics from nested Agent stream failures"
   assert.equal(serialized.includes("candidate@example.com"), false);
   assert.equal(serialized.includes("resume and answer text"), false);
 });
+
+test("ignores protocol-shaped metadata without the Agent protocol error code", () => {
+  const error = Object.assign(new Error("ordinary failure"), {
+    code: "ORDINARY_FAILURE",
+    protocol: {
+      kind: "malformed_stream",
+      reason: "parallel_tool_input_start",
+      eventType: "tool-input-start",
+      stage: "tool_input_streaming",
+    },
+  });
+
+  const sanitized = sanitizeAIError(error);
+
+  assert.equal(sanitized.protocol, undefined);
+});
