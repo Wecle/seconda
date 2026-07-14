@@ -138,6 +138,7 @@ test("production DeepSeek Agent wiring sends a conversational required-tool requ
 
   assert.equal("response_format" in body, false);
   assert.deepEqual(body.thinking, { type: "disabled" });
+  assert.equal(body.parallel_tool_calls, false);
   assert.equal(Array.isArray(body.tools), true);
   assert.equal((body.tools as unknown[]).length, 1);
   assert.equal(body.tool_choice, "required");
@@ -503,13 +504,24 @@ test("rejects conflicting tool stream protocols instead of taking the last call"
     ...submitTool,
     { name: "get_coverage_state", description: "coverage" },
   ];
-  const cases: Array<{ name: string; streamParts: unknown[]; tools?: typeof activeTools }> = [
+  const cases: Array<{
+    name: string;
+    streamParts: unknown[];
+    tools?: typeof activeTools;
+    expectedProtocol?: unknown;
+  }> = [
     {
       name: "duplicate start",
       streamParts: [
         { type: "tool-input-start", id: "call-1", toolName: "submit_interview_turn" },
         { type: "tool-input-start", id: "call-1", toolName: "submit_interview_turn" },
       ],
+      expectedProtocol: {
+        kind: "malformed_stream",
+        reason: "duplicate_tool_input_start",
+        eventType: "tool-input-start",
+        stage: "tool_input_streaming",
+      },
     },
     {
       name: "multiple starts",
@@ -517,6 +529,12 @@ test("rejects conflicting tool stream protocols instead of taking the last call"
         { type: "tool-input-start", id: "call-1", toolName: "submit_interview_turn" },
         { type: "tool-input-start", id: "call-2", toolName: "submit_interview_turn" },
       ],
+      expectedProtocol: {
+        kind: "malformed_stream",
+        reason: "parallel_tool_input_start",
+        eventType: "tool-input-start",
+        stage: "tool_input_streaming",
+      },
     },
     {
       name: "public text after tool input start",
@@ -577,7 +595,13 @@ test("rejects conflicting tool stream protocols instead of taking the last call"
   ];
 
   for (const fixture of cases) {
-    await assertProtocolRejected(fixture.name, fixture.streamParts, fixture.tools ?? activeTools);
+    await assertProtocolRejected(
+      fixture.name,
+      fixture.streamParts,
+      fixture.tools ?? activeTools,
+      [],
+      fixture.expectedProtocol,
+    );
   }
 });
 
@@ -586,7 +610,13 @@ test("rejects an unknown tool input start before publishing its input", async ()
   await assertProtocolRejected("unknown start", [
     { type: "tool-input-start", id: "call-1", toolName: "finish_interview" },
     { type: "tool-input-delta", id: "call-1", delta: "{}" },
-  ], submitTool, events, { kind: "inactive_tool", toolName: "finish_interview" });
+  ], submitTool, events, {
+    kind: "inactive_tool",
+    toolName: "finish_interview",
+    reason: "inactive_tool_input_start",
+    eventType: "tool-input-start",
+    stage: "before_tool_input",
+  });
   assert.deepEqual(events, []);
 });
 

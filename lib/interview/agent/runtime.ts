@@ -1110,6 +1110,13 @@ function readProtocolKind(error: object | null) {
   return typeof kind === "string" ? kind : undefined;
 }
 
+function readProtocolReason(error: object | null) {
+  const protocol = (error as { protocol?: unknown } | null)?.protocol;
+  if (!protocol || typeof protocol !== "object") return undefined;
+  const reason = (protocol as { reason?: unknown }).reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
 function classifyAttemptFailure(error: unknown) {
   const value = error && typeof error === "object"
     ? error as { code?: unknown; cause?: unknown }
@@ -1135,15 +1142,21 @@ function isInjectedProcessCrash(error: unknown) {
 
 function repairInstruction(error: unknown) {
   const code = classifyAttemptFailure(error);
-  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code)}重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error)}重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
 }
 
-function repairGuidance(code: string) {
+function repairGuidance(code: string, error?: unknown) {
   if (code === "UNAUTHORIZED_TERM") {
     return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
   }
   if (code === "MULTIPLE_QUESTIONS" || code === "FINISH_ASKS_QUESTION") {
     return "ask/clarify 必须且只能包含一个疑问句，全文必须且只能出现一个 ? 或 ？；不得用‘另外’‘以及’‘并且’等连接词追加问题或子问题；finish 不得包含疑问句、? 或 ？。";
+  }
+  if (
+    code === "MODEL_STREAM_PROTOCOL_ERROR"
+    && readProtocolReason(findErrorByCode(error, code)) === "parallel_tool_input_start"
+  ) {
+    return "不得并行或在同一轮调用多个工具；只选择一个当前可用工具调用。";
   }
   if (
     code === "RESPONSE_BEFORE_AUTHORIZATION"

@@ -72,7 +72,7 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
             ...body,
             ...(input.responseMode === "structured"
               ? { response_format: { type: "json_object" } }
-              : {}),
+              : { parallel_tool_calls: false }),
             thinking: { type: "disabled" },
           }),
         }
