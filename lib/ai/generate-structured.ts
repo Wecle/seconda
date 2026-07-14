@@ -252,7 +252,11 @@ function createProductionGenerator() {
       return key;
     },
     invoke: async ({ candidate, schema, system, prompt, abortSignal, maxRetries, apiKey }) => {
-      const provider = createProviderModel({ ...candidate, apiKey: apiKey! });
+      const provider = createProviderModel({
+        ...candidate,
+        apiKey: apiKey!,
+        responseMode: "structured",
+      });
       const result = await generateText({
         model: provider.model,
         system: applyStructuredOutputInstructions(system, schema, provider.metadata),
@@ -264,7 +268,11 @@ function createProductionGenerator() {
       return result.output;
     },
     stream: ({ candidate, schema, system, prompt, abortSignal, maxRetries, apiKey, onError }) => {
-      const provider = createProviderModel({ ...candidate, apiKey: apiKey! });
+      const provider = createProviderModel({
+        ...candidate,
+        apiKey: apiKey!,
+        responseMode: "structured",
+      });
       return streamText({
         model: provider.model,
         system: applyStructuredOutputInstructions(system, schema, provider.metadata),

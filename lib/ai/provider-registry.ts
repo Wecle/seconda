@@ -22,10 +22,13 @@ export type ProviderModel = {
   metadata: ProviderAdapterMetadata;
 };
 
+export type ProviderResponseMode = "structured" | "conversational";
+
 type ProviderRegistryInput = {
   model: string;
   credentialTier: AIModelTier;
   apiKey: string;
+  responseMode: ProviderResponseMode;
   fetch?: typeof globalThis.fetch;
 };
 
@@ -67,7 +70,9 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
       ? {
           transformRequestBody: (body) => ({
             ...body,
-            response_format: { type: "json_object" },
+            ...(input.responseMode === "structured"
+              ? { response_format: { type: "json_object" } }
+              : {}),
             thinking: { type: "disabled" },
           }),
         }

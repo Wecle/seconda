@@ -44,7 +44,11 @@ async function main() {
       const keyName = candidate.credentialTier === "fast" ? "FAST_MODEL_API_KEY" : "QUALITY_MODEL_API_KEY";
       const apiKey = process.env[keyName]?.trim();
       if (!apiKey) throw new Error(`${keyName} must be configured`);
-      const provider = createProviderModel({ ...candidate, apiKey });
+      const provider = createProviderModel({
+        ...candidate,
+        apiKey,
+        responseMode: "structured",
+      });
       let previousOutput: string | undefined;
 
       for (let attempt = 0; attempt < 2; attempt += 1) {
