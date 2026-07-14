@@ -94,6 +94,11 @@ function cutoverFixture(
     async reconcileRun(runId) {
       const run = rows.get(runId)!;
       if (run.streamMode === "durable_provisional") {
+        if (run.pendingSchedule) {
+          for (const terminal of run.terminalEvents) {
+            if (terminal.visibility === "public") terminal.visibility = "internal";
+          }
+        }
         return run.pendingSchedule ? "resume" : "skipped";
       }
       run.streamMode = "durable_provisional";
@@ -240,6 +245,51 @@ test("cutover command drains deferred completion work before output and close", 
   });
 
   assert.deepEqual(order, ["drain", "output", "close"]);
+});
+
+test("cutover command preserves reconciliation and drain failures", async () => {
+  const primary = new Error("reconciliation failed");
+  const cleanup = new Error("drain failed");
+  const store: AgentRuntimeCutoverStore = {
+    async normalizePublicTerminalEvents() { throw primary; },
+    async prepareMissingOpeningRuns() { return []; },
+    async listCandidateRunIds() { return []; },
+    async reconcileRun() { return "skipped"; },
+  };
+
+  await assert.rejects(runAgentRuntimeCutoverCommand({
+    store,
+    executeRun: async () => {},
+    drain: async () => { throw cleanup; },
+    close: async () => {},
+  }), (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.cause, primary);
+    assert.deepEqual(error.errors, [primary, cleanup]);
+    return true;
+  });
+});
+
+test("cutover command preserves reconciliation and close failures", async () => {
+  const primary = new Error("reconciliation failed");
+  const cleanup = new Error("close failed");
+  const store: AgentRuntimeCutoverStore = {
+    async normalizePublicTerminalEvents() { throw primary; },
+    async prepareMissingOpeningRuns() { return []; },
+    async listCandidateRunIds() { return []; },
+    async reconcileRun() { return "skipped"; },
+  };
+
+  await assert.rejects(runAgentRuntimeCutoverCommand({
+    store,
+    executeRun: async () => {},
+    close: async () => { throw cleanup; },
+  }), (error) => {
+    assert.ok(error instanceof AggregateError);
+    assert.equal(error.cause, primary);
+    assert.deepEqual(error.errors, [primary, cleanup]);
+    return true;
+  });
 });
 
 test("fences unfinished runs and resumes only uncommitted work", async () => {
@@ -412,6 +462,56 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       await reconcileAgentRuntimeCutover(openingCutover, async () => {}),
       { completed: [], resumed: [] },
     );
+
+    const durableRetryInterviewId = await createInterview();
+    const durableRetryRepository = createDrizzleInterviewAgentRepository(database);
+    const durableRetryRun = await durableRetryRepository.createRun({
+      interviewId: durableRetryInterviewId,
+      idempotencyKey: "durable-retry-with-old-terminal",
+    });
+    await durableRetryRepository.saveRunTrigger(durableRetryRun.id, {
+      mode: "opening",
+      instruction: "continue durable retry",
+    });
+    await database.update(interviewAgentRuns).set({
+      lastEventSequence: 1,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    }).where(eq(interviewAgentRuns.id, durableRetryRun.id));
+    await database.insert(interviewAgentEvents).values({
+      runId: durableRetryRun.id,
+      sequence: 1,
+      visibility: "public",
+      type: "run_failed",
+      payload: {
+        runId: durableRetryRun.id,
+        exitReason: "aborted_streaming",
+        retryable: true,
+        userMessage: "old durable failure",
+      },
+    });
+    const durableRetryCutover = createDrizzleAgentRuntimeCutoverStore(database, {
+      interviewIds: [durableRetryInterviewId],
+    });
+    let terminalVisibilityBeforeExecute: string | null = null;
+    assert.deepEqual(
+      await reconcileAgentRuntimeCutover(durableRetryCutover, async (runId) => {
+        assert.equal(runId, durableRetryRun.id);
+        const [terminal] = await database.select({
+          visibility: interviewAgentEvents.visibility,
+        }).from(interviewAgentEvents).where(and(
+          eq(interviewAgentEvents.runId, runId),
+          eq(interviewAgentEvents.sequence, 1),
+        ));
+        terminalVisibilityBeforeExecute = terminal.visibility;
+        await database.update(interviewAgentRuns).set({
+          leaseOwner: "scheduled-durable-retry",
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        }).where(eq(interviewAgentRuns.id, runId));
+      }),
+      { completed: [], resumed: [durableRetryRun.id] },
+    );
+    assert.equal(terminalVisibilityBeforeExecute, "internal");
 
     const acceptedInterviewId = await createInterview();
     const [acceptedQuestion] = await database.insert(interviewQuestions).values({

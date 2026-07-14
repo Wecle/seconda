@@ -70,33 +70,33 @@ export function createDrizzleAgentRuntimeCutoverStore(
     : undefined;
   return {
     async normalizePublicTerminalEvents() {
-      await database.transaction(async (tx) => {
-        const duplicateRuns = await tx.select({
-          id: interviewAgentEvents.runId,
-        }).from(interviewAgentEvents)
-          .innerJoin(
-            interviewAgentRuns,
-            eq(interviewAgentRuns.id, interviewAgentEvents.runId),
-          )
-          .innerJoin(
-            interviews,
-            eq(interviews.id, interviewAgentRuns.interviewId),
-          )
-          .where(and(
-            eq(interviews.status, "active"),
-            interviewScope,
-            eq(interviewAgentEvents.visibility, "public"),
-            inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
-          ))
-          .groupBy(interviewAgentEvents.runId)
-          .having(sql`count(*) > 1`)
-          .orderBy(asc(interviewAgentEvents.runId));
+      const duplicateRuns = await database.select({
+        id: interviewAgentEvents.runId,
+      }).from(interviewAgentEvents)
+        .innerJoin(
+          interviewAgentRuns,
+          eq(interviewAgentRuns.id, interviewAgentEvents.runId),
+        )
+        .innerJoin(
+          interviews,
+          eq(interviews.id, interviewAgentRuns.interviewId),
+        )
+        .where(and(
+          eq(interviews.status, "active"),
+          interviewScope,
+          eq(interviewAgentEvents.visibility, "public"),
+          inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+        ))
+        .groupBy(interviewAgentEvents.runId)
+        .having(sql`count(*) > 1`)
+        .orderBy(asc(interviewAgentEvents.runId));
 
-        for (const run of duplicateRuns) {
+      for (const run of duplicateRuns) {
+        await database.transaction(async (tx) => {
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.id}))`);
           await normalizePublicTerminalEventsForRun(tx, run.id);
-        }
-      });
+        });
+      }
     },
 
     async prepareMissingOpeningRuns() {
@@ -320,9 +320,9 @@ export function createDrizzleAgentRuntimeCutoverStore(
           const leaseAvailable = !run.leaseOwner
             || !run.leaseExpiresAt
             || run.leaseExpiresAt.getTime() <= Date.now();
-          return run.status === "running" && leaseAvailable
-            ? "resume" as const
-            : "skipped" as const;
+          if (run.status !== "running" || !leaseAvailable) return "skipped" as const;
+          await archivePublicTerminalEventsForRun(tx, runId);
+          return "resume" as const;
         }
 
         const trigger = isAgentRunTrigger(run.trigger)
@@ -597,23 +597,47 @@ export async function runAgentRuntimeCutoverCommand(input: {
   close: () => Promise<void>;
   writeOutput?: (line: string) => void;
 }) {
+  let result: { completed: string[]; resumed: string[] } | undefined;
+  const failures: unknown[] = [];
   try {
-    let result: { completed: string[]; resumed: string[] };
     try {
       result = await reconcileAgentRuntimeCutover(
         input.store,
         input.executeRun,
       );
-    } finally {
-      await input.drain?.();
+    } catch (error) {
+      failures.push(error);
     }
-    (input.writeOutput ?? ((line) => { process.stdout.write(line); }))(
-      `${JSON.stringify(result)}\n`,
-    );
-    return result;
+    try {
+      await input.drain?.();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length === 0) {
+      try {
+        (input.writeOutput ?? ((line) => { process.stdout.write(line); }))(
+          `${JSON.stringify(result)}\n`,
+        );
+      } catch (error) {
+        failures.push(error);
+      }
+    }
   } finally {
-    await input.close();
+    try {
+      await input.close();
+    } catch (error) {
+      failures.push(error);
+    }
   }
+  if (failures.length === 1) throw failures[0];
+  if (failures.length > 1) {
+    throw new AggregateError(
+      failures,
+      "Agent runtime cutover failed with cleanup errors",
+      { cause: failures[0] },
+    );
+  }
+  return result!;
 }
 
 export function createDeferredTaskCollector() {
