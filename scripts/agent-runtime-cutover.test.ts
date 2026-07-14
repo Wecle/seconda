@@ -908,6 +908,273 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       leaseGeneration: 1,
     });
 
+    const closedInterviewId = await createInterview();
+    const closedRunningRun = await repository.createRun({
+      interviewId: closedInterviewId,
+      idempotencyKey: "closed-interview-running",
+    });
+    await database.insert(interviewAgentEvents).values({
+      runId: closedRunningRun.id,
+      sequence: 5,
+      visibility: "internal",
+      type: "checkpoint",
+      payload: { phase: "accepted" },
+    });
+    await database.update(interviewAgentRuns).set({
+      leaseOwner: "orphaned-worker",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      leaseGeneration: 3,
+      lastEventSequence: 1,
+    }).where(eq(interviewAgentRuns.id, closedRunningRun.id));
+
+    const closedFailedRun = await repository.createRun({
+      interviewId: closedInterviewId,
+      idempotencyKey: "closed-interview-failed-without-terminal",
+    });
+    await database.insert(interviewAgentEvents).values({
+      runId: closedFailedRun.id,
+      sequence: 4,
+      visibility: "internal",
+      type: "checkpoint",
+      payload: { phase: "acting" },
+    });
+    await database.update(interviewAgentRuns).set({
+      status: "failed",
+      phase: "acting",
+      exitReason: "provider_failed",
+      lastEventSequence: 2,
+      completedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, closedFailedRun.id));
+
+    const closedCommittedRun = await repository.createRun({
+      interviewId: closedInterviewId,
+      idempotencyKey: "closed-interview-committed-running",
+    });
+    await repository.appendMessage({
+      interviewId: closedInterviewId,
+      runId: closedCommittedRun.id,
+      role: "assistant",
+      kind: "question",
+      content: "已提交的问题。",
+    });
+    await database.update(interviewAgentRuns).set({
+      leaseOwner: "committed-old-worker",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      leaseGeneration: 7,
+    }).where(eq(interviewAgentRuns.id, closedCommittedRun.id));
+
+    const closedCompletedRun = await repository.createRun({
+      interviewId: closedInterviewId,
+      idempotencyKey: "closed-interview-completed-without-terminal",
+    });
+    await database.update(interviewAgentRuns).set({
+      status: "completed",
+      phase: "acting",
+      exitReason: "completed",
+      completedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, closedCompletedRun.id));
+
+    const closedDuplicateRun = await repository.createRun({
+      interviewId: closedInterviewId,
+      idempotencyKey: "closed-interview-duplicate-terminal",
+    });
+    await database.update(interviewAgentRuns).set({
+      status: "failed",
+      phase: "acting",
+      exitReason: "aborted_tools",
+      lastEventSequence: 2,
+      completedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, closedDuplicateRun.id));
+    await database.insert(interviewAgentEvents).values([1, 2].map((sequence) => ({
+      runId: closedDuplicateRun.id,
+      sequence,
+      visibility: "public",
+      type: "run_failed",
+      payload: {
+        runId: closedDuplicateRun.id,
+        exitReason: "aborted_tools",
+        retryable: false,
+        userMessage: "后台操作中断，请重试。",
+      },
+    })));
+    await database.update(interviews).set({
+      status: "completed",
+      completedAt: new Date(),
+    }).where(eq(interviews.id, closedInterviewId));
+
+    const closedCutover = createDrizzleAgentRuntimeCutoverStore(database, {
+      interviewIds: [closedInterviewId],
+    });
+    assert.ok((await closedCutover.listCandidateRunIds()).includes(closedRunningRun.id));
+    let closedExecutionCount = 0;
+    assert.deepEqual(
+      await reconcileAgentRuntimeCutover(closedCutover, async () => {
+        closedExecutionCount += 1;
+      }),
+      { completed: [], resumed: [] },
+    );
+    assert.equal(closedExecutionCount, 0);
+
+    const [closedRunning] = await database.select({
+      status: interviewAgentRuns.status,
+      phase: interviewAgentRuns.phase,
+      exitReason: interviewAgentRuns.exitReason,
+      streamMode: interviewAgentRuns.streamMode,
+      leaseOwner: interviewAgentRuns.leaseOwner,
+      leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+      leaseGeneration: interviewAgentRuns.leaseGeneration,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+      completedAt: interviewAgentRuns.completedAt,
+    }).from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, closedRunningRun.id));
+    assert.deepEqual({
+      ...closedRunning,
+      completedAt: Boolean(closedRunning.completedAt),
+    }, {
+      status: "failed",
+      phase: "acting",
+      exitReason: "aborted_tools",
+      streamMode: "durable_provisional",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      leaseGeneration: 4,
+      lastEventSequence: 6,
+      completedAt: true,
+    });
+    assert.deepEqual(
+      await database.select({
+        sequence: interviewAgentEvents.sequence,
+        type: interviewAgentEvents.type,
+        visibility: interviewAgentEvents.visibility,
+        payload: interviewAgentEvents.payload,
+      }).from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, closedRunningRun.id),
+        inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+      )),
+      [{
+        sequence: 6,
+        type: "run_failed",
+        visibility: "public",
+        payload: {
+          runId: closedRunningRun.id,
+          exitReason: "aborted_tools",
+          retryable: false,
+          userMessage: "面试流程已结束，本轮后台处理已终止。",
+        },
+      }],
+    );
+    const [closedCommitted] = await database.select({
+      status: interviewAgentRuns.status,
+      exitReason: interviewAgentRuns.exitReason,
+      leaseOwner: interviewAgentRuns.leaseOwner,
+      leaseGeneration: interviewAgentRuns.leaseGeneration,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+    }).from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, closedCommittedRun.id));
+    assert.deepEqual(closedCommitted, {
+      status: "completed",
+      exitReason: "completed",
+      leaseOwner: null,
+      leaseGeneration: 8,
+      lastEventSequence: 1,
+    });
+    assert.deepEqual(
+      await database.select({
+        sequence: interviewAgentEvents.sequence,
+        type: interviewAgentEvents.type,
+        visibility: interviewAgentEvents.visibility,
+      }).from(interviewAgentEvents).where(and(
+        eq(interviewAgentEvents.runId, closedCommittedRun.id),
+        inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+      )),
+      [{ sequence: 1, type: "run_completed", visibility: "public" }],
+    );
+
+    const repairedClosedTerminals = await database.select({
+      runId: interviewAgentEvents.runId,
+      sequence: interviewAgentEvents.sequence,
+      type: interviewAgentEvents.type,
+      visibility: interviewAgentEvents.visibility,
+    }).from(interviewAgentEvents).where(and(
+      inArray(interviewAgentEvents.runId, [
+        closedFailedRun.id,
+        closedCompletedRun.id,
+        closedDuplicateRun.id,
+      ]),
+      inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+    )).orderBy(asc(interviewAgentEvents.runId), asc(interviewAgentEvents.sequence));
+    assert.deepEqual(
+      repairedClosedTerminals.filter((event) => event.runId === closedFailedRun.id),
+      [{
+        runId: closedFailedRun.id,
+        sequence: 5,
+        type: "run_failed",
+        visibility: "public",
+      }],
+    );
+    const [closedFailedTerminal] = await database.select({
+      payload: interviewAgentEvents.payload,
+    }).from(interviewAgentEvents).where(and(
+      eq(interviewAgentEvents.runId, closedFailedRun.id),
+      eq(interviewAgentEvents.visibility, "public"),
+      eq(interviewAgentEvents.type, "run_failed"),
+    ));
+    assert.deepEqual(closedFailedTerminal.payload, {
+      runId: closedFailedRun.id,
+      exitReason: "provider_failed",
+      retryable: false,
+      userMessage: "模型服务暂时不可用，请稍后重试。",
+    });
+    assert.deepEqual(
+      repairedClosedTerminals.filter((event) => event.runId === closedCompletedRun.id),
+      [{
+        runId: closedCompletedRun.id,
+        sequence: 1,
+        type: "run_completed",
+        visibility: "public",
+      }],
+    );
+    assert.deepEqual(
+      repairedClosedTerminals.filter((event) => event.runId === closedDuplicateRun.id),
+      [
+        {
+          runId: closedDuplicateRun.id,
+          sequence: 1,
+          type: "run_failed",
+          visibility: "internal",
+        },
+        {
+          runId: closedDuplicateRun.id,
+          sequence: 2,
+          type: "run_failed",
+          visibility: "public",
+        },
+      ],
+    );
+    const repairedSequenceRows = await database.select({
+      id: interviewAgentRuns.id,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+    }).from(interviewAgentRuns).where(inArray(interviewAgentRuns.id, [
+      closedFailedRun.id,
+      closedCompletedRun.id,
+      closedDuplicateRun.id,
+    ]));
+    assert.deepEqual(
+      Object.fromEntries(repairedSequenceRows.map((row) => [row.id, row.lastEventSequence])),
+      {
+        [closedFailedRun.id]: 5,
+        [closedCompletedRun.id]: 1,
+        [closedDuplicateRun.id]: 2,
+      },
+    );
+    assert.deepEqual(
+      await reconcileAgentRuntimeCutover(closedCutover, async () => {
+        closedExecutionCount += 1;
+      }),
+      { completed: [], resumed: [] },
+    );
+    assert.equal(closedExecutionCount, 0);
+
     assert.equal(
       await database.$count(
         interviewMessages,
