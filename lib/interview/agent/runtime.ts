@@ -1046,9 +1046,16 @@ function classifyRepairCharge(
   const protocolError = findErrorByCode(error, "MODEL_STREAM_PROTOCOL_ERROR");
   const toolCallRequired = findErrorByCode(error, "MODEL_TOOL_CALL_REQUIRED");
   const invalidToolAction = findErrorByCode(error, "MODEL_TOOL_ACTION_INVALID");
-  if (provisionalAbort && !protocolError && !toolCallRequired && !invalidToolAction) return null;
+  const attemptFailure = findErrorInstance(error, AttemptFailure);
   if (
-    readErrorCode(error) === "UNKNOWN_TOOL"
+    provisionalAbort
+    && !protocolError
+    && !toolCallRequired
+    && !invalidToolAction
+    && !attemptFailure
+  ) return null;
+  if (
+    findErrorByCode(error, "UNKNOWN_TOOL")
     || readProtocolKind(protocolError) === "inactive_tool"
   ) return "unknown";
   if (
@@ -1057,11 +1064,25 @@ function classifyRepairCharge(
     || attempt?.responseStarted
   ) return "terminal";
   if (
-    error instanceof AttemptFailure
+    attemptFailure
     || protocolError
     || toolCallRequired
     || invalidToolAction
   ) return "invalid";
+  return null;
+}
+
+function findErrorInstance<T extends Error>(
+  error: unknown,
+  constructor: new (...args: never[]) => T,
+): T | null {
+  let current = error;
+  const seen = new Set<object>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (current instanceof constructor) return current;
+    current = (current as { cause?: unknown }).cause;
+  }
   return null;
 }
 
