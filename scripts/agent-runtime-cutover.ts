@@ -10,6 +10,7 @@ import {
   interviews,
 } from "../lib/db/schema";
 import {
+  agentExitReasonSchema,
   attemptDiscardedPayloadSchema,
   questionCategorySchema,
   responseDiscardedPayloadSchema,
@@ -70,31 +71,54 @@ export function createDrizzleAgentRuntimeCutoverStore(
     : undefined;
   return {
     async normalizePublicTerminalEvents() {
-      const duplicateRuns = await database.select({
-        id: interviewAgentEvents.runId,
-      }).from(interviewAgentEvents)
-        .innerJoin(
-          interviewAgentRuns,
-          eq(interviewAgentRuns.id, interviewAgentEvents.runId),
-        )
+      const anomalousRuns = await database.select({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+      }).from(interviewAgentRuns)
         .innerJoin(
           interviews,
           eq(interviews.id, interviewAgentRuns.interviewId),
         )
         .where(and(
-          eq(interviews.status, "active"),
           interviewScope,
-          eq(interviewAgentEvents.visibility, "public"),
-          inArray(interviewAgentEvents.type, ["run_completed", "run_failed"]),
+          sql`(
+            (
+              ${interviewAgentRuns.status} IN ('completed', 'failed')
+              AND NOT EXISTS (
+                SELECT 1 FROM ${interviewAgentEvents}
+                WHERE ${interviewAgentEvents.runId} = ${interviewAgentRuns.id}
+                  AND ${interviewAgentEvents.visibility} = 'public'
+                  AND ${interviewAgentEvents.type} IN ('run_completed', 'run_failed')
+              )
+            )
+            OR (
+              SELECT count(*) FROM ${interviewAgentEvents}
+              WHERE ${interviewAgentEvents.runId} = ${interviewAgentRuns.id}
+                AND ${interviewAgentEvents.visibility} = 'public'
+                AND ${interviewAgentEvents.type} IN ('run_completed', 'run_failed')
+            ) > 1
+          )`,
         ))
-        .groupBy(interviewAgentEvents.runId)
-        .having(sql`count(*) > 1`)
-        .orderBy(asc(interviewAgentEvents.runId));
+        .orderBy(asc(interviewAgentRuns.createdAt), asc(interviewAgentRuns.id));
 
-      for (const run of duplicateRuns) {
+      for (const run of anomalousRuns) {
         await database.transaction(async (tx) => {
+          await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.interviewId}))`);
           await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${run.id}))`);
-          await normalizePublicTerminalEventsForRun(tx, run.id);
+          await tx.execute(sql`SELECT id FROM interviews WHERE id = ${run.interviewId} FOR UPDATE`);
+          await tx.execute(sql`SELECT id FROM interview_agent_runs WHERE id = ${run.id} FOR UPDATE`);
+          const [current] = await tx.select({
+            id: interviewAgentRuns.id,
+            status: interviewAgentRuns.status,
+            exitReason: interviewAgentRuns.exitReason,
+            completedAt: interviewAgentRuns.completedAt,
+          }).from(interviewAgentRuns)
+            .where(and(
+              eq(interviewAgentRuns.id, run.id),
+              eq(interviewAgentRuns.interviewId, run.interviewId),
+            ))
+            .limit(1);
+          if (current) await ensureTerminalRunInvariant(tx, current);
         });
       }
     },
@@ -173,17 +197,34 @@ export function createDrizzleAgentRuntimeCutoverStore(
         .from(interviewAgentRuns)
         .innerJoin(interviews, eq(interviews.id, interviewAgentRuns.interviewId))
         .where(and(
-          eq(interviews.status, "active"),
           interviewScope,
           sql`(
-            ${interviewAgentRuns.streamMode} IS DISTINCT FROM 'durable_provisional'
-            OR (
-              ${interviewAgentRuns.streamMode} = 'durable_provisional'
-              AND ${interviewAgentRuns.status} = 'running'
+            (
+              ${interviews.status} = 'active'
               AND (
-                ${interviewAgentRuns.leaseOwner} IS NULL
-                OR ${interviewAgentRuns.leaseExpiresAt} IS NULL
-                OR ${interviewAgentRuns.leaseExpiresAt} <= NOW()
+                ${interviewAgentRuns.streamMode} IS DISTINCT FROM 'durable_provisional'
+                OR (
+                  ${interviewAgentRuns.streamMode} = 'durable_provisional'
+                  AND ${interviewAgentRuns.status} = 'running'
+                  AND (
+                    ${interviewAgentRuns.leaseOwner} IS NULL
+                    OR ${interviewAgentRuns.leaseExpiresAt} IS NULL
+                    OR ${interviewAgentRuns.leaseExpiresAt} <= NOW()
+                  )
+                )
+              )
+            )
+            OR (
+              ${interviews.status} <> 'active'
+              AND ${interviewAgentRuns.status} = 'running'
+            )
+            OR (
+              ${interviewAgentRuns.status} IN ('completed', 'failed')
+              AND NOT EXISTS (
+                SELECT 1 FROM ${interviewAgentEvents}
+                WHERE ${interviewAgentEvents.runId} = ${interviewAgentRuns.id}
+                  AND ${interviewAgentEvents.visibility} = 'public'
+                  AND ${interviewAgentEvents.type} IN ('run_completed', 'run_failed')
               )
             )
           )`,
@@ -208,6 +249,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
           interviewId: interviewAgentRuns.interviewId,
           interviewStatus: interviews.status,
           status: interviewAgentRuns.status,
+          completedAt: interviewAgentRuns.completedAt,
           leaseOwner: interviewAgentRuns.leaseOwner,
           leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
           exitReason: interviewAgentRuns.exitReason,
@@ -221,18 +263,13 @@ export function createDrizzleAgentRuntimeCutoverStore(
           extractedText: interviewResumeSnapshots.extractedText,
         }).from(interviewAgentRuns)
           .innerJoin(interviews, eq(interviews.id, interviewAgentRuns.interviewId))
-          .innerJoin(
+          .leftJoin(
             interviewResumeSnapshots,
             eq(interviewResumeSnapshots.interviewId, interviews.id),
           )
           .where(eq(interviewAgentRuns.id, runId))
           .limit(1);
-        if (
-          !run
-          || run.interviewStatus !== "active"
-        ) {
-          return "skipped" as const;
-        }
+        if (!run) return "skipped" as const;
 
         const [assistantMessage] = await tx.select({ id: interviewMessages.id })
           .from(interviewMessages)
@@ -241,8 +278,31 @@ export function createDrizzleAgentRuntimeCutoverStore(
             eq(interviewMessages.role, "assistant"),
           ))
           .limit(1);
+        const [committedMessageEvent] = await tx.select({ id: interviewAgentEvents.id })
+          .from(interviewAgentEvents)
+          .where(and(
+            eq(interviewAgentEvents.runId, runId),
+            eq(interviewAgentEvents.type, "message_committed"),
+          ))
+          .limit(1);
+        const hasCommittedAssistant = Boolean(assistantMessage || committedMessageEvent);
 
-        if (assistantMessage) {
+        if (run.interviewStatus !== "active") {
+          if (run.status === "running") {
+            if (hasCommittedAssistant) {
+              await completeCommittedClosedInterviewRun(tx, run);
+            } else {
+              await retireClosedInterviewRun(tx, run);
+            }
+          } else if (run.status === "completed" || run.status === "failed") {
+            await ensureTerminalRunInvariant(tx, run);
+          } else {
+            await normalizePublicTerminalEventsForRun(tx, run.id);
+          }
+          return "skipped" as const;
+        }
+
+        if (hasCommittedAssistant) {
           const terminalEvent = await normalizePublicTerminalEventsForRun(tx, runId);
           const appendTerminal = !terminalEvent;
           const [updated] = await tx.update(interviewAgentRuns).set({
@@ -300,6 +360,9 @@ export function createDrizzleAgentRuntimeCutoverStore(
           run.streamMode === "durable_provisional"
           && run.status !== "running"
         ) {
+          if (run.status === "completed" || run.status === "failed") {
+            await ensureTerminalRunInvariant(tx, run);
+          }
           return "skipped" as const;
         }
 
@@ -378,6 +441,197 @@ export function createDrizzleAgentRuntimeCutoverStore(
 }
 
 type Transaction = Parameters<Parameters<AgentDatabase["transaction"]>[0]>[0];
+
+const CLOSED_INTERVIEW_RUN_MESSAGE = "面试流程已结束，本轮后台处理已终止。";
+
+async function ensureTerminalRunInvariant(
+  tx: Transaction,
+  run: {
+    id: string;
+    status: string;
+    exitReason: string | null;
+    completedAt: Date | null;
+  },
+) {
+  const terminal = await normalizePublicTerminalEventsForRun(tx, run.id);
+  const maximumSequence = await maximumEventSequence(tx, run.id);
+  if (run.status !== "completed" && run.status !== "failed") {
+    await tx.update(interviewAgentRuns).set({
+      lastEventSequence: maximumSequence,
+      updatedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, run.id));
+    return;
+  }
+
+  const parsedExitReason = agentExitReasonSchema.safeParse(run.exitReason);
+  const exitReason = run.status === "completed"
+    ? "completed" as const
+    : parsedExitReason.success && parsedExitReason.data !== "completed"
+      ? parsedExitReason.data
+      : "aborted_tools" as const;
+  const type = run.status === "completed" ? "run_completed" as const : "run_failed" as const;
+  const payload = terminalRunPayloadSchema.parse({
+    runId: run.id,
+    exitReason,
+    retryable: exitReason === "aborted_streaming",
+    userMessage: agentExitMessage(exitReason),
+  });
+
+  if (terminal) {
+    await tx.update(interviewAgentEvents).set({
+      visibility: "public",
+      type,
+      attemptId: null,
+      logicalMessageId: null,
+      payload,
+    }).where(eq(interviewAgentEvents.id, terminal.id));
+    await tx.update(interviewAgentRuns).set({
+      exitReason,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      nextResumeAt: null,
+      completedAt: run.completedAt ?? new Date(),
+      lastEventSequence: maximumSequence,
+      updatedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, run.id));
+    return;
+  }
+
+  const sequence = maximumSequence + 1;
+  await tx.update(interviewAgentRuns).set({
+    exitReason,
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    nextResumeAt: null,
+    completedAt: run.completedAt ?? new Date(),
+    lastEventSequence: sequence,
+    updatedAt: new Date(),
+  }).where(eq(interviewAgentRuns.id, run.id));
+  await tx.insert(interviewAgentEvents).values({
+    runId: run.id,
+    sequence,
+    visibility: "public",
+    type,
+    payload,
+  });
+  await notifyPublicEvent(tx, run.id, sequence);
+}
+
+async function retireClosedInterviewRun(
+  tx: Transaction,
+  run: {
+    id: string;
+    interviewId: string;
+    attemptId: string | null;
+    provisionalMessageId: string | null;
+  },
+) {
+  const discardEvent = await buildDiscardEvent(tx, run);
+  await archivePublicTerminalEventsForRun(tx, run.id);
+  const maximumSequence = await maximumEventSequence(tx, run.id);
+  const appendedEvents = [
+    ...(discardEvent ? [discardEvent] : []),
+    {
+      type: "run_failed" as const,
+      payload: terminalRunPayloadSchema.parse({
+        runId: run.id,
+        exitReason: "aborted_tools",
+        retryable: false,
+        userMessage: CLOSED_INTERVIEW_RUN_MESSAGE,
+      }),
+    },
+  ];
+  const finalSequence = maximumSequence + appendedEvents.length;
+  const [updated] = await tx.update(interviewAgentRuns).set({
+    status: "failed",
+    phase: "acting",
+    exitReason: "aborted_tools",
+    streamMode: "durable_provisional",
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    leaseGeneration: sql`${interviewAgentRuns.leaseGeneration} + 1`,
+    attemptId: null,
+    provisionalMessageId: null,
+    lastProviderProgressAt: null,
+    checkpointJson: null,
+    authorizedProposalJson: null,
+    authorizedProposalHash: null,
+    proposalAuthorizedAt: null,
+    responseStartedAt: null,
+    errorJson: null,
+    nextResumeAt: null,
+    completedAt: new Date(),
+    lastEventSequence: finalSequence,
+    updatedAt: new Date(),
+  }).where(closedInterviewRunFence(run.id, run.interviewId))
+    .returning({ id: interviewAgentRuns.id });
+  if (!updated) return;
+
+  for (const [index, event] of appendedEvents.entries()) {
+    const sequence = maximumSequence + index + 1;
+    const isDiscard = event.type === "attempt_discarded"
+      || event.type === "response_discarded";
+    await tx.insert(interviewAgentEvents).values({
+      runId: run.id,
+      sequence,
+      visibility: "public",
+      attemptId: isDiscard ? run.attemptId : null,
+      logicalMessageId: isDiscard ? run.provisionalMessageId : null,
+      type: event.type,
+      payload: event.payload,
+    });
+  }
+  await notifyPublicEvent(tx, run.id, finalSequence);
+}
+
+async function completeCommittedClosedInterviewRun(
+  tx: Transaction,
+  run: {
+    id: string;
+    interviewId: string;
+  },
+) {
+  const maximumSequence = await maximumEventSequence(tx, run.id);
+  const completedAt = new Date();
+  const [updated] = await tx.update(interviewAgentRuns).set({
+    status: "completed",
+    phase: "acting",
+    exitReason: "completed",
+    streamMode: "durable_provisional",
+    leaseOwner: null,
+    leaseExpiresAt: null,
+    leaseGeneration: sql`${interviewAgentRuns.leaseGeneration} + 1`,
+    attemptId: null,
+    provisionalMessageId: null,
+    lastProviderProgressAt: null,
+    checkpointJson: null,
+    authorizedProposalJson: null,
+    authorizedProposalHash: null,
+    proposalAuthorizedAt: null,
+    responseStartedAt: null,
+    errorJson: null,
+    nextResumeAt: null,
+    completedAt,
+    lastEventSequence: maximumSequence,
+    updatedAt: completedAt,
+  }).where(closedInterviewRunFence(run.id, run.interviewId))
+    .returning({ id: interviewAgentRuns.id });
+  if (!updated) return;
+  await ensureTerminalRunInvariant(tx, {
+    id: run.id,
+    status: "completed",
+    exitReason: "completed",
+    completedAt,
+  });
+}
+
+async function maximumEventSequence(tx: Transaction, runId: string) {
+  const [row] = await tx.select({
+    value: sql<number>`coalesce(max(${interviewAgentEvents.sequence}), 0)`,
+  }).from(interviewAgentEvents)
+    .where(eq(interviewAgentEvents.runId, runId));
+  return Number(row?.value ?? 0);
+}
 
 async function retireSupersededRun(
   tx: Transaction,
@@ -507,6 +761,19 @@ function activeCutoverRunFence(runId: string, interviewId: string) {
       SELECT 1 FROM ${interviews}
       WHERE ${interviews.id} = ${interviewId}
         AND ${interviews.status} = 'active'
+    )`,
+  );
+}
+
+function closedInterviewRunFence(runId: string, interviewId: string) {
+  return and(
+    eq(interviewAgentRuns.id, runId),
+    eq(interviewAgentRuns.interviewId, interviewId),
+    eq(interviewAgentRuns.status, "running"),
+    sql`EXISTS (
+      SELECT 1 FROM ${interviews}
+      WHERE ${interviews.id} = ${interviewId}
+        AND ${interviews.status} <> 'active'
     )`,
   );
 }
