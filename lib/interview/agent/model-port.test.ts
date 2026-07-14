@@ -5,6 +5,7 @@ import {
   AGENT_SYSTEM_PROMPT,
   classifyInterviewAgentModelError,
   createProviderToolSet,
+  createStructuredInterviewAgentModelPort,
   createStreamingInterviewAgentModelPort,
   type AgentModelStreamEvent,
 } from "./model-port";
@@ -41,6 +42,92 @@ test("builds real AI SDK tools without execute handlers", () => {
   assert.deepEqual(Object.keys(tools), ["submit_interview_turn"]);
   assert.equal("inputSchema" in tools.submit_interview_turn, true);
   assert.equal("execute" in tools.submit_interview_turn, false);
+});
+
+test("production DeepSeek Agent wiring sends a conversational required-tool request", async () => {
+  const names = [
+    "AI_MODEL_FAST",
+    "AI_MODEL_FAST_FALLBACK",
+    "AI_MODEL_QUALITY",
+    "AI_MODEL_QUALITY_FALLBACK",
+    "AI_APPROVED_MODELS",
+    "FAST_MODEL_API_KEY",
+    "QUALITY_MODEL_API_KEY",
+  ] as const;
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  let body: Record<string, unknown> = {};
+
+  Object.assign(process.env, {
+    AI_MODEL_FAST: "deepseek/deepseek-chat",
+    AI_MODEL_QUALITY: "openai/gpt-5-mini",
+    AI_APPROVED_MODELS: "deepseek/deepseek-chat,openai/gpt-5-mini",
+    FAST_MODEL_API_KEY: "fast-sentinel",
+    QUALITY_MODEL_API_KEY: "quality-sentinel",
+  });
+  delete process.env.AI_MODEL_FAST_FALLBACK;
+  delete process.env.AI_MODEL_QUALITY_FALLBACK;
+
+  try {
+    const port = createStructuredInterviewAgentModelPort({
+      fetch: async (_input, init) => {
+        body = JSON.parse(String(init?.body));
+        const toolArguments = JSON.stringify(openingProposal);
+        const toolChunk = JSON.stringify({
+          id: "fixture",
+          created: 0,
+          model: "deepseek-chat",
+          choices: [{
+            index: 0,
+            delta: {
+              role: "assistant",
+              tool_calls: [{
+                index: 0,
+                id: "call-provider-boundary",
+                function: {
+                  name: "submit_interview_turn",
+                  arguments: toolArguments,
+                },
+              }],
+            },
+            finish_reason: null,
+          }],
+        });
+        const finishChunk = JSON.stringify({
+          id: "fixture",
+          created: 0,
+          model: "deepseek-chat",
+          choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        });
+        return new Response(
+          `data: ${toolChunk}\n\ndata: ${finishChunk}\n\ndata: [DONE]\n\n`,
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      },
+    });
+
+    const result = await port.nextStepStream!({
+      runId: "run-provider-boundary",
+      messages: [],
+      tools: submitTool,
+      signal: new AbortController().signal,
+      onProviderProgress: async () => {},
+      onStreamEvent: async () => false,
+    });
+    assert.equal(result.step.type, "tool_call");
+  } finally {
+    for (const name of names) {
+      const value = saved[name];
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+
+  assert.equal("response_format" in body, false);
+  assert.deepEqual(body.thinking, { type: "disabled" });
+  assert.equal(Array.isArray(body.tools), true);
+  assert.equal((body.tools as unknown[]).length, 1);
+  assert.equal(body.tool_choice, "required");
 });
 
 test("streams public text and growing partial terminal input across chunk boundaries", async () => {

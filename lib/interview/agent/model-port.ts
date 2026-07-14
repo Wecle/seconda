@@ -314,6 +314,7 @@ export function createStreamingInterviewAgentModelPort(options: {
 
 export function createStructuredInterviewAgentModelPort(options?: {
   onUsage?: (input: { runId: string; usage: NormalizedModelUsage }) => Promise<void>;
+  fetch?: typeof globalThis.fetch;
 }): InterviewAgentModelPort {
   const policy = loadModelPolicy(process.env);
   const { candidates } = resolveModelCandidates("interview.agent", policy);
@@ -329,7 +330,7 @@ export function createStructuredInterviewAgentModelPort(options?: {
     async streamCandidate(input) {
       const candidate = candidates.find((item) => item.model === input.model);
       if (!candidate) throw new Error(`Unknown Agent model candidate: ${input.model}`);
-      return createProviderAgentStream(candidate, input);
+      return createProviderAgentStream(candidate, input, options?.fetch);
     },
   });
 }
@@ -348,6 +349,7 @@ function createProviderAgentStream(
     tools: readonly AgentToolDescriptor[];
     signal: AbortSignal;
   },
+  providerFetch?: typeof globalThis.fetch,
 ) {
   const keyName = candidate.credentialTier === "fast"
     ? "FAST_MODEL_API_KEY"
@@ -358,6 +360,7 @@ function createProviderAgentStream(
     ...candidate,
     apiKey,
     responseMode: "conversational",
+    fetch: providerFetch,
   });
   const result = streamText({
     model: provider.model,
