@@ -268,18 +268,18 @@ function findUnauthorizedTerm(
   allowTrailingGroundingPrefix: boolean,
 ): string | null {
   const normalizedAllowedTerms = allowedTerms.map(normalizeGroundingTerm);
-  const allowedNumbers = allowedTerms
-    .flatMap((term) => term.match(/\d+(?:[.,]\d+)?/gu) ?? [])
-    .map(normalizeNumber);
+  const allowedNumbers = collectAllowedNumbers(allowedTerms);
   const allowedNumberSet = new Set(allowedNumbers);
-  const numbers = text.matchAll(/\d+(?:[.,]\d+)?/gu);
+  const normalizedText = text.normalize("NFKC");
+  const numbers = normalizedText.matchAll(/\d+(?:[.,]\d+)?/gu);
   for (const match of numbers) {
     const number = match[0];
     if (!allowedNumberSet.has(normalizeNumber(number))) {
+      const trailingPrefix = trailingNumberPrefix(normalizedText, match.index, number);
       if (
         allowTrailingGroundingPrefix
-        && isTrailingToken(text, match.index, number)
-        && isStrictPrefixOfAllowedNumber(number, allowedTerms)
+        && trailingPrefix
+        && isStrictPrefixOfAllowedNumber(trailingPrefix, allowedNumbers)
       ) continue;
       return number;
     }
@@ -344,26 +344,40 @@ function isStrongEntitySignal(term: string): boolean {
 }
 
 function normalizeNumber(value: string): string {
-  return value.replace(",", ".");
+  return value.normalize("NFKC").replace(",", ".");
 }
 
 function isTrailingToken(text: string, index: number, token: string): boolean {
   return index + token.length === text.length;
 }
 
+function collectAllowedNumbers(allowedTerms: readonly string[]): string[] {
+  return allowedTerms.flatMap((allowedTerm) => (
+    [...allowedTerm.normalize("NFKC").matchAll(
+      /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)/gu,
+    )].map((match) => normalizeNumber(match[1]))
+  ));
+}
+
+function trailingNumberPrefix(
+  text: string,
+  index: number,
+  number: string,
+): string | null {
+  const end = index + number.length;
+  if (end === text.length) return number;
+  const remainder = text.slice(end);
+  return remainder === "." || remainder === "," ? `${number}${remainder}` : null;
+}
+
 function isStrictPrefixOfAllowedNumber(
   number: string,
-  allowedTerms: readonly string[],
+  allowedNumbers: readonly string[],
 ): boolean {
   const normalizedNumber = normalizeNumber(number);
-  return allowedTerms.some((allowedTerm) => (
-    [...allowedTerm.normalize("NFKC").matchAll(
-      /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)(?![\p{L}\p{N}])/gu,
-    )].some((match) => {
-      const allowedNumber = normalizeNumber(match[1]);
-      return allowedNumber.length > normalizedNumber.length
-        && allowedNumber.startsWith(normalizedNumber);
-    })
+  return allowedNumbers.some((allowedNumber) => (
+    allowedNumber.length > normalizedNumber.length
+    && allowedNumber.startsWith(normalizedNumber)
   ));
 }
 

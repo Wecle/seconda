@@ -89,6 +89,56 @@ test("keeps final grounding strict for incomplete token prefixes", () => {
   }
 });
 
+test("handles compact units, decimal chunks, and normalized numeric grounding", () => {
+  for (const input of [
+    { text: "恢复时间是 3", allowedTerms: ["30秒"] },
+    { text: "误差是 3.", allowedTerms: ["3.5%"] },
+    { text: "误差是 3,", allowedTerms: ["3,5%"] },
+    { text: "恢复时间是 3", allowedTerms: ["３０ 秒"] },
+  ]) {
+    assert.deepEqual(validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    }), { ok: true }, input.text);
+  }
+
+  assert.deepEqual(validateResponseProgress({
+    action: "ask",
+    language: "zh",
+    text: "误差是 3.5%",
+    allowedTerms: ["3.5%"],
+  }), { ok: true });
+  assert.deepEqual(validateFinalResponse({
+    action: "ask",
+    language: "zh",
+    text: "误差是 3.5%，原因是什么？",
+    allowedTerms: ["3.5%"],
+  }), { ok: true });
+  assert.deepEqual(validateFinalResponse({
+    action: "ask",
+    language: "zh",
+    text: "恢复时间是 30 秒，原因是什么？",
+    allowedTerms: ["３０ 秒"],
+  }), { ok: true });
+
+  for (const input of [
+    { text: "恢复时间是 3", allowedTerms: ["metric30"] },
+    { text: "误差是 3.", allowedTerms: ["30%"] },
+    { text: "误差是 3,", allowedTerms: ["30%"] },
+  ]) {
+    const result = validateResponseProgress({
+      action: "ask",
+      language: "zh",
+      text: input.text,
+      allowedTerms: input.allowedTerms,
+    });
+    assert.equal(result.ok, false, input.text);
+    if (!result.ok) assert.equal(result.code, "UNAUTHORIZED_TERM", input.text);
+  }
+});
+
 test("accepts one grounded question and rejects unsafe final text", () => {
   assert.deepEqual(validateFinalResponse({
     action: "ask",
