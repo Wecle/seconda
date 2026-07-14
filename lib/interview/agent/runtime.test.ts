@@ -257,11 +257,59 @@ function readToolScript(): StreamScript {
   };
 }
 
+function readToolScriptWith(options: {
+  callId: string;
+  args?: unknown;
+  afterStream?: () => never;
+}): StreamScript {
+  return async (input) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${attemptNumber}`,
+    });
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: options.callId,
+      toolName: "get_coverage_state",
+      inputText: JSON.stringify(options.args ?? {}),
+      partialInput: options.args ?? {},
+    });
+    options.afterStream?.();
+    return {
+      step: {
+        type: "tool_call",
+        callId: options.callId,
+        toolName: "get_coverage_state",
+        args: options.args ?? {},
+      },
+      attemptId,
+      provisionalMessageId: `message-${attemptNumber}`,
+    };
+  };
+}
+
+function planningProtocolFailure(callId: string): StreamScript {
+  return readToolScriptWith({
+    callId,
+    afterStream() {
+      throw Object.assign(new Error("read tool stream ended out of order"), {
+        code: "MODEL_STREAM_PROTOCOL_ERROR",
+      });
+    },
+  });
+}
+
 async function createRuntimeFixture(options?: {
   model?: InterviewAgentModelPort;
   initialState?: InterviewAgentState;
   tools?: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>;
   hooks?: readonly BeforeToolPipelineHook[];
+  progressHash?: () => string;
 }) {
   const repository = createInMemoryInterviewAgentRepository(options?.initialState ?? {
     interviewId: "interview",
@@ -293,7 +341,7 @@ async function createRuntimeFixture(options?: {
     initialMessages: [{ role: "user" as const, content: "开始面试" }],
     signal: new AbortController().signal,
     lease,
-    progressHash: () => "progress",
+    progressHash: options?.progressHash ?? (() => "progress"),
     turnContext: {
       mode: "opening" as const,
       answerCategory: null,
@@ -954,6 +1002,203 @@ test("publishes only sanitized read-tool lifecycle payloads", async () => {
   ]);
   assert.equal(JSON.stringify(lifecycle).includes("private-argument"), false);
   assert.equal(JSON.stringify(lifecycle).includes("private-result"), false);
+});
+
+test("keeps planning protocol repairs separate from three terminal attempts", async () => {
+  const invalid = openingProposal({
+    decision: {
+      action: "ask",
+      category: "technical_depth",
+      intent: "new_topic",
+      evidenceIds: ["resume:project"],
+      coverageTarget: "系统设计",
+      estimatedInformationGain: "high",
+    },
+  });
+  const fixture = await createRuntimeFixture({
+    initialState: {
+      interviewId: "interview",
+      candidateRoundCount: 3,
+      categoryCounts: { technical_depth: 3 },
+      recentQuestions: [],
+      requestedUserEnd: false,
+    },
+    model: scriptedModel([
+      planningProtocolFailure("read-protocol-failure"),
+      streamingTerminalScript({ proposal: invalid }),
+      streamingTerminalScript({ proposal: invalid }),
+      streamingTerminalScript({ proposal: invalid }),
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const persisted = await fixture.repository.getRun(fixture.run.id);
+  assert.equal(persisted?.checkpoint?.terminalAttemptCount, 3);
+  assert.equal(persisted?.checkpoint?.invalidModelActionCount, 1);
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "attempt_discarded").length,
+    4,
+  );
+});
+
+test("bounds repeated nonterminal provisional protocol failures", async () => {
+  const modelCalls: StreamScript[] = [1, 2, 3, 4].map((index) =>
+    planningProtocolFailure(`planning-protocol-${index}`));
+  const fixture = await createRuntimeFixture({ model: scriptedModel(modelCalls) });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const persisted = await fixture.repository.getRun(fixture.run.id);
+  assert.equal(persisted?.checkpoint?.terminalAttemptCount, 0);
+  assert.equal(persisted?.checkpoint?.invalidModelActionCount, 3);
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+    3,
+  );
+});
+
+test("a successful read resets the nonterminal repair budget", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      planningProtocolFailure("failure-before-read"),
+      readToolScriptWith({ callId: "successful-read", args: { sequence: 1 } }),
+      planningProtocolFailure("failure-after-read-1"),
+      planningProtocolFailure("failure-after-read-2"),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+});
+
+test("feeds loop warnings back into model context", async () => {
+  let terminalMessages: readonly { role: string; content: string }[] = [];
+  const terminal: StreamScript = async (input, callNumber) => {
+    terminalMessages = input.messages;
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      readToolScriptWith({ callId: "repeat-1" }),
+      readToolScriptWith({ callId: "repeat-2" }),
+      readToolScriptWith({ callId: "repeat-3" }),
+      terminal,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(terminalMessages.some((message) => (
+    message.role === "system"
+    && message.content.includes("检测到重复工具调用")
+  )), true);
+});
+
+test("breaks repeated read-tool loops with blocking_limit", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([1, 2, 3, 4, 5, 6].map((index) =>
+      readToolScriptWith({ callId: `no-progress-${index}`, args: { index } }))),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "blocking_limit");
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+    5,
+  );
+});
+
+test("does not block changing read-tool progress", async () => {
+  let progress = 0;
+  const fixture = await createRuntimeFixture({
+    progressHash: () => `progress-${progress}`,
+    model: scriptedModel([
+      ...[1, 2, 3, 4, 5].map((index) =>
+        readToolScriptWith({ callId: `progress-${index}`, args: { index } })),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+  const tools = new Map(fixture.runOptions.tools);
+  tools.set("get_coverage_state", {
+    ...readTool("get_coverage_state"),
+    async execute(input: unknown) {
+      progress += 1;
+      return { progress, input };
+    },
+  });
+  fixture.runOptions.tools = tools;
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+});
+
+test("restores loop history after worker recovery", async () => {
+  let terminalMessages: readonly { role: string; content: string }[] = [];
+  const terminal: StreamScript = async (input, callNumber) => {
+    terminalMessages = input.messages;
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      readToolScriptWith({ callId: "recovery-repeat-1" }),
+      readToolScriptWith({ callId: "recovery-repeat-2" }),
+      readToolScriptWith({ callId: "recovery-repeat-3" }),
+      terminal,
+    ]),
+  });
+  let crashed = false;
+  const crashingRepository = new Proxy(fixture.repository, {
+    get(target, property, receiver) {
+      const original = Reflect.get(target, property, receiver);
+      if (typeof original !== "function") return original;
+      return async (...args: unknown[]) => {
+        const result = await original.apply(target, args);
+        const checkpoint = property === "saveCheckpoint"
+          ? args[1] as { loopDetector?: { history?: unknown[] } } | undefined
+          : undefined;
+        if (!crashed && checkpoint?.loopDetector?.history?.length === 2) {
+          crashed = true;
+          throw injectedCrash("after_tool_result");
+        }
+        return result;
+      };
+    },
+  });
+
+  await assert.rejects(runInterviewAgent({
+    ...fixture.runOptions,
+    repository: crashingRepository,
+    tools: runtimeTools(crashingRepository),
+  }), /injected crash/);
+  const claimed = await fixture.repository.claimRun(
+    fixture.run.id,
+    "loop-recovery-worker",
+    new Date(Date.now() + 120_000),
+    60_000,
+  );
+  assert.equal(claimed.claimed, true);
+
+  const result = await runInterviewAgent({
+    ...fixture.runOptions,
+    lease: {
+      owner: "loop-recovery-worker",
+      generation: claimed.run!.leaseGeneration,
+    },
+  });
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(terminalMessages.some((message) => (
+    message.role === "system"
+    && message.content.includes("检测到重复工具调用")
+  )), true);
 });
 
 test("treats response text before a complete prefix as a protocol failure", async () => {

@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import type { AgentLoopDetectorSnapshot } from "./contracts";
+
 export type ToolCallObservation = {
   toolName: string;
   args: unknown;
@@ -36,17 +38,33 @@ export class AgentLoopDetector {
   private readonly unknownToolCount = new Map<string, number>();
   private previousProgressHash: string | undefined;
   private noProgressCount = 0;
-  private phaseKey: string | undefined;
+  private phaseKeyHash: string | undefined;
+
+  constructor(snapshot?: AgentLoopDetectorSnapshot) {
+    if (!snapshot) return;
+    this.history.push(...snapshot.history);
+    for (const item of snapshot.perToolCounts) {
+      this.perToolCount.set(item.toolName, item.count);
+    }
+    for (const item of snapshot.unknownToolCounts) {
+      this.unknownToolCount.set(item.toolName, item.count);
+    }
+    this.previousProgressHash = snapshot.previousProgressHash ?? undefined;
+    this.noProgressCount = snapshot.noProgressCount;
+    this.phaseKeyHash = snapshot.phaseKeyHash ?? undefined;
+  }
 
   record(observation: ToolCallObservation): LoopDecision {
-    const phaseKey = `${observation.phase ?? "planning"}:${observation.phaseProgressId ?? "default"}`;
-    if (this.phaseKey !== undefined && this.phaseKey !== phaseKey) {
+    const phaseKeyHash = stableHash(
+      `${observation.phase ?? "planning"}:${observation.phaseProgressId ?? "default"}`,
+    );
+    if (this.phaseKeyHash !== undefined && this.phaseKeyHash !== phaseKeyHash) {
       this.history.length = 0;
       this.unknownToolCount.clear();
       this.previousProgressHash = undefined;
       this.noProgressCount = 0;
     }
-    this.phaseKey = phaseKey;
+    this.phaseKeyHash = phaseKeyHash;
     const callHash = stableHash({
       toolName: observation.toolName,
       args: observation.args,
@@ -60,10 +78,11 @@ export class AgentLoopDetector {
     const toolCount = (this.perToolCount.get(observation.toolName) ?? 0) + 1;
     this.perToolCount.set(observation.toolName, toolCount);
 
-    if (this.previousProgressHash === observation.progressHash) {
+    const progressHash = stableHash(observation.progressHash);
+    if (this.previousProgressHash === progressHash) {
       this.noProgressCount += 1;
     } else {
-      this.previousProgressHash = observation.progressHash;
+      this.previousProgressHash = progressHash;
       this.noProgressCount = 1;
     }
 
@@ -96,6 +115,24 @@ export class AgentLoopDetector {
 
     return { level: "continue" };
   }
+
+  snapshot(): AgentLoopDetectorSnapshot {
+    return {
+      version: 1,
+      history: this.history.map((item) => ({ ...item })),
+      perToolCounts: mapCounts(this.perToolCount),
+      unknownToolCounts: mapCounts(this.unknownToolCount),
+      previousProgressHash: this.previousProgressHash ?? null,
+      noProgressCount: this.noProgressCount,
+      phaseKeyHash: this.phaseKeyHash ?? null,
+    };
+  }
+}
+
+function mapCounts(counts: ReadonlyMap<string, number>) {
+  return [...counts]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([toolName, count]) => ({ toolName, count }));
 }
 
 function warningDecision(warningNumber: 1 | 2): LoopDecision {

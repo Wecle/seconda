@@ -156,6 +156,25 @@ export const agentModelStepSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
+const loopDetectorCountSchema = z.object({
+  toolName: z.string().min(1).max(100),
+  count: z.number().int().min(1),
+}).strict();
+
+export const agentLoopDetectorSnapshotSchema = z.object({
+  version: z.literal(1),
+  history: z.array(z.object({
+    toolName: z.string().min(1).max(100),
+    callHash: z.string().length(64),
+    resultHash: z.string().length(64),
+  }).strict()).max(30),
+  perToolCounts: z.array(loopDetectorCountSchema).max(30),
+  unknownToolCounts: z.array(loopDetectorCountSchema).max(30),
+  previousProgressHash: z.string().length(64).nullable(),
+  noProgressCount: z.number().int().min(0),
+  phaseKeyHash: z.string().length(64).nullable(),
+}).strict();
+
 export const agentCheckpointSchema = z.object({
   turnCount: z.number().int().min(0),
   toolCallCount: z.number().int().min(0),
@@ -178,6 +197,7 @@ export const agentCheckpointSchema = z.object({
   phaseProgressId: z.string().optional(),
   modelCallCount: z.number().int().min(0).optional(),
   invalidModelActionCount: z.number().int().min(0).optional(),
+  loopDetector: agentLoopDetectorSnapshotSchema.optional(),
   runtimeMessages: z.array(z.object({
     role: z.enum(["system", "user", "assistant", "tool"]),
     content: z.string(),
@@ -454,6 +474,7 @@ export type CoverageStatus = z.infer<typeof coverageStatusSchema>;
 export type AnswerAssessment = z.infer<typeof answerAssessmentSchema>;
 export type InterviewDecision = z.infer<typeof interviewDecisionSchema>;
 export type AgentModelStep = z.infer<typeof agentModelStepSchema>;
+export type AgentLoopDetectorSnapshot = z.infer<typeof agentLoopDetectorSnapshotSchema>;
 export type AgentCheckpoint = z.infer<typeof agentCheckpointSchema>;
 export type TextDeltaPayload = z.infer<typeof textDeltaPayloadSchema>;
 export type CommittedInterviewMessage = z.infer<typeof committedInterviewMessageSchema>;
