@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { interviewTurnProposalSchema } from "./turn-proposal";
+import { z } from "zod";
+
+import {
+  interviewTurnProposalSchema,
+  RESPONSE_TEXT_SCHEMA_DESCRIPTION,
+} from "./turn-proposal";
 import {
   createAgentProviderStepSchema,
   createInterviewToolRegistry,
@@ -51,6 +56,21 @@ test("uses the complete interview turn proposal as terminal input", () => {
     ...terminalInput,
     extra: true,
   }).success, false);
+});
+
+test("exposes the candidate response contract in the provider JSON Schema", () => {
+  const schema = z.toJSONSchema(
+    interviewToolInputSchemas.submit_interview_turn,
+  ) as { properties?: { responseText?: { description?: string } } };
+
+  assert.equal(
+    schema.properties?.responseText?.description,
+    RESPONSE_TEXT_SCHEMA_DESCRIPTION,
+  );
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*只能包含一个疑问句.*一个.*[?？]/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得.*[?？]/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /开场.*简短问候.*岗位或方向.*自我介绍邀请/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /不得枚举或复述简历/);
 });
 
 test("provider schema accepts only active real tool calls", () => {

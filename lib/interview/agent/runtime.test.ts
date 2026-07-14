@@ -587,10 +587,18 @@ test("discards a visible response before repair", async () => {
   const valid = openingProposal({
     responseText: "请说明你如何设计回退机制？",
   });
+  let repairMessages: readonly { role: string; content: string }[] = [];
+  const repaired: StreamScript = async (input, callNumber) => {
+    repairMessages = input.messages;
+    return streamingTerminalScript({
+      proposal: valid,
+      chunks: ["请说明你如何", "设计回退机制？"],
+    })(input, callNumber);
+  };
   const fixture = await createRuntimeFixture({
     model: scriptedModel([
       streamingTerminalScript({ proposal: invalid, chunks: [invalid.responseText] }),
-      streamingTerminalScript({ proposal: valid, chunks: ["请说明你如何", "设计回退机制？"] }),
+      repaired,
     ]),
   });
   const result = await runInterviewAgent(fixture.runOptions);
@@ -600,6 +608,15 @@ test("discards a visible response before repair", async () => {
   const snapshot = fixture.repository.inspectInterview("interview");
   assert.equal(snapshot.messages.length, 1);
   assert.equal(snapshot.messages[0].content, valid.responseText);
+  const repairInstruction = repairMessages.findLast(
+    (message) => message.role === "system",
+  )?.content ?? "";
+  assert.match(repairInstruction, /只能包含一个疑问句/);
+  assert.match(repairInstruction, /只能出现一个.*[?？]/);
+  assert.match(repairInstruction, /另外.*以及.*并且/);
+  assert.match(repairInstruction, /不得.*子问题/);
+  assert.match(repairInstruction, /finish.*不得.*[?？]/);
+  assert.equal(repairInstruction.includes(invalid.responseText), false);
 });
 
 test("rejects sensitive public reasoning before the raw text is persisted", async () => {

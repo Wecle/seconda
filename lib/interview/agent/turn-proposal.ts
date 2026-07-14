@@ -43,8 +43,15 @@ export const turnProposalPrefixSchema = z.object({
   ]),
 }).strict();
 
+export const RESPONSE_TEXT_SCHEMA_DESCRIPTION =
+  "候选人可见回复，必须作为最后一个字段生成。decision.action 为 ask/clarify 时，必须且只能包含一个疑问句，全文必须且只能出现一个 ? 或 ？，不得用‘另外’‘以及’‘并且’等连接词追加问题或子问题；decision.action 为 finish 时不得包含疑问句、? 或 ？。开场必须简洁，只包含简短问候、推断的岗位或方向和一次自我介绍邀请，不得枚举或复述简历，不得展开子问题。";
+
 export const interviewTurnProposalSchema = turnProposalPrefixSchema.extend({
-  responseText: z.string().trim().min(1).max(2_000),
+  responseText: z.string()
+    .trim()
+    .min(1)
+    .max(2_000)
+    .describe(RESPONSE_TEXT_SCHEMA_DESCRIPTION),
 }).strict();
 
 export type TurnProposalPrefix = z.infer<typeof turnProposalPrefixSchema>;

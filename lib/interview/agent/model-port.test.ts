@@ -9,6 +9,7 @@ import {
   createStreamingInterviewAgentModelPort,
   type AgentModelStreamEvent,
 } from "./model-port";
+import { RESPONSE_TEXT_SCHEMA_DESCRIPTION } from "./turn-proposal";
 
 const submitTool = [{ name: "submit_interview_turn", description: "submit" }];
 const openingProposal = {
@@ -35,6 +36,11 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /公开.*进度/);
   assert.match(AGENT_SYSTEM_PROMPT, /隐藏.*推理/);
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
+  assert.match(AGENT_SYSTEM_PROMPT, /开场 responseText.*简短问候.*岗位或方向.*自我介绍邀请/);
+  assert.match(AGENT_SYSTEM_PROMPT, /不得枚举或复述简历/);
+  assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*只能包含一个疑问句.*一个.*[?？]/);
+  assert.match(AGENT_SYSTEM_PROMPT, /另外.*以及.*并且.*追加/);
+  assert.match(AGENT_SYSTEM_PROMPT, /finish.*不得.*[?？]/);
 });
 
 test("builds real AI SDK tools without execute handlers", () => {
@@ -128,6 +134,10 @@ test("production DeepSeek Agent wiring sends a conversational required-tool requ
   assert.equal(Array.isArray(body.tools), true);
   assert.equal((body.tools as unknown[]).length, 1);
   assert.equal(body.tool_choice, "required");
+  assert.equal(
+    JSON.stringify(body.tools).includes(RESPONSE_TEXT_SCHEMA_DESCRIPTION),
+    true,
+  );
 });
 
 test("streams public text and growing partial terminal input across chunk boundaries", async () => {
