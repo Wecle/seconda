@@ -565,7 +565,7 @@ test("rejects an unknown tool input start before publishing its input", async ()
   await assertProtocolRejected("unknown start", [
     { type: "tool-input-start", id: "call-1", toolName: "finish_interview" },
     { type: "tool-input-delta", id: "call-1", delta: "{}" },
-  ], submitTool, events);
+  ], submitTool, events, { kind: "inactive_tool", toolName: "finish_interview" });
   assert.deepEqual(events, []);
 });
 
@@ -766,6 +766,7 @@ async function assertProtocolRejected(
   streamParts: unknown[],
   tools: readonly { name: string; description: string }[],
   events: AgentModelStreamEvent[] = [],
+  expectedProtocol?: unknown,
 ) {
   const port = createStreamingInterviewAgentModelPort({
     candidates: [{ model: "fast" }],
@@ -782,6 +783,9 @@ async function assertProtocolRejected(
     onStreamEvent: async (event) => { events.push(event); return false; },
   }), (error: unknown) => {
     assert.equal((error as { code?: string }).code, "MODEL_STREAM_PROTOCOL_ERROR", name);
+    if (expectedProtocol) {
+      assert.deepEqual((error as { protocol?: unknown }).protocol, expectedProtocol);
+    }
     return true;
   });
 }

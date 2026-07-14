@@ -226,6 +226,42 @@ function crashAfterBoundary(
   });
 }
 
+function crashDuringRepair(
+  repository: ReturnType<typeof createInMemoryInterviewAgentRepository>,
+  boundary: "after_repair_checkpoint" | "after_discard_event",
+) {
+  let crashed = false;
+  return new Proxy(repository, {
+    get(target, property, receiver) {
+      const original = Reflect.get(target, property, receiver);
+      if (typeof original !== "function") return original;
+      return async (...args: unknown[]) => {
+        const result = await original.apply(target, args);
+        if (crashed) return result;
+        const checkpoint = property === "saveCheckpoint"
+          ? args[1] as { phase?: string; lastFailureAccounting?: unknown } | undefined
+          : undefined;
+        const event = property === "appendEvent"
+          ? args[1] as { type?: string } | undefined
+          : undefined;
+        const matched = (
+          boundary === "after_repair_checkpoint"
+          && checkpoint?.phase === "repairing"
+          && checkpoint.lastFailureAccounting
+        ) || (
+          boundary === "after_discard_event"
+          && (event?.type === "attempt_discarded" || event?.type === "response_discarded")
+        );
+        if (matched) {
+          crashed = true;
+          throw injectedCrash("after_tool_result");
+        }
+        return result;
+      };
+    },
+  });
+}
+
 function readToolScript(): StreamScript {
   return async (input) => {
     const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
@@ -302,6 +338,52 @@ function planningProtocolFailure(callId: string): StreamScript {
       });
     },
   });
+}
+
+function providerReadAbort(callId: string): StreamScript {
+  return readToolScriptWith({
+    callId,
+    afterStream() {
+      throw Object.assign(new Error("provider failed after provisional read", {
+        cause: Object.assign(new Error("connection reset"), { code: "ECONNRESET" }),
+      }), { code: "PROVISIONAL_STREAM_ABORTED" });
+    },
+  });
+}
+
+function failedModelAttempt(error: unknown): StreamScript {
+  return async (input) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId: `attempt-${attemptNumber}`,
+      attemptNumber,
+      provisionalMessageId: `message-${attemptNumber}`,
+    });
+    throw error;
+  };
+}
+
+function unknownToolAttempt(toolName: string): StreamScript {
+  return async (input) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${attemptNumber}`,
+    });
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: `unknown-${attemptNumber}`,
+      toolName,
+      inputText: "{}",
+      partialInput: {},
+    });
+    throw new Error("unreachable");
+  };
 }
 
 async function createRuntimeFixture(options?: {
@@ -831,7 +913,7 @@ test("returns a durable ack only when a stream callback writes a public event", 
   assert.equal(incompleteAcks[0], false);
 });
 
-test("durably acknowledges a short reasoning tail without publishing it before discard", async () => {
+test("discards a short reasoning tail when its provider stream aborts", async () => {
   let durableAck = false;
   const failedAfterReasoning: StreamScript = async (input) => {
     const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
@@ -851,16 +933,11 @@ test("durably acknowledges a short reasoning tail without publishing it before d
       code: "PROVISIONAL_STREAM_ABORTED",
     });
   };
-  const fixture = await createRuntimeFixture({
-    model: scriptedModel([
-      failedAfterReasoning,
-      streamingTerminalScript({ proposal: openingProposal() }),
-    ]),
-  });
+  const fixture = await createRuntimeFixture({ model: scriptedModel([failedAfterReasoning]) });
 
   const result = await runInterviewAgent(fixture.runOptions);
 
-  assert.equal(result.exitReason, "completed");
+  assert.equal(result.exitReason, "provider_failed");
   assert.equal(durableAck, true);
   const firstAttemptEvents = (await fixture.publicEvents()).filter(
     (event) => event.attemptId === "attempt-1",
@@ -869,8 +946,10 @@ test("durably acknowledges a short reasoning tail without publishing it before d
   assert.equal(types.includes("reasoning_started"), true);
   assert.equal(types.includes("reasoning_delta"), false);
   assert.equal(types.includes("attempt_discarded"), true);
-  const allTypes = (await fixture.publicEvents()).map((event) => event.type);
-  assert.ok(allTypes.indexOf("attempt_discarded") < allTypes.lastIndexOf("attempt_started"));
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+    1,
+  );
 });
 
 test("discards a pre-ack provider attempt before the model port retries", async () => {
@@ -1060,6 +1139,201 @@ test("bounds repeated nonterminal provisional protocol failures", async () => {
   );
 });
 
+test("bounds malformed model protocol actions without terminal budget charges", async () => {
+  const protocolError = Object.assign(new Error("malformed stream"), {
+    code: "MODEL_STREAM_PROTOCOL_ERROR",
+    protocol: { kind: "malformed_stream" },
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([1, 2, 3, 4].map(() => failedModelAttempt(protocolError))),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.invalidModelActionCount, 3);
+  assert.equal(checkpoint?.terminalAttemptCount, 0);
+});
+
+test("bounds inactive model tools with aborted_tools", async () => {
+  const inactiveTool = Object.assign(new Error("inactive tool"), {
+    code: "MODEL_STREAM_PROTOCOL_ERROR",
+    protocol: { kind: "inactive_tool", toolName: "finish_interview" },
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([1, 2, 3, 4].map(() => failedModelAttempt(inactiveTool))),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "aborted_tools");
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.unknownModelActionCount, 3);
+  assert.equal(checkpoint?.invalidModelActionCount, 0);
+});
+
+test("bounds unknown streamed tools with aborted_tools", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([1, 2, 3, 4].map(() => unknownToolAttempt("delete_database"))),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "aborted_tools");
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+    3,
+  );
+});
+
+test("fails provider network aborts after provisional reads without spending repair budgets", async () => {
+  const providerAbort = providerReadAbort("network-abort");
+  const fixture = await createRuntimeFixture({ model: scriptedModel([providerAbort]) });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "provider_failed");
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.terminalAttemptCount, 0);
+  assert.equal(checkpoint?.invalidModelActionCount, 0);
+  assert.equal(checkpoint?.unknownModelActionCount, 0);
+  assert.equal((await fixture.publicEvents()).some((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "ECONNRESET"
+  )), true);
+});
+
+for (const boundary of ["after_repair_checkpoint", "after_discard_event"] as const) {
+  test(`recovers provider abort ${boundary} without converting it to a model repair`, async () => {
+    const fixture = await createRuntimeFixture({
+      model: scriptedModel([providerReadAbort(`provider-crash-${boundary}`)]),
+    });
+    const crashingRepository = crashDuringRepair(fixture.repository, boundary);
+
+    await assert.rejects(runInterviewAgent({
+      ...fixture.runOptions,
+      repository: crashingRepository,
+      tools: runtimeTools(crashingRepository),
+    }), /injected crash/);
+    const claimed = await fixture.repository.claimRun(
+      fixture.run.id,
+      `provider-recovery-${boundary}`,
+      new Date(Date.now() + 120_000),
+      60_000,
+    );
+    assert.equal(claimed.claimed, true);
+
+    const result = await runInterviewAgent({
+      ...fixture.runOptions,
+      lease: {
+        owner: `provider-recovery-${boundary}`,
+        generation: claimed.run!.leaseGeneration,
+      },
+    });
+
+    assert.equal(result.exitReason, "provider_failed");
+    const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+    assert.equal(checkpoint?.terminalAttemptCount, 0);
+    assert.equal(checkpoint?.invalidModelActionCount, 0);
+    assert.equal(checkpoint?.unknownModelActionCount, 0);
+    assert.equal(
+      (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+      1,
+    );
+  });
+}
+
+test("treats provisional aborts caused by model protocol as bounded invalid actions", async () => {
+  const wrappedProtocol = () => Object.assign(new Error("provisional protocol abort", {
+    cause: Object.assign(new Error("malformed stream"), {
+      code: "MODEL_STREAM_PROTOCOL_ERROR",
+      protocol: { kind: "malformed_stream" },
+    }),
+  }), { code: "PROVISIONAL_STREAM_ABORTED" });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([1, 2, 3, 4].map(() => failedModelAttempt(wrappedProtocol()))),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal(
+    (await fixture.repository.getRun(fixture.run.id))?.checkpoint?.invalidModelActionCount,
+    3,
+  );
+});
+
+for (const repairCase of [
+  { kind: "planning" as const, expectedCounter: "invalidModelActionCount" as const },
+  { kind: "terminal" as const, expectedCounter: "terminalAttemptCount" as const },
+]) {
+  for (const boundary of ["after_repair_checkpoint", "after_discard_event"] as const) {
+    test(`recovers ${repairCase.kind} repair ${boundary} without refunding its budget`, async () => {
+      const invalidTerminal = openingProposal({
+        decision: {
+          action: "ask",
+          category: "technical_depth",
+          intent: "new_topic",
+          evidenceIds: ["resume:project"],
+          coverageTarget: "系统设计",
+          estimatedInformationGain: "high",
+        },
+      });
+      const scripts = repairCase.kind === "planning"
+        ? [1, 2, 3, 4].map((index) => planningProtocolFailure(`crash-planning-${index}`))
+        : [1, 2, 3, 4].map(() => streamingTerminalScript({ proposal: invalidTerminal }));
+      const fixture = await createRuntimeFixture({
+        ...(repairCase.kind === "terminal" ? {
+          initialState: {
+            interviewId: "interview",
+            candidateRoundCount: 3,
+            categoryCounts: { technical_depth: 3 },
+            recentQuestions: [],
+            requestedUserEnd: false,
+          },
+        } : {}),
+        model: scriptedModel(scripts),
+      });
+      const crashingRepository = crashDuringRepair(fixture.repository, boundary);
+
+      await assert.rejects(runInterviewAgent({
+        ...fixture.runOptions,
+        repository: crashingRepository,
+        tools: runtimeTools(crashingRepository),
+      }), /injected crash/);
+      const afterCrash = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+      assert.equal(afterCrash?.[repairCase.expectedCounter], 1);
+      assert.equal(afterCrash?.runtimeMessages?.some((message) => (
+        message.role === "system" && message.content.includes("上一 attempt 已丢弃")
+      )), true);
+
+      const claimed = await fixture.repository.claimRun(
+        fixture.run.id,
+        `repair-${repairCase.kind}-${boundary}`,
+        new Date(Date.now() + 120_000),
+        60_000,
+      );
+      assert.equal(claimed.claimed, true);
+      const result = await runInterviewAgent({
+        ...fixture.runOptions,
+        lease: {
+          owner: `repair-${repairCase.kind}-${boundary}`,
+          generation: claimed.run!.leaseGeneration,
+        },
+      });
+
+      assert.equal(result.exitReason, "terminal_action_failed");
+      const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+      assert.equal(checkpoint?.[repairCase.expectedCounter], 3);
+      assert.equal(
+        (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+        3,
+      );
+    });
+  }
+}
+
 test("a successful read resets the nonterminal repair budget", async () => {
   const fixture = await createRuntimeFixture({
     model: scriptedModel([
@@ -1115,10 +1389,10 @@ test("breaks repeated read-tool loops with blocking_limit", async () => {
   );
 });
 
-test("does not block changing read-tool progress", async () => {
-  let progress = 0;
+test("does not block distinct read results when domain progress is stable", async () => {
+  let resultVersion = 0;
   const fixture = await createRuntimeFixture({
-    progressHash: () => `progress-${progress}`,
+    progressHash: () => "stable-domain-version",
     model: scriptedModel([
       ...[1, 2, 3, 4, 5].map((index) =>
         readToolScriptWith({ callId: `progress-${index}`, args: { index } })),
@@ -1129,8 +1403,8 @@ test("does not block changing read-tool progress", async () => {
   tools.set("get_coverage_state", {
     ...readTool("get_coverage_state"),
     async execute(input: unknown) {
-      progress += 1;
-      return { progress, input };
+      resultVersion += 1;
+      return { resultVersion, input };
     },
   });
   fixture.runOptions.tools = tools;
@@ -1178,6 +1452,9 @@ test("restores loop history after worker recovery", async () => {
     repository: crashingRepository,
     tools: runtimeTools(crashingRepository),
   }), /injected crash/);
+  const crashedCheckpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(crashedCheckpoint?.turnCount, 2);
+  assert.equal(crashedCheckpoint?.invalidModelActionCount, 0);
   const claimed = await fixture.repository.claimRun(
     fixture.run.id,
     "loop-recovery-worker",
@@ -1302,6 +1579,11 @@ for (const boundary of [
     };
 
     await assert.rejects(runInterviewAgent(first), /injected crash/);
+    if (boundary === "after_tool_result") {
+      const crashedCheckpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+      assert.equal(crashedCheckpoint?.turnCount, 1);
+      assert.equal(crashedCheckpoint?.invalidModelActionCount, 0);
+    }
     const claimed = await fixture.repository.claimRun(
       fixture.run.id,
       "recovery-worker",

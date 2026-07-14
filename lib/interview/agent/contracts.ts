@@ -197,6 +197,11 @@ export const agentCheckpointSchema = z.object({
   phaseProgressId: z.string().optional(),
   modelCallCount: z.number().int().min(0).optional(),
   invalidModelActionCount: z.number().int().min(0).optional(),
+  unknownModelActionCount: z.number().int().min(0).optional(),
+  lastFailureAccounting: z.object({
+    attemptId: z.string().min(1),
+    kind: z.enum(["terminal", "invalid", "unknown", "provider"]),
+  }).strict().nullable().optional(),
   loopDetector: agentLoopDetectorSnapshotSchema.optional(),
   runtimeMessages: z.array(z.object({
     role: z.enum(["system", "user", "assistant", "tool"]),

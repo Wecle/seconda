@@ -46,7 +46,7 @@ import {
 } from "./turn-proposal";
 import type { InterviewSkill } from "./skills";
 import { renderSkillInstructions } from "./skills";
-import { AgentLoopDetector } from "./loop-detector";
+import { AgentLoopDetector, type LoopDecision } from "./loop-detector";
 import {
   MAX_INVALID_MODEL_ACTIONS,
   MAX_PLANNING_STEPS,
@@ -82,6 +82,8 @@ type AttemptState = {
   observedResponseText: string;
   responseTail: SafeTailBuffer;
 };
+
+type FailureAccountingKind = "terminal" | "invalid" | "unknown" | "provider";
 
 type RunOptions = {
   interviewId: string;
@@ -133,6 +135,8 @@ export async function runInterviewAgent(
   let modelCallCount = checkpoint?.modelCallCount ?? 0;
   let terminalAttemptCount = checkpoint?.terminalAttemptCount ?? 0;
   let invalidModelActionCount = checkpoint?.invalidModelActionCount ?? 0;
+  let unknownModelActionCount = checkpoint?.unknownModelActionCount ?? 0;
+  let lastFailureAccounting = checkpoint?.lastFailureAccounting ?? null;
   const loopDetector = new AgentLoopDetector(checkpoint?.loopDetector);
   const phaseProgressId = checkpoint?.phaseProgressId
     ?? context.answerMessageId
@@ -196,6 +200,8 @@ export async function runInterviewAgent(
       terminalAttemptCount,
       modelCallCount,
       invalidModelActionCount,
+      unknownModelActionCount,
+      lastFailureAccounting,
       phaseProgressId,
       loopDetector: loopDetector.snapshot(),
       runtimeMessages: messages,
@@ -459,7 +465,24 @@ export async function runInterviewAgent(
       options.lease,
     );
   } else {
-    await discardInterruptedAttemptForRecovery();
+    const recoveredFailure = await discardInterruptedAttemptForRecovery();
+    if (recoveredFailure === "provider_failed") {
+      return failRun(
+        options,
+        "provider_failed",
+        new Error("Recovered provider stream failure"),
+        planningStepCount,
+      );
+    }
+    const exhausted = exhaustedRepairExit();
+    if (exhausted) {
+      return failRun(
+        options,
+        exhausted,
+        new Error("Recovered attempt exhausted its repair budget"),
+        planningStepCount,
+      );
+    }
   }
 
   while (true) {
@@ -526,9 +549,19 @@ export async function runInterviewAgent(
       if (isTerminalTool(step.toolName)) {
         return await finishTerminalAttempt(step, selectedAttempt);
       }
-      await executeReadTool(step, selectedAttempt, availableTools);
+      const loopDecision = await executeReadTool(step, selectedAttempt, availableTools);
       invalidModelActionCount = 0;
+      unknownModelActionCount = 0;
+      lastFailureAccounting = null;
       planningStepCount += 1;
+      await options.repository.saveCheckpoint(
+        options.runId,
+        checkpointFor("reasoning"),
+        options.lease,
+      );
+      if (loopDecision.level === "break") {
+        throw new FatalRunFailure(loopDecision.reason, loopDecision.message);
+      }
       await selectedAttempt.reasoning.dispose();
       await selectedAttempt.response.discard();
       currentAttempt = null;
@@ -543,50 +576,39 @@ export async function runInterviewAgent(
         await discardAttempt(failedAttempt, error);
         return failRun(options, error.exitReason, error, planningStepCount);
       }
-      if (!isRepairableAttemptFailure(error, failedAttempt)) {
+      const repairKind = classifyRepairCharge(error, failedAttempt);
+      if (!repairKind) {
+        if (failedAttempt) {
+          recordFailureAccounting(failedAttempt.attemptId, "provider");
+          await options.repository.saveCheckpoint(
+            options.runId,
+            checkpointFor("repairing"),
+            options.lease,
+          );
+        }
+        await discardAttempt(failedAttempt, error);
         return failRun(options, "provider_failed", error, planningStepCount);
       }
-      const enteredTerminalStream = Boolean(
-        failedAttempt?.terminalSeen
-        || failedAttempt?.authorized
-        || failedAttempt?.responseStarted,
+      if (!failedAttempt) {
+        return failRun(options, "provider_failed", error, planningStepCount);
+      }
+      recordFailureAccounting(failedAttempt.attemptId, repairKind);
+      ensureRepairInstruction(error);
+      await options.repository.saveCheckpoint(
+        options.runId,
+        checkpointFor("repairing"),
+        options.lease,
       );
-      if (enteredTerminalStream) {
-        terminalAttemptCount += 1;
-      } else {
-        invalidModelActionCount += 1;
-      }
       await discardAttempt(failedAttempt, error);
-      if (enteredTerminalStream && terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
-        await options.repository.saveCheckpoint(
-          options.runId,
-          checkpointFor("repairing"),
-          options.lease,
-        );
+      const exhausted = exhaustedRepairExit();
+      if (exhausted) {
         return failRun(
           options,
-          "terminal_action_failed",
+          exhausted,
           error,
           planningStepCount,
         );
       }
-      if (!enteredTerminalStream && invalidModelActionCount >= MAX_INVALID_MODEL_ACTIONS) {
-        await options.repository.saveCheckpoint(
-          options.runId,
-          checkpointFor("repairing"),
-          options.lease,
-        );
-        return failRun(
-          options,
-          "terminal_action_failed",
-          error,
-          planningStepCount,
-        );
-      }
-      messages.push({
-        role: "system",
-        content: repairInstruction(error),
-      });
       currentAttempt = null;
     }
   }
@@ -595,7 +617,7 @@ export async function runInterviewAgent(
     step: Extract<AgentModelStep, { type: "tool_call" }>,
     attempt: AttemptState,
     availableTools: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>,
-  ) {
+  ): Promise<LoopDecision> {
     const definition = availableTools.get(step.toolName);
     const publicLabel = readToolLabel(step.toolName);
     if (!definition || !publicLabel) {
@@ -659,14 +681,7 @@ export async function runInterviewAgent(
       });
     }
     await appendPhase("reasoning", attempt);
-    await options.repository.saveCheckpoint(
-      options.runId,
-      checkpointFor("reasoning"),
-      options.lease,
-    );
-    if (loopDecision.level === "break") {
-      throw new FatalRunFailure(loopDecision.reason, loopDecision.message);
-    }
+    return loopDecision;
   }
 
   async function finishTerminalAttempt(
@@ -827,14 +842,14 @@ export async function runInterviewAgent(
     await attempt.reasoning.flush();
   }
 
-  async function discardInterruptedAttemptForRecovery() {
+  async function discardInterruptedAttemptForRecovery(): Promise<"provider_failed" | null> {
     const attemptId = persistedRun?.attemptId;
     const recoveredLogicalMessageId = persistedRun?.provisionalMessageId;
-    if (!attemptId || !recoveredLogicalMessageId) return;
+    if (!attemptId || !recoveredLogicalMessageId) return null;
     const attemptEvents = persistedEvents.filter((event) => event.attemptId === attemptId);
-    if (attemptEvents.some((event) => (
+    const alreadyDiscarded = attemptEvents.some((event) => (
       event.type === "attempt_discarded" || event.type === "response_discarded"
-    ))) return;
+    ));
     const hasResponse = attemptEvents.some((event) => event.type === "response_started");
     const hasProposal = attemptEvents.some((event) => event.type === "proposal_authorized");
     const completedReadTool = attemptEvents.some((event) => event.type === "tool_call_completed")
@@ -842,7 +857,32 @@ export async function runInterviewAgent(
       && checkpoint.runtimeMessages?.some((message) => message.role === "tool")
       && !hasProposal
       && !hasResponse;
-    if (completedReadTool) return;
+    if (completedReadTool) return null;
+
+    if (alreadyDiscarded) {
+      const discarded = attemptEvents.find((event) => (
+        event.type === "attempt_discarded" || event.type === "response_discarded"
+      ));
+      const discardedReason = discarded?.payload
+        && typeof discarded.payload === "object"
+        && typeof (discarded.payload as { reason?: unknown }).reason === "string"
+        ? (discarded.payload as { reason: string }).reason
+        : "WORKER_RECOVERY";
+      if (lastFailureAccounting?.attemptId !== attemptId) {
+        recordFailureAccounting(attemptId, hasProposal || hasResponse ? "terminal" : "invalid");
+      }
+      if (lastFailureAccounting?.kind !== "provider") {
+        ensureRepairInstruction(Object.assign(new Error("Recovered discarded attempt"), {
+          code: discardedReason,
+        }));
+      }
+      await options.repository.saveCheckpoint(
+        options.runId,
+        checkpointFor("repairing"),
+        options.lease,
+      );
+      return lastFailureAccounting?.kind === "provider" ? "provider_failed" : null;
+    }
 
     const identity = { attemptId, logicalMessageId: recoveredLogicalMessageId };
     if (hasResponse) {
@@ -860,18 +900,14 @@ export async function runInterviewAgent(
         reason: "WORKER_RECOVERY",
       }, identity, `attempt:${attemptId}:discarded`);
     }
-    if (hasProposal || hasResponse) {
-      terminalAttemptCount = Math.min(
-        MAX_TERMINAL_ATTEMPTS,
-        terminalAttemptCount + 1,
-      );
+    if ((hasProposal || hasResponse) && lastFailureAccounting?.attemptId !== attemptId) {
+      recordFailureAccounting(attemptId, "terminal");
     }
-    messages.push({
-      role: "system",
-      content: repairInstruction(Object.assign(new Error("Worker recovered an interrupted attempt"), {
+    if (lastFailureAccounting?.kind !== "provider") {
+      ensureRepairInstruction(Object.assign(new Error("Worker recovered an interrupted attempt"), {
         code: "WORKER_RECOVERY",
-      })),
-    });
+      }));
+    }
     await appendPublicEvent("phase_changed", {
       runId: options.runId,
       attemptId,
@@ -882,6 +918,30 @@ export async function runInterviewAgent(
       checkpointFor("repairing"),
       options.lease,
     );
+    return lastFailureAccounting?.kind === "provider" ? "provider_failed" : null;
+  }
+
+  function recordFailureAccounting(attemptId: string, kind: FailureAccountingKind) {
+    if (lastFailureAccounting?.attemptId === attemptId) return;
+    if (kind === "terminal") terminalAttemptCount += 1;
+    if (kind === "invalid") invalidModelActionCount += 1;
+    if (kind === "unknown") unknownModelActionCount += 1;
+    lastFailureAccounting = { attemptId, kind };
+  }
+
+  function ensureRepairInstruction(error: unknown) {
+    const content = repairInstruction(error);
+    if (messages.some((message) => message.role === "system" && message.content === content)) return;
+    messages.push({ role: "system", content });
+  }
+
+  function exhaustedRepairExit(): AgentExitReason | null {
+    if (unknownModelActionCount >= MAX_INVALID_MODEL_ACTIONS) return "aborted_tools";
+    if (
+      terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS
+      || invalidModelActionCount >= MAX_INVALID_MODEL_ACTIONS
+    ) return "terminal_action_failed";
+    return null;
   }
 }
 
@@ -977,20 +1037,49 @@ class FatalRunFailure extends Error {
   }
 }
 
-function isRepairableAttemptFailure(error: unknown, attempt: AttemptState | null) {
-  if (error instanceof FatalRunFailure) return false;
-  if (error instanceof AttemptFailure) return true;
+function classifyRepairCharge(
+  error: unknown,
+  attempt: AttemptState | null,
+): FailureAccountingKind | null {
+  if (error instanceof FatalRunFailure) return null;
+  const provisionalAbort = readErrorCode(error) === "PROVISIONAL_STREAM_ABORTED";
+  const protocolError = findErrorByCode(error, "MODEL_STREAM_PROTOCOL_ERROR");
+  if (provisionalAbort && !protocolError) return null;
   if (
-    error
-    && typeof error === "object"
-    && (error as { code?: unknown }).code === "PROVISIONAL_STREAM_ABORTED"
-  ) return true;
-  return Boolean(
+    readErrorCode(error) === "UNKNOWN_TOOL"
+    || readProtocolKind(protocolError) === "inactive_tool"
+  ) return "unknown";
+  if (
     attempt?.terminalSeen
     || attempt?.authorized
     || attempt?.responseStarted
-    || attempt?.publicReadTools.size,
-  );
+  ) return "terminal";
+  if (error instanceof AttemptFailure || protocolError) return "invalid";
+  return null;
+}
+
+function findErrorByCode(error: unknown, code: string): object | null {
+  let current = error;
+  const seen = new Set<object>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    if (readErrorCode(current) === code) return current;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return null;
+}
+
+function readErrorCode(error: unknown) {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function readProtocolKind(error: object | null) {
+  const protocol = (error as { protocol?: unknown } | null)?.protocol;
+  if (!protocol || typeof protocol !== "object") return undefined;
+  const kind = (protocol as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : undefined;
 }
 
 function classifyAttemptFailure(error: unknown) {
