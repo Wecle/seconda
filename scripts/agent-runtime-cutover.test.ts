@@ -513,6 +513,33 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
     );
     assert.equal(terminalVisibilityBeforeExecute, "internal");
 
+    const recoverableInterviewId = await createInterview();
+    const recoverableRun = await durableRetryRepository.createRun({
+      interviewId: recoverableInterviewId,
+      idempotencyKey: "active-recoverable-terminal-repair",
+    });
+    const nextResumeAt = new Date(Date.now() + 120_000);
+    await database.update(interviewAgentRuns).set({
+      status: "failed",
+      phase: "acting",
+      exitReason: "provider_failed",
+      nextResumeAt,
+      completedAt: new Date(),
+    }).where(eq(interviewAgentRuns.id, recoverableRun.id));
+    const recoverableCutover = createDrizzleAgentRuntimeCutoverStore(database, {
+      interviewIds: [recoverableInterviewId],
+    });
+    await recoverableCutover.normalizePublicTerminalEvents();
+    const [repairedRecoverableRun] = await database.select({
+      nextResumeAt: interviewAgentRuns.nextResumeAt,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+    }).from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, recoverableRun.id));
+    assert.deepEqual(repairedRecoverableRun, {
+      nextResumeAt,
+      lastEventSequence: 1,
+    });
+
     const acceptedInterviewId = await createInterview();
     const [acceptedQuestion] = await database.insert(interviewQuestions).values({
       interviewId: acceptedInterviewId,
@@ -1014,6 +1041,38 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       { completed: [], resumed: [] },
     );
     assert.equal(closedExecutionCount, 0);
+
+    const outsideScopeInterviewId = await createInterview();
+    const outsideScopeRun = await repository.createRun({
+      interviewId: outsideScopeInterviewId,
+      idempotencyKey: "outside-direct-reconcile-scope",
+    });
+    await database.update(interviewAgentRuns).set({
+      leaseOwner: "outside-worker",
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+      leaseGeneration: 9,
+    }).where(eq(interviewAgentRuns.id, outsideScopeRun.id));
+    assert.equal(await closedCutover.reconcileRun(outsideScopeRun.id), "skipped");
+    const [outsideScopeAfterReconcile] = await database.select({
+      status: interviewAgentRuns.status,
+      leaseOwner: interviewAgentRuns.leaseOwner,
+      leaseGeneration: interviewAgentRuns.leaseGeneration,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+    }).from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, outsideScopeRun.id));
+    assert.deepEqual(outsideScopeAfterReconcile, {
+      status: "running",
+      leaseOwner: "outside-worker",
+      leaseGeneration: 9,
+      lastEventSequence: 0,
+    });
+    assert.equal(
+      await database.$count(
+        interviewAgentEvents,
+        eq(interviewAgentEvents.runId, outsideScopeRun.id),
+      ),
+      0,
+    );
 
     const [closedRunning] = await database.select({
       status: interviewAgentRuns.status,

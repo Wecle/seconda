@@ -69,11 +69,15 @@ export function createDrizzleAgentRuntimeCutoverStore(
   const interviewScope = options?.interviewIds?.length
     ? inArray(interviews.id, options.interviewIds)
     : undefined;
+  const runScope = options?.interviewIds?.length
+    ? inArray(interviewAgentRuns.interviewId, options.interviewIds)
+    : undefined;
   return {
     async normalizePublicTerminalEvents() {
       const anomalousRuns = await database.select({
         id: interviewAgentRuns.id,
         interviewId: interviewAgentRuns.interviewId,
+        interviewStatus: interviews.status,
       }).from(interviewAgentRuns)
         .innerJoin(
           interviews,
@@ -118,7 +122,11 @@ export function createDrizzleAgentRuntimeCutoverStore(
               eq(interviewAgentRuns.interviewId, run.interviewId),
             ))
             .limit(1);
-          if (current) await ensureTerminalRunInvariant(tx, current);
+          if (current) {
+            await ensureTerminalRunInvariant(tx, current, {
+              clearResumeState: run.interviewStatus !== "active",
+            });
+          }
         });
       }
     },
@@ -238,7 +246,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
         const [identity] = await tx.select({
           interviewId: interviewAgentRuns.interviewId,
         }).from(interviewAgentRuns)
-          .where(eq(interviewAgentRuns.id, runId))
+          .where(and(eq(interviewAgentRuns.id, runId), runScope))
           .limit(1);
         if (!identity) return "skipped" as const;
         await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${identity.interviewId}))`);
@@ -267,7 +275,7 @@ export function createDrizzleAgentRuntimeCutoverStore(
             interviewResumeSnapshots,
             eq(interviewResumeSnapshots.interviewId, interviews.id),
           )
-          .where(eq(interviewAgentRuns.id, runId))
+          .where(and(eq(interviewAgentRuns.id, runId), runScope))
           .limit(1);
         if (!run) return "skipped" as const;
 
@@ -295,7 +303,9 @@ export function createDrizzleAgentRuntimeCutoverStore(
               await retireClosedInterviewRun(tx, run);
             }
           } else if (run.status === "completed" || run.status === "failed") {
-            await ensureTerminalRunInvariant(tx, run);
+            await ensureTerminalRunInvariant(tx, run, {
+              clearResumeState: true,
+            });
           } else {
             await normalizePublicTerminalEventsForRun(tx, run.id);
           }
@@ -361,7 +371,9 @@ export function createDrizzleAgentRuntimeCutoverStore(
           && run.status !== "running"
         ) {
           if (run.status === "completed" || run.status === "failed") {
-            await ensureTerminalRunInvariant(tx, run);
+            await ensureTerminalRunInvariant(tx, run, {
+              clearResumeState: false,
+            });
           }
           return "skipped" as const;
         }
@@ -452,6 +464,7 @@ async function ensureTerminalRunInvariant(
     exitReason: string | null;
     completedAt: Date | null;
   },
+  options: { clearResumeState: boolean },
 ) {
   const terminal = await normalizePublicTerminalEventsForRun(tx, run.id);
   const maximumSequence = await maximumEventSequence(tx, run.id);
@@ -489,7 +502,7 @@ async function ensureTerminalRunInvariant(
       exitReason,
       leaseOwner: null,
       leaseExpiresAt: null,
-      nextResumeAt: null,
+      ...(options.clearResumeState ? { nextResumeAt: null } : {}),
       completedAt: run.completedAt ?? new Date(),
       lastEventSequence: maximumSequence,
       updatedAt: new Date(),
@@ -502,7 +515,7 @@ async function ensureTerminalRunInvariant(
     exitReason,
     leaseOwner: null,
     leaseExpiresAt: null,
-    nextResumeAt: null,
+    ...(options.clearResumeState ? { nextResumeAt: null } : {}),
     completedAt: run.completedAt ?? new Date(),
     lastEventSequence: sequence,
     updatedAt: new Date(),
@@ -622,6 +635,8 @@ async function completeCommittedClosedInterviewRun(
     status: "completed",
     exitReason: "completed",
     completedAt,
+  }, {
+    clearResumeState: true,
   });
 }
 
