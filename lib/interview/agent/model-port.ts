@@ -276,12 +276,16 @@ export function createStreamingInterviewAgentModelPort(options: {
                 )) {
                   throw protocolError("Final tool call does not match its input stream");
                 }
-                finalToolCall = providerSchema.parse({
-                  type: "tool_call",
-                  callId: toolCall.toolCallId,
-                  toolName: toolCall.toolName,
-                  args: toolCall.input,
-                });
+                try {
+                  finalToolCall = providerSchema.parse({
+                    type: "tool_call",
+                    callId: toolCall.toolCallId,
+                    toolName: toolCall.toolName,
+                    args: toolCall.input,
+                  });
+                } catch (cause) {
+                  throw modelActionError(toolCall.toolName, cause);
+                }
               }
             }
 
@@ -419,6 +423,19 @@ function protocolError(
     code: "MODEL_STREAM_PROTOCOL_ERROR",
     protocol,
   });
+}
+
+function modelActionError(toolName: string, cause: unknown) {
+  return Object.assign(
+    new Error("Model tool-call arguments failed schema validation", { cause }),
+    {
+      code: "MODEL_TOOL_ACTION_INVALID",
+      modelAction: {
+        kind: "malformed_tool_arguments",
+        toolName,
+      },
+    },
+  );
 }
 
 function readErrorCode(error: unknown) {

@@ -386,6 +386,30 @@ function unknownToolAttempt(toolName: string): StreamScript {
   };
 }
 
+function invalidProviderModel(
+  createParts: () => readonly unknown[],
+) {
+  let providerCalls = 0;
+  let messageNumber = 0;
+  const model = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "fast" }],
+    classifyError: () => "fatal",
+    createAttemptId: (_model, attemptNumber) => `real-attempt-${attemptNumber}`,
+    createMessageId: () => `real-message-${++messageNumber}`,
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => {
+      providerCalls += 1;
+      const values = createParts();
+      return {
+        fullStream: (async function* () {
+          yield* values;
+        })(),
+      };
+    },
+  });
+  return { model, providerCalls: () => providerCalls };
+}
+
 async function createRuntimeFixture(options?: {
   model?: InterviewAgentModelPort;
   initialState?: InterviewAgentState;
@@ -1155,6 +1179,63 @@ test("bounds malformed model protocol actions without terminal budget charges", 
   assert.equal(checkpoint?.invalidModelActionCount, 3);
   assert.equal(checkpoint?.terminalAttemptCount, 0);
 });
+
+for (const modelActionCase of [
+  {
+    name: "missing required tool",
+    expectedReason: "MODEL_TOOL_CALL_REQUIRED",
+    parts: [] as readonly unknown[],
+  },
+  {
+    name: "missing required tool after public reasoning",
+    expectedReason: "MODEL_TOOL_CALL_REQUIRED",
+    parts: [{ type: "text-delta", text: "先核对已有信息。" }] as readonly unknown[],
+  },
+  {
+    name: "malformed tool arguments",
+    expectedReason: "MODEL_TOOL_ACTION_INVALID",
+    parts: [{
+      type: "tool-call",
+      toolCallId: "malformed-call",
+      toolName: "get_coverage_state",
+      input: { unexpected: true },
+    }] as readonly unknown[],
+  },
+  {
+    name: "malformed tool arguments after public reasoning",
+    expectedReason: "MODEL_TOOL_ACTION_INVALID",
+    parts: [
+      { type: "text-delta", text: "先核对已有信息。" },
+      {
+        type: "tool-call",
+        toolCallId: "malformed-call",
+        toolName: "get_coverage_state",
+        input: { unexpected: true },
+      },
+    ] as readonly unknown[],
+  },
+]) {
+  test(`bounds real model-port ${modelActionCase.name} as invalid model actions`, async () => {
+    const invalid = invalidProviderModel(() => modelActionCase.parts);
+    const fixture = await createRuntimeFixture({ model: invalid.model });
+
+    const result = await runInterviewAgent(fixture.runOptions);
+
+    assert.equal(result.exitReason, "terminal_action_failed");
+    assert.equal(invalid.providerCalls(), 3);
+    const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+    assert.equal(checkpoint?.invalidModelActionCount, 3);
+    assert.equal(checkpoint?.terminalAttemptCount, 0);
+    assert.equal(checkpoint?.runtimeMessages?.some((message) => (
+      message.role === "system"
+      && message.content.includes(modelActionCase.expectedReason)
+    )), true);
+    assert.equal(
+      (await fixture.publicEvents()).filter((event) => event.type === "attempt_started").length,
+      3,
+    );
+  });
+}
 
 test("bounds inactive model tools with aborted_tools", async () => {
   const inactiveTool = Object.assign(new Error("inactive tool"), {
