@@ -1143,7 +1143,7 @@ function repairGuidance(code: string) {
     return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
   }
   if (code === "MULTIPLE_QUESTIONS" || code === "FINISH_ASKS_QUESTION") {
-    return "本轮只保留一个明确问题；结束语不得继续提问。";
+    return "ask/clarify 必须且只能包含一个疑问句，全文必须且只能出现一个 ? 或 ？；不得用‘另外’‘以及’‘并且’等连接词追加问题或子问题；finish 不得包含疑问句、? 或 ？。";
   }
   if (
     code === "RESPONSE_BEFORE_AUTHORIZATION"
