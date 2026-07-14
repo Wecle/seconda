@@ -236,6 +236,57 @@ test("real database fences stale workers, notifies durable events and preserves 
     assert.equal(commits.length, 3);
     assert.equal(coverage[0].questionCount, 3);
 
+    const terminationStartedAt = Date.now();
+    const expectedBackoffMs = Math.min(
+      300_000,
+      30_000 * (2 ** secondClaim.run!.resumeCount),
+    );
+    const terminated = await repository.terminateRun(runId, {
+      exitReason: "aborted_streaming",
+      error: new Error("fixture provider failure"),
+    }, secondLease);
+
+    assert.equal(terminated.status, "failed");
+    assert.equal(terminated.created, true);
+
+    const [failedRun] = await db.select({
+      status: interviewAgentRuns.status,
+      leaseOwner: interviewAgentRuns.leaseOwner,
+      leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+      nextResumeAt: interviewAgentRuns.nextResumeAt,
+      lastEventSequence: interviewAgentRuns.lastEventSequence,
+    }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId));
+
+    assert.equal(failedRun.status, "failed");
+    assert.equal(failedRun.leaseOwner, null);
+    assert.equal(failedRun.leaseExpiresAt, null);
+    assert.ok(failedRun.nextResumeAt);
+    assert.ok(
+      Math.abs(
+        failedRun.nextResumeAt.getTime()
+          - terminationStartedAt
+          - expectedBackoffMs,
+      ) < 5_000,
+    );
+
+    const replayedTermination = await repository.terminateRun(runId, {
+      exitReason: "aborted_streaming",
+      error: new Error("fixture replay"),
+    }, secondLease);
+    assert.equal(replayedTermination.created, false);
+
+    const terminalEvents = await db.select({
+      sequence: interviewAgentEvents.sequence,
+      type: interviewAgentEvents.type,
+    }).from(interviewAgentEvents).where(and(
+      eq(interviewAgentEvents.runId, runId),
+      eq(interviewAgentEvents.type, "run_failed"),
+    ));
+    assert.deepEqual(terminalEvents, [{
+      sequence: failedRun.lastEventSequence,
+      type: "run_failed",
+    }]);
+
     const answerEndRace = await Promise.allSettled([
       store.acceptCandidateMessage({
         interviewId,
