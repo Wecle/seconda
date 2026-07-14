@@ -46,7 +46,9 @@ import {
 } from "./turn-proposal";
 import type { InterviewSkill } from "./skills";
 import { renderSkillInstructions } from "./skills";
+import { AgentLoopDetector } from "./loop-detector";
 import {
+  MAX_INVALID_MODEL_ACTIONS,
   MAX_PLANNING_STEPS,
   MAX_TERMINAL_ATTEMPTS,
   isTerminalTool,
@@ -131,6 +133,10 @@ export async function runInterviewAgent(
   let modelCallCount = checkpoint?.modelCallCount ?? 0;
   let terminalAttemptCount = checkpoint?.terminalAttemptCount ?? 0;
   let invalidModelActionCount = checkpoint?.invalidModelActionCount ?? 0;
+  const loopDetector = new AgentLoopDetector(checkpoint?.loopDetector);
+  const phaseProgressId = checkpoint?.phaseProgressId
+    ?? context.answerMessageId
+    ?? "opening";
   let attemptNumberOffset = persistedRun?.attemptNumber ?? 0;
   let logicalMessageId: string | null = persistedRun?.provisionalMessageId ?? null;
   let currentAttempt: AttemptState | null = null;
@@ -190,6 +196,8 @@ export async function runInterviewAgent(
       terminalAttemptCount,
       modelCallCount,
       invalidModelActionCount,
+      phaseProgressId,
+      loopDetector: loopDetector.snapshot(),
       runtimeMessages: messages,
       pendingToolCall,
     };
@@ -503,7 +511,6 @@ export async function runInterviewAgent(
       }
 
       if (step.type === "final") {
-        invalidModelActionCount += 1;
         throw new AttemptFailure("TOOL_CALL_REQUIRED", "模型必须调用当前可用工具。");
       }
 
@@ -526,21 +533,44 @@ export async function runInterviewAgent(
       await selectedAttempt.response.discard();
       currentAttempt = null;
     } catch (error) {
+      const failedAttempt = currentAttempt as AttemptState | null;
       if (isInjectedProcessCrash(error)) throw error;
       if (options.signal.aborted) {
-        await discardAttempt(currentAttempt, error);
+        await discardAttempt(failedAttempt, error);
         return failRun(options, "aborted_streaming", error, planningStepCount);
       }
       if (error instanceof FatalRunFailure) {
-        await discardAttempt(currentAttempt, error);
+        await discardAttempt(failedAttempt, error);
         return failRun(options, error.exitReason, error, planningStepCount);
       }
-      if (!isRepairableAttemptFailure(error, currentAttempt)) {
+      if (!isRepairableAttemptFailure(error, failedAttempt)) {
         return failRun(options, "provider_failed", error, planningStepCount);
       }
-      terminalAttemptCount += 1;
-      await discardAttempt(currentAttempt, error);
-      if (terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
+      const enteredTerminalStream = Boolean(
+        failedAttempt?.terminalSeen
+        || failedAttempt?.authorized
+        || failedAttempt?.responseStarted,
+      );
+      if (enteredTerminalStream) {
+        terminalAttemptCount += 1;
+      } else {
+        invalidModelActionCount += 1;
+      }
+      await discardAttempt(failedAttempt, error);
+      if (enteredTerminalStream && terminalAttemptCount >= MAX_TERMINAL_ATTEMPTS) {
+        await options.repository.saveCheckpoint(
+          options.runId,
+          checkpointFor("repairing"),
+          options.lease,
+        );
+        return failRun(
+          options,
+          "terminal_action_failed",
+          error,
+          planningStepCount,
+        );
+      }
+      if (!enteredTerminalStream && invalidModelActionCount >= MAX_INVALID_MODEL_ACTIONS) {
         await options.repository.saveCheckpoint(
           options.runId,
           checkpointFor("repairing"),
@@ -614,12 +644,29 @@ export async function runInterviewAgent(
         result,
       }),
     });
+    const loopDecision = loopDetector.record({
+      toolName: step.toolName,
+      args: step.args,
+      result,
+      progressHash: options.progressHash(),
+      phase: "planning",
+      phaseProgressId,
+    });
+    if (loopDecision.level === "warning") {
+      messages.push({
+        role: "system",
+        content: loopDecision.message,
+      });
+    }
     await appendPhase("reasoning", attempt);
     await options.repository.saveCheckpoint(
       options.runId,
       checkpointFor("reasoning"),
       options.lease,
     );
+    if (loopDecision.level === "break") {
+      throw new FatalRunFailure(loopDecision.reason, loopDecision.message);
+    }
   }
 
   async function finishTerminalAttempt(
@@ -938,7 +985,12 @@ function isRepairableAttemptFailure(error: unknown, attempt: AttemptState | null
     && typeof error === "object"
     && (error as { code?: unknown }).code === "PROVISIONAL_STREAM_ABORTED"
   ) return true;
-  return Boolean(attempt?.terminalSeen || attempt?.authorized || attempt?.responseStarted);
+  return Boolean(
+    attempt?.terminalSeen
+    || attempt?.authorized
+    || attempt?.responseStarted
+    || attempt?.publicReadTools.size,
+  );
 }
 
 function classifyAttemptFailure(error: unknown) {

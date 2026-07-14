@@ -102,3 +102,31 @@ test("a committed phase transition resets no-progress warnings", () => {
   }));
   assert.equal(decision.level, "continue");
 });
+
+test("restores compact loop history without retaining raw arguments or results", () => {
+  const detector = new AgentLoopDetector();
+  detector.record(call("get_coverage_state", {
+    args: { private: "large-argument" },
+    result: { private: "large-result" },
+  }));
+  detector.record(call("get_coverage_state", {
+    args: { private: "large-argument" },
+    result: { private: "large-result" },
+  }));
+
+  const snapshot = detector.snapshot();
+  const serialized = JSON.stringify(snapshot);
+  assert.equal(serialized.includes("large-argument"), false);
+  assert.equal(serialized.includes("large-result"), false);
+
+  const restored = new AgentLoopDetector(snapshot);
+  const decision = restored.record(call("get_coverage_state", {
+    args: { private: "large-argument" },
+    result: { private: "large-result" },
+  }));
+  assert.deepEqual(decision, {
+    level: "warning",
+    warningNumber: 1,
+    message: "检测到重复工具调用，请调整策略。",
+  });
+});
