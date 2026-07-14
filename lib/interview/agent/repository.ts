@@ -1550,7 +1550,15 @@ export function createDrizzleInterviewAgentRepository(
           leaseOwner: null,
           leaseExpiresAt: null,
           nextResumeAt: !completed && RECOVERABLE_RUN_EXIT_REASONS.includes(input.exitReason)
-            ? sql`CASE WHEN ${interviewAgentRuns.resumeCount} >= ${MAX_AGENT_RUN_RESUMES} THEN NULL ELSE ${now} + LEAST(300000, 30000 * POWER(2, ${interviewAgentRuns.resumeCount})) * INTERVAL '1 millisecond' END`
+            ? sql`CASE
+                WHEN ${interviewAgentRuns.resumeCount} >= ${MAX_AGENT_RUN_RESUMES}
+                  THEN NULL
+                ELSE CURRENT_TIMESTAMP
+                  + LEAST(
+                      300000,
+                      30000 * POWER(2, ${interviewAgentRuns.resumeCount})
+                    ) * INTERVAL '1 millisecond'
+              END`
             : null,
         }).where(runFenceCondition(runId, lease)).returning({ sequence: interviewAgentRuns.lastEventSequence });
         if (!updated) throw new Error("Agent run lease is stale");
