@@ -269,6 +269,7 @@ function findUnauthorizedTerm(
 ): string | null {
   const normalizedAllowedTerms = allowedTerms.map(normalizeGroundingTerm);
   const allowedNumbers = collectAllowedNumbers(allowedTerms);
+  const allowedNumberPrefixes = collectAllowedNumberPrefixes(allowedTerms);
   const allowedNumberSet = new Set(allowedNumbers);
   const normalizedText = text.normalize("NFKC");
   const numbers = normalizedText.matchAll(/\d+(?:[.,]\d+)?/gu);
@@ -279,7 +280,7 @@ function findUnauthorizedTerm(
       if (
         allowTrailingGroundingPrefix
         && trailingPrefix
-        && isStrictPrefixOfAllowedNumber(trailingPrefix, allowedNumbers)
+        && isStrictPrefixOfAllowedNumber(trailingPrefix, allowedNumberPrefixes)
       ) continue;
       return number;
     }
@@ -353,8 +354,15 @@ function isTrailingToken(text: string, index: number, token: string): boolean {
 
 function collectAllowedNumbers(allowedTerms: readonly string[]): string[] {
   return allowedTerms.flatMap((allowedTerm) => (
+    (allowedTerm.normalize("NFKC").match(/\d+(?:[.,]\d+)?/gu) ?? [])
+      .map(normalizeNumber)
+  ));
+}
+
+function collectAllowedNumberPrefixes(allowedTerms: readonly string[]): string[] {
+  return allowedTerms.flatMap((allowedTerm) => (
     [...allowedTerm.normalize("NFKC").matchAll(
-      /(?:^|[^\p{L}\p{N}])(\d+(?:[.,]\d+)?)/gu,
+      /(?:^|[^\p{Script=Latin}\p{N}])(\d+(?:[.,]\d+)?)/gu,
     )].map((match) => normalizeNumber(match[1]))
   ));
 }
