@@ -354,7 +354,11 @@ function createProviderAgentStream(
     : "QUALITY_MODEL_API_KEY";
   const apiKey = process.env[keyName]?.trim();
   if (!apiKey) throw new Error(`${keyName} must be configured`);
-  const provider = createProviderModel({ ...candidate, apiKey });
+  const provider = createProviderModel({
+    ...candidate,
+    apiKey,
+    responseMode: "conversational",
+  });
   const result = streamText({
     model: provider.model,
     system: AGENT_SYSTEM_PROMPT,

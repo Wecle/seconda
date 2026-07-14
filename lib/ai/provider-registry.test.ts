@@ -10,7 +10,12 @@ import {
 
 const schema = z.object({ value: z.string() });
 
-async function requestFor(model: string, credentialTier: "fast" | "quality", apiKey: string) {
+async function requestFor(
+  model: string,
+  credentialTier: "fast" | "quality",
+  apiKey: string,
+  responseMode: "structured" | "conversational" = "structured",
+) {
   let url = "";
   let authorization = "";
   let body: Record<string, unknown> = {};
@@ -18,6 +23,7 @@ async function requestFor(model: string, credentialTier: "fast" | "quality", api
     model,
     credentialTier,
     apiKey,
+    responseMode,
     fetch: async (input, init) => {
       url = String(input);
       authorization = new Headers(init?.headers).get("authorization") ?? "";
@@ -28,7 +34,14 @@ async function requestFor(model: string, credentialTier: "fast" | "quality", api
           object: "chat.completion",
           created: 0,
           model: body.model,
-          choices: [{ index: 0, message: { role: "assistant", content: '{"value":"ok"}' }, finish_reason: "stop" }],
+          choices: [{
+            index: 0,
+            message: {
+              role: "assistant",
+              content: responseMode === "structured" ? '{"value":"ok"}' : "ok",
+            },
+            finish_reason: "stop",
+          }],
           usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
@@ -36,15 +49,22 @@ async function requestFor(model: string, credentialTier: "fast" | "quality", api
     },
   });
 
-  const result = await generateText({
-    model: provider.model,
-    system: "Return JSON.",
-    prompt: "fixture",
-    maxRetries: 0,
-    output: createProviderOutput(schema, provider.metadata),
-  });
+  const output = responseMode === "structured"
+    ? (await generateText({
+        model: provider.model,
+        system: "Return JSON.",
+        prompt: "fixture",
+        maxRetries: 0,
+        output: createProviderOutput(schema, provider.metadata),
+      })).output
+    : (await generateText({
+        model: provider.model,
+        system: "Return one short sentence.",
+        prompt: "fixture",
+        maxRetries: 0,
+      })).text;
 
-  return { provider, url, authorization, body, output: result.output };
+  return { provider, url, authorization, body, output };
 }
 
 test("DeepSeek uses its direct endpoint, stripped model id, JSON object, disabled thinking, and fast key", async () => {
@@ -57,6 +77,18 @@ test("DeepSeek uses its direct endpoint, stripped model id, JSON object, disable
   assert.equal(result.provider.metadata.structuredOutput, "json-object");
   assert.equal(result.provider.metadata.jsonInstruction, "请只返回合法 JSON 对象。");
   assert.deepEqual(result.output, { value: "ok" });
+});
+
+test("DeepSeek conversational requests omit JSON response format and keep hidden thinking disabled", async () => {
+  const result = await requestFor(
+    "deepseek/deepseek-chat",
+    "fast",
+    "fast-sentinel",
+    "conversational",
+  );
+
+  assert.equal("response_format" in result.body, false);
+  assert.deepEqual(result.body.thinking, { type: "disabled" });
 });
 
 test("智谱中国区 uses its mandated endpoint, stripped model id, and selected quality key", async () => {
@@ -87,7 +119,12 @@ test("OpenAI uses only the selected tier key instead of ambient OPENAI_API_KEY",
 
 test("rejects unsupported provider models before any request", () => {
   assert.throws(
-    () => createProviderModel({ model: "unknown/model", credentialTier: "fast", apiKey: "key" }),
+    () => createProviderModel({
+      model: "unknown/model",
+      credentialTier: "fast",
+      apiKey: "key",
+      responseMode: "structured",
+    }),
     /supported provider prefix/,
   );
 });
@@ -97,11 +134,13 @@ test("adds a static JSON Schema instruction only for the DeepSeek JSON Object ad
     model: "deepseek/deepseek-v4-flash",
     credentialTier: "fast",
     apiKey: "fixture",
+    responseMode: "structured",
   });
   const openai = createProviderModel({
     model: "openai/gpt-5-mini",
     credentialTier: "fast",
     apiKey: "fixture",
+    responseMode: "structured",
   });
   const system = "Business system instruction";
 

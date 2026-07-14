@@ -156,6 +156,7 @@ test("does not replay after a real AI SDK OpenAI-compatible SSE error event with
           model: "deepseek/deepseek-v4-flash",
           credentialTier: "fast",
           apiKey: "fixture",
+          responseMode: "structured",
           fetch: async () => sseResponse(
             'data: {"error":{"message":"fixture stream failure"}}\n\n',
             "data: [DONE]\n\n",
@@ -205,6 +206,7 @@ test("retries after real AI SDK pre-output 429 and 5xx stream failures", async (
             model: "deepseek/deepseek-v4-flash",
             credentialTier: "fast",
             apiKey: "fixture",
+            responseMode: "structured",
             fetch: async () => new Response(
               JSON.stringify({ error: { message: "fixture provider failure" } }),
               { status: statusCode, headers: { "content-type": "application/json" } },
