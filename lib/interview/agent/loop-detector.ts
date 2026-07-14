@@ -78,7 +78,10 @@ export class AgentLoopDetector {
     const toolCount = (this.perToolCount.get(observation.toolName) ?? 0) + 1;
     this.perToolCount.set(observation.toolName, toolCount);
 
-    const progressHash = stableHash(observation.progressHash);
+    const progressHash = stableHash({
+      domain: observation.progressHash,
+      result: resultHash,
+    });
     if (this.previousProgressHash === progressHash) {
       this.noProgressCount += 1;
     } else {

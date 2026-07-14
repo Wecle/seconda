@@ -55,6 +55,17 @@ test("does not flag polling whose result and progress change", () => {
   }
 });
 
+test("treats distinct successful read results as progress when domain state is stable", () => {
+  const detector = new AgentLoopDetector();
+  for (let index = 0; index < 5; index += 1) {
+    assert.deepEqual(detector.record(call("read", {
+      args: { page: index },
+      result: { ok: true, page: index },
+      progressHash: "stable-domain-version",
+    })), { level: "continue" });
+  }
+});
+
 test("detects repeated unknown tools", () => {
   const detector = new AgentLoopDetector();
   const decisions = Array.from({ length: 5 }, () =>

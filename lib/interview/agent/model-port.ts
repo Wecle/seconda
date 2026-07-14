@@ -201,7 +201,10 @@ export function createStreamingInterviewAgentModelPort(options: {
                   throw protocolError("Tool input start is malformed");
                 }
                 if (!activeToolNames.has(toolName)) {
-                  throw protocolError(`Tool input started for inactive tool: ${toolName}`);
+                  throw protocolError(`Tool input started for inactive tool: ${toolName}`, {
+                    kind: "inactive_tool",
+                    toolName,
+                  });
                 }
                 if (startedTool) throw protocolError("Multiple tool input streams are not allowed");
                 startedTool = { id, name: toolName, ended: false };
@@ -262,7 +265,10 @@ export function createStreamingInterviewAgentModelPort(options: {
                   throw protocolError("Final tool call is malformed");
                 }
                 if (!activeToolNames.has(toolCall.toolName)) {
-                  throw protocolError(`Final call used inactive tool: ${toolCall.toolName}`);
+                  throw protocolError(`Final call used inactive tool: ${toolCall.toolName}`, {
+                    kind: "inactive_tool",
+                    toolName: toolCall.toolName,
+                  });
                 }
                 if (startedTool && (
                   toolCall.toolCallId !== startedTool.id ||
@@ -400,8 +406,19 @@ async function publishStreamEvent(
   if (await callback(event)) acceptProvisional();
 }
 
-function protocolError(message: string) {
-  return Object.assign(new Error(message), { code: "MODEL_STREAM_PROTOCOL_ERROR" });
+function protocolError(
+  message: string,
+  protocol: {
+    kind: "inactive_tool";
+    toolName: string;
+  } | {
+    kind: "malformed_stream";
+  } = { kind: "malformed_stream" },
+) {
+  return Object.assign(new Error(message), {
+    code: "MODEL_STREAM_PROTOCOL_ERROR",
+    protocol,
+  });
 }
 
 function readErrorCode(error: unknown) {
