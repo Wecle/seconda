@@ -326,11 +326,7 @@ export async function runInterviewAgent(
     );
 
     if (isTerminalTool(event.toolName)) {
-      attempt.terminalSeen = true;
-      attempt.terminalToolCallId ??= event.toolCallId;
-      if (attempt.terminalToolCallId !== event.toolCallId) {
-        throw new AttemptFailure("TERMINAL_CALL_CHANGED", "终结工具调用标识发生变化。");
-      }
+      observeTerminalCall(attempt, event.toolCallId);
       await handleTerminalProgress(
         attempt,
         stripPublicAnalysisFromPartial(event.partialInput),
@@ -355,6 +351,14 @@ export async function runInterviewAgent(
     }, attempt, `reasoning:${attempt.attemptId}:started`);
   }
 
+  function observeTerminalCall(attempt: AttemptState, toolCallId: string) {
+    attempt.terminalSeen = true;
+    attempt.terminalToolCallId ??= toolCallId;
+    if (attempt.terminalToolCallId !== toolCallId) {
+      throw new AttemptFailure("TERMINAL_CALL_CHANGED", "终结工具调用标识发生变化。");
+    }
+  }
+
   async function handleToolPublicAnalysis(
     attempt: AttemptState,
     toolCallId: string,
@@ -362,6 +366,15 @@ export async function runInterviewAgent(
     partialInput: unknown,
     inputText?: string,
   ) {
+    const fieldState = inputText === undefined
+      ? "complete"
+      : inspectTopLevelJsonStringField(inputText, "publicAnalysis");
+    if (fieldState === "duplicate" || fieldState === "invalid") {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_INVALID",
+        "工具调用只能包含一个字符串类型的 publicAnalysis 字段。",
+      );
+    }
     const previous = attempt.observedToolAnalyses.get(toolCallId) ?? "";
     const progress = readPublicAnalysisDelta(partialInput, previous);
     if (progress.status === "accumulating") return;
@@ -389,10 +402,7 @@ export async function runInterviewAgent(
     }
     if (progress.status === "unchanged") {
       attempt.observedToolAnalyses.set(toolCallId, progress.fullText);
-      if (
-        inputText === undefined
-        || hasCompleteJsonStringField(inputText, "publicAnalysis")
-      ) {
+      if (fieldState === "complete") {
         attempt.completedToolAnalyses.add(toolCallId);
       }
       return;
@@ -427,10 +437,7 @@ export async function runInterviewAgent(
       throw new AttemptFailure(reasoningValidation.code, reasoningValidation.message);
     }
     attempt.observedToolAnalyses.set(toolCallId, progress.fullText);
-    if (
-      inputText === undefined
-      || hasCompleteJsonStringField(inputText, "publicAnalysis")
-    ) {
+    if (fieldState === "complete") {
       attempt.completedToolAnalyses.add(toolCallId);
     } else {
       attempt.completedToolAnalyses.delete(toolCallId);
@@ -447,7 +454,15 @@ export async function runInterviewAgent(
     if (
       !attempt.terminalToolCallId
       || !attempt.completedToolAnalyses.has(attempt.terminalToolCallId)
-    ) return;
+    ) {
+      if (hasNonEmptyResponseText(partialInput)) {
+        throw new AttemptFailure(
+          "RESPONSE_BEFORE_AUTHORIZATION",
+          "responseText 在 publicAnalysis 完整并完成授权前出现。",
+        );
+      }
+      return;
+    }
     if (progress.status === "protocol_violation") {
       throw new AttemptFailure(
         "RESPONSE_BEFORE_AUTHORIZATION",
@@ -641,6 +656,10 @@ export async function runInterviewAgent(
 
       if (step.type === "final") {
         throw new AttemptFailure("TOOL_CALL_REQUIRED", "模型必须调用当前可用工具。");
+      }
+
+      if (isTerminalTool(step.toolName)) {
+        observeTerminalCall(selectedAttempt, step.callId);
       }
 
       await handleToolPublicAnalysis(
@@ -1127,19 +1146,73 @@ function stripPublicAnalysisFromPartial(input: unknown): unknown {
   return businessInput;
 }
 
-function hasCompleteJsonStringField(inputText: string, fieldName: string): boolean {
-  const key = JSON.stringify(fieldName);
-  const keyIndex = inputText.indexOf(key);
-  if (keyIndex < 0) return false;
-  let cursor = keyIndex + key.length;
-  while (/\s/u.test(inputText[cursor] ?? "")) cursor += 1;
-  if (inputText[cursor] !== ":") return false;
-  cursor += 1;
-  while (/\s/u.test(inputText[cursor] ?? "")) cursor += 1;
-  if (inputText[cursor] !== '"') return false;
-  cursor += 1;
+type JsonStringFieldState = "missing" | "incomplete" | "complete" | "duplicate" | "invalid";
+
+function inspectTopLevelJsonStringField(
+  inputText: string,
+  fieldName: string,
+): JsonStringFieldState {
+  let objectDepth = 0;
+  let arrayDepth = 0;
+  let occurrenceCount = 0;
+  let state: JsonStringFieldState = "missing";
+  for (let cursor = 0; cursor < inputText.length; cursor += 1) {
+    const character = inputText[cursor];
+    if (character === "{") {
+      objectDepth += 1;
+      continue;
+    }
+    if (character === "}") {
+      objectDepth = Math.max(0, objectDepth - 1);
+      continue;
+    }
+    if (character === "[") {
+      arrayDepth += 1;
+      continue;
+    }
+    if (character === "]") {
+      arrayDepth = Math.max(0, arrayDepth - 1);
+      continue;
+    }
+    if (character !== '"') continue;
+
+    const keyToken = readJsonStringToken(inputText, cursor);
+    if (!keyToken.complete) {
+      const previous = previousNonWhitespaceCharacter(inputText, cursor);
+      return objectDepth === 1
+        && arrayDepth === 0
+        && (previous === "{" || previous === ",")
+        ? "incomplete"
+        : state;
+    }
+    cursor = keyToken.end;
+    if (objectDepth !== 1 || arrayDepth !== 0) continue;
+    let separator = keyToken.end + 1;
+    while (/\s/u.test(inputText[separator] ?? "")) separator += 1;
+    if (inputText[separator] !== ":") continue;
+    if (keyToken.value !== fieldName) continue;
+
+    occurrenceCount += 1;
+    if (occurrenceCount > 1) return "duplicate";
+    let valueStart = separator + 1;
+    while (/\s/u.test(inputText[valueStart] ?? "")) valueStart += 1;
+    if (valueStart >= inputText.length) return "incomplete";
+    if (inputText[valueStart] !== '"') return "invalid";
+    const valueToken = readJsonStringToken(inputText, valueStart);
+    if (!valueToken.complete) return "incomplete";
+    state = "complete";
+    cursor = valueToken.end;
+  }
+  return state;
+}
+
+function readJsonStringToken(inputText: string, start: number): {
+  complete: boolean;
+  end: number;
+  value: string;
+} {
   let escaped = false;
-  for (; cursor < inputText.length; cursor += 1) {
+  for (let cursor = start + 1; cursor < inputText.length; cursor += 1) {
     const character = inputText[cursor];
     if (escaped) {
       escaped = false;
@@ -1149,9 +1222,35 @@ function hasCompleteJsonStringField(inputText: string, fieldName: string): boole
       escaped = true;
       continue;
     }
-    if (character === '"') return true;
+    if (character !== '"') continue;
+    try {
+      return {
+        complete: true,
+        end: cursor,
+        value: JSON.parse(inputText.slice(start, cursor + 1)) as string,
+      };
+    } catch {
+      return { complete: false, end: cursor, value: "" };
+    }
   }
-  return false;
+  return { complete: false, end: inputText.length, value: "" };
+}
+
+function previousNonWhitespaceCharacter(inputText: string, before: number) {
+  for (let cursor = before - 1; cursor >= 0; cursor -= 1) {
+    if (!/\s/u.test(inputText[cursor])) return inputText[cursor];
+  }
+  return "";
+}
+
+function hasNonEmptyResponseText(input: unknown): boolean {
+  return Boolean(
+    input
+    && typeof input === "object"
+    && !Array.isArray(input)
+    && typeof (input as { responseText?: unknown }).responseText === "string"
+    && (input as { responseText: string }).responseText.trim().length > 0,
+  );
 }
 
 function stripCompletePublicAnalysis(input: unknown) {

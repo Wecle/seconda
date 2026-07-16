@@ -905,6 +905,137 @@ test("rejects blank terminal public analysis before proposal authorization", asy
   )).length, 3);
 });
 
+test("rejects duplicate terminal public analysis fields before authorization", async () => {
+  const proposal = openingProposal();
+  const duplicate: StreamScript = async (input, callNumber) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    const callId = `terminal-${callNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${callNumber}`,
+    });
+    const { responseText, ...prefix } = proposal;
+    const firstFieldClosed = JSON.stringify({
+      publicAnalysis: DEFAULT_TERMINAL_ANALYSIS,
+      ...prefix,
+      responseText: responseText.slice(0, 0),
+    }).slice(0, -1);
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: `${firstFieldClosed},"publicAnalysis":"后一个字段尚未闭合`,
+      partialInput: {
+        publicAnalysis: DEFAULT_TERMINAL_ANALYSIS,
+        ...prefix,
+        responseText: "",
+      },
+    });
+    throw new Error("unreachable");
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([duplicate, duplicate, duplicate]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const events = await fixture.publicEvents();
+  assert.equal(events.some((event) => event.type === "proposal_authorized"), false);
+  assert.equal(events.filter((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+  )).length, 3);
+});
+
+test("commits a complete final terminal tool call without streamed input deltas", async () => {
+  const proposal = openingProposal();
+  const finalOnly: StreamScript = async (input, callNumber) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${callNumber}`,
+    });
+    return {
+      step: {
+        type: "tool_call",
+        callId: `terminal-${callNumber}`,
+        toolName: "submit_interview_turn",
+        args: providerTerminalInput(proposal),
+      },
+      attemptId,
+      provisionalMessageId: `message-${callNumber}`,
+    };
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([finalOnly]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const events = await fixture.publicEvents();
+  assert.equal(events.filter((event) => event.type === "proposal_authorized").length, 1);
+  assert.equal(events.filter((event) => event.type === "response_started").length, 1);
+  assert.equal(events.filter((event) => event.type === "message_committed").length, 1);
+});
+
+test("rejects response text while a late public analysis field is incomplete", async () => {
+  const proposal = openingProposal();
+  const responseBeforeAnalysis: StreamScript = async (input, callNumber) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    const callId = `terminal-${callNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${callNumber}`,
+    });
+    const { responseText, ...prefix } = proposal;
+    const businessFields = JSON.stringify({ ...prefix, responseText }).slice(0, -1);
+    const partialAnalysis = "候选人的回答提供了当前方向";
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: `${businessFields},"publicAnalysis":"${partialAnalysis}`,
+      partialInput: {
+        ...prefix,
+        responseText,
+        publicAnalysis: partialAnalysis,
+      },
+    });
+    throw new Error("unreachable");
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      responseBeforeAnalysis,
+      responseBeforeAnalysis,
+      responseBeforeAnalysis,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const events = await fixture.publicEvents();
+  assert.equal(events.some((event) => event.type === "proposal_authorized"), false);
+  assert.equal(events.some((event) => event.type === "response_started"), false);
+  assert.equal(events.filter((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "RESPONSE_BEFORE_AUTHORIZATION"
+  )).length, 3);
+});
+
 test("enforces read and terminal public analysis limits across cumulative deltas", async () => {
   const cases = [
     {
