@@ -36,6 +36,10 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /公开.*进度/);
   assert.match(AGENT_SYSTEM_PROMPT, /隐藏.*推理/);
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
+  assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=true.*partial/);
+  assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=false.*sufficient/);
+  assert.match(AGENT_SYSTEM_PROMPT, /第 3 题.*exhausted/);
+  assert.match(AGENT_SYSTEM_PROMPT, /通常只为当前回答分类提交 coverageChanges/);
   assert.match(
     AGENT_SYSTEM_PROMPT,
     /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*自我介绍邀请/,
