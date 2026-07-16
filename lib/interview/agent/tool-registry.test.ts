@@ -12,6 +12,7 @@ import {
   createInterviewToolRegistry,
   interviewToolInputSchemas,
   interviewToolNames,
+  providerInterviewToolInputSchemas,
 } from "./tool-registry";
 
 const terminalInput = {
@@ -26,6 +27,11 @@ const terminalInput = {
     estimatedInformationGain: "high" as const,
   },
   responseText: "请介绍一下自己。",
+};
+
+const terminalProviderInput = {
+  publicAnalysis: "候选人的方向清晰，下一步邀请其介绍最近经历与岗位期待。",
+  ...terminalInput,
 };
 
 test("exposes exactly three read tools and one terminal tool", () => {
@@ -56,6 +62,30 @@ test("uses the complete interview turn proposal as terminal input", () => {
     ...terminalInput,
     extra: true,
   }).success, false);
+});
+
+test("requires provider-only public analysis for every model-visible tool", () => {
+  assert.equal(providerInterviewToolInputSchemas.get_coverage_state.safeParse({}).success, false);
+  assert.equal(providerInterviewToolInputSchemas.get_coverage_state.safeParse({
+    publicAnalysis: "先检查当前能力覆盖情况。",
+  }).success, true);
+  assert.equal(interviewToolInputSchemas.get_coverage_state.safeParse({}).success, true);
+  assert.equal(interviewToolInputSchemas.get_coverage_state.safeParse({
+    publicAnalysis: "不能进入业务输入",
+  }).success, false);
+});
+
+test("keeps public analysis first and response text last in terminal JSON Schema", () => {
+  const schema = z.toJSONSchema(
+    providerInterviewToolInputSchemas.submit_interview_turn,
+  ) as { properties?: Record<string, unknown> };
+  assert.deepEqual(Object.keys(schema.properties ?? {}), [
+    "publicAnalysis",
+    "assessment",
+    "coverageChanges",
+    "decision",
+    "responseText",
+  ]);
 });
 
 test("exposes the candidate response contract in the provider JSON Schema", () => {
@@ -128,13 +158,13 @@ test("provider schema accepts only active real tool calls", () => {
     type: "tool_call",
     callId: "call-1",
     toolName: "get_coverage_state",
-    args: {},
+    args: { publicAnalysis: "先检查当前能力覆盖情况。" },
   }).success, true);
   assert.equal(schema.safeParse({
     type: "tool_call",
     callId: "call-2",
     toolName: "submit_interview_turn",
-    args: terminalInput,
+    args: terminalProviderInput,
   }).success, true);
   assert.equal(schema.safeParse({
     type: "tool_call",
