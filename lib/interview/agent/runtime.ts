@@ -888,7 +888,9 @@ export async function runInterviewAgent(
       return lastFailureAccounting?.kind === "provider" ? "provider_failed" : null;
     }
 
-    const recoveredRepairCode = readRecoverableRepairCode(messages);
+    const recoveredRepairCode = lastFailureAccounting?.attemptId === attemptId
+      ? readRecoverableRepairCode(messages)
+      : null;
     const identity = { attemptId, logicalMessageId: recoveredLogicalMessageId };
     if (hasResponse) {
       await appendPublicEvent("response_discarded", {
@@ -1153,13 +1155,16 @@ function isInjectedProcessCrash(error: unknown) {
 
 function repairInstruction(error: unknown) {
   const code = classifyAttemptFailure(error);
-  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error)}重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+  const regenerationInstruction = code === "CONTRADICTORY_COVERAGE_CHANGE"
+    ? ""
+    : "重新生成完整提案；";
+  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error)}${regenerationInstruction}responseText 必须最后输出，且不得修改已生成的文本前缀。`;
 }
 
 const coverageStatusRepairRule =
   "followUpNeeded=false 时使用 sufficient，true 时使用 partial；分类达到第 3 题时使用 exhausted，未达到时不得提前 exhausted。";
 const coverageStatusOnlyRepairRule =
-  "仅修正冲突状态，不得改变 assessment、decision、responseText 或其他 coverageChanges。";
+  "仅修正冲突状态并重新生成完整提案。";
 
 function coverageRepairGuidance(detail?: CoverageConflictDetail) {
   if (!detail) {
