@@ -67,15 +67,26 @@ test("exposes the candidate response contract in the provider JSON Schema", () =
     schema.properties?.responseText?.description,
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
   );
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*只能包含一个疑问句.*一个.*[?？]/);
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得.*[?？]/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*一个核心考察意图/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /回答提示.*多个疑问句/);
+  assert.equal(
+    RESPONSE_TEXT_SCHEMA_DESCRIPTION.includes(["只能包含一个", "疑问句"].join("")),
+    false,
+  );
+  assert.equal(
+    RESPONSE_TEXT_SCHEMA_DESCRIPTION.includes(
+      [["只能", "出现", "一个"].join(""), ["?", " 或 ", "？"].join("")].join(""),
+    ),
+    false,
+  );
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得邀请候选人继续作答/);
   assert.match(
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
-    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*一次自我介绍邀请/,
+    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*自我介绍邀请/,
   );
   assert.match(
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
-    /岗位方向置信度不足.*decision.action 为 clarify.*一个岗位方向澄清问题.*暂缓.*自我介绍/,
+    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图.*暂缓.*自我介绍/,
   );
   assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /不得枚举或复述简历/);
 });

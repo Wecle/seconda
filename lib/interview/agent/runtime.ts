@@ -1149,8 +1149,8 @@ function repairGuidance(code: string, error?: unknown) {
   if (code === "UNAUTHORIZED_TERM") {
     return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
   }
-  if (code === "MULTIPLE_QUESTIONS" || code === "FINISH_ASKS_QUESTION") {
-    return "ask/clarify 必须且只能包含一个疑问句，全文必须且只能出现一个 ? 或 ？；不得用‘另外’‘以及’‘并且’等连接词追加问题或子问题；finish 不得包含疑问句、? 或 ？。";
+  if (code === "FINISH_ASKS_QUESTION") {
+    return "finish 不得邀请候选人继续作答。";
   }
   if (
     code === "MODEL_STREAM_PROTOCOL_ERROR"

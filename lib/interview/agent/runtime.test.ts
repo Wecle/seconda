@@ -416,6 +416,7 @@ async function createRuntimeFixture(options?: {
   tools?: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>;
   hooks?: readonly BeforeToolPipelineHook[];
   progressHash?: () => string;
+  allowedTerms?: readonly string[];
 }) {
   const repository = createInMemoryInterviewAgentRepository(options?.initialState ?? {
     interviewId: "interview",
@@ -454,7 +455,7 @@ async function createRuntimeFixture(options?: {
       answerMessageId: null,
       language: "zh" as const,
       persona: "standard" as const,
-      allowedTerms: ["回退机制", "项目经历"],
+      allowedTerms: options?.allowedTerms ?? ["回退机制", "项目经历"],
     },
   };
   return {
@@ -580,43 +581,25 @@ test("rejects a proposal before exposing response text", async () => {
   assert.equal(fixture.repository.inspectInterview("interview").messages.length, 0);
 });
 
-test("discards a visible response before repair", async () => {
-  const invalid = openingProposal({
-    responseText: "为什么这样做？如何验证？",
+test("commits a multi-clause response without repair or retraction", async () => {
+  const proposal = openingProposal({
+    responseText: "你为什么选择这个方向？希望解决什么问题？准备如何验证结果？",
   });
-  const valid = openingProposal({
-    responseText: "请说明你如何设计回退机制？",
-  });
-  let repairMessages: readonly { role: string; content: string }[] = [];
-  const repaired: StreamScript = async (input, callNumber) => {
-    repairMessages = input.messages;
-    return streamingTerminalScript({
-      proposal: valid,
-      chunks: ["请说明你如何", "设计回退机制？"],
-    })(input, callNumber);
-  };
   const fixture = await createRuntimeFixture({
     model: scriptedModel([
-      streamingTerminalScript({ proposal: invalid, chunks: [invalid.responseText] }),
-      repaired,
+      streamingTerminalScript({ proposal, chunks: [proposal.responseText] }),
     ]),
   });
+
   const result = await runInterviewAgent(fixture.runOptions);
+
   assert.equal(result.exitReason, "completed");
-  const types = (await fixture.publicEvents()).map((event) => event.type);
-  assert.ok(types.indexOf("response_discarded") < types.lastIndexOf("response_started"));
+  const events = await fixture.publicEvents();
+  assert.equal(events.some((event) => event.type === "response_discarded"), false);
+  assert.equal(events.filter((event) => event.type === "response_started").length, 1);
   const snapshot = fixture.repository.inspectInterview("interview");
   assert.equal(snapshot.messages.length, 1);
-  assert.equal(snapshot.messages[0].content, valid.responseText);
-  const repairInstruction = repairMessages.findLast(
-    (message) => message.role === "system",
-  )?.content ?? "";
-  assert.match(repairInstruction, /只能包含一个疑问句/);
-  assert.match(repairInstruction, /只能出现一个.*[?？]/);
-  assert.match(repairInstruction, /另外.*以及.*并且/);
-  assert.match(repairInstruction, /不得.*子问题/);
-  assert.match(repairInstruction, /finish.*不得.*[?？]/);
-  assert.equal(repairInstruction.includes(invalid.responseText), false);
+  assert.equal(snapshot.messages[0].content, proposal.responseText);
 });
 
 test("rejects sensitive public reasoning before the raw text is persisted", async () => {
@@ -858,10 +841,13 @@ for (const splitCase of [
 }
 
 test("does not flush the response tail when final-only validation fails", async () => {
-  const incomplete = openingProposal({ responseText: "请介绍一下自己" });
+  const invalid = openingProposal({
+    responseText: "请详细说明 Project",
+  });
   const fixture = await createRuntimeFixture({
+    allowedTerms: ["ProjectX"],
     model: scriptedModel([
-      streamingTerminalScript({ proposal: incomplete }),
+      streamingTerminalScript({ proposal: invalid }),
       streamingTerminalScript({ proposal: openingProposal() }),
     ]),
   });
@@ -872,7 +858,7 @@ test("does not flush the response tail when final-only validation fails", async 
   const firstAttempt = (await fixture.publicEvents()).filter(
     (event) => event.attemptId === "attempt-1",
   );
-  assert.equal(JSON.stringify(firstAttempt).includes(incomplete.responseText), false);
+  assert.equal(JSON.stringify(firstAttempt).includes(invalid.responseText), false);
   assert.equal(firstAttempt.some((event) => event.type === "response_discarded"), true);
 });
 
@@ -1868,7 +1854,9 @@ test("treats response text before a complete prefix as a protocol failure", asyn
 });
 
 test("keeps one logical message id while incrementing repair attempts", async () => {
-  const invalid = openingProposal({ responseText: "为什么？如何？" });
+  const invalid = openingProposal({
+    responseText: "这个机制是否会在 60 秒后触发？",
+  });
   const valid = openingProposal();
   const fixture = await createRuntimeFixture({
     model: scriptedModel([

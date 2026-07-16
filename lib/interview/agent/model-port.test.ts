@@ -38,16 +38,26 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
   assert.match(
     AGENT_SYSTEM_PROMPT,
-    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*一次自我介绍邀请/,
+    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*自我介绍邀请/,
   );
   assert.match(
     AGENT_SYSTEM_PROMPT,
-    /岗位方向置信度不足.*decision.action 为 clarify.*一个岗位方向澄清问题.*暂缓.*自我介绍/,
+    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图.*暂缓.*自我介绍/,
   );
   assert.match(AGENT_SYSTEM_PROMPT, /不得枚举或复述简历/);
-  assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*只能包含一个疑问句.*一个.*[?？]/);
-  assert.match(AGENT_SYSTEM_PROMPT, /另外.*以及.*并且.*追加/);
-  assert.match(AGENT_SYSTEM_PROMPT, /finish.*不得.*[?？]/);
+  assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*一个核心考察意图/);
+  assert.match(AGENT_SYSTEM_PROMPT, /回答提示.*多个疑问句/);
+  assert.equal(
+    AGENT_SYSTEM_PROMPT.includes(["只能包含一个", "疑问句"].join("")),
+    false,
+  );
+  assert.equal(
+    AGENT_SYSTEM_PROMPT.includes(
+      [["只能", "出现", "一个"].join(""), ["?", " 或 ", "？"].join("")].join(""),
+    ),
+    false,
+  );
+  assert.match(AGENT_SYSTEM_PROMPT, /finish.*不得邀请候选人继续作答/);
 });
 
 test("builds real AI SDK tools without execute handlers", () => {
@@ -148,7 +158,7 @@ test("production DeepSeek Agent wiring sends a conversational required-tool requ
   );
   assert.match(
     JSON.stringify(body.tools),
-    /岗位方向置信度不足.*decision.action 为 clarify.*岗位方向澄清问题/,
+    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图/,
   );
 });
 
