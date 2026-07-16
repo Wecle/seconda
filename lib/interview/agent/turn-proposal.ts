@@ -44,7 +44,7 @@ export const turnProposalPrefixSchema = z.object({
 }).strict();
 
 export const RESPONSE_TEXT_SCHEMA_DESCRIPTION =
-  "候选人可见回复，必须作为最后一个字段生成。decision.action 为 ask/clarify 时，必须且只能包含一个疑问句，全文必须且只能出现一个 ? 或 ？，不得用‘另外’‘以及’‘并且’等连接词追加问题或子问题；decision.action 为 finish 时不得包含疑问句、? 或 ？。开场必须简洁并按岗位判断分支处理：岗位方向置信度足够且 decision.action 为 ask 时，只包含简短问候、推断的岗位或方向和一次自我介绍邀请；岗位方向置信度不足或 decision.action 为 clarify 时，必须且只能包含一个岗位方向澄清问题，并暂缓自我介绍邀请，待方向确认后再邀请。两种分支均不得枚举或复述简历，不得展开子问题。";
+  "候选人可见回复，必须作为最后一个字段生成。decision.action 为 ask/clarify 时，必须围绕 decision 中的一个核心考察意图，可以包含必要解释、回答提示或多个疑问句，但不得切换到无关主题；decision.action 为 finish 时不得邀请候选人继续作答。开场必须简洁并按岗位判断分支处理：岗位方向置信度足够且 decision.action 为 ask 时，包含简短问候、推断的岗位或方向和自我介绍邀请；岗位方向置信度不足或 decision.action 为 clarify 时，只围绕岗位方向澄清这一核心意图，并暂缓自我介绍邀请，待方向确认后再邀请。两种分支均不得枚举或复述简历。";
 
 export const interviewTurnProposalSchema = turnProposalPrefixSchema.extend({
   responseText: z.string()

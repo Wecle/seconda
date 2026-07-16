@@ -30,7 +30,7 @@ const skills: InterviewSkill[] = [
     name: "answer-planning",
     version: "1",
     description: "根据已提交的轻量评估规划下一步面试行动。",
-    instructions: "基于最新回答和已注入覆盖度，在 submit_interview_turn 中同时提交无分数轻量评估、覆盖度变化和一个追问、新主题或结束行动。不得生成正式分数。responseText 中只提出一个问题；评价只复述已确认内容，不做人格判断。",
+    instructions: "基于最新回答和已注入覆盖度，在 submit_interview_turn 中同时提交无分数轻量评估、覆盖度变化和一个追问、新主题或结束行动。不得生成正式分数。responseText 必须围绕本轮唯一的结构化核心考察意图，可以包含必要的回答提示，但不得切换到无关主题；评价只复述已确认内容，不做人格判断。",
     toolNames: ["get_interview_history", "get_coverage_state", "submit_interview_turn"],
   },
 ];
