@@ -8,10 +8,27 @@ import {
   questionCategorySchema,
 } from "./contracts";
 
+export const ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION =
+  "回答轮必须提交轻量评估；followUpNeeded=true 时当前回答分类的覆盖状态为 partial，followUpNeeded=false 时为 sufficient；开场必须为 null。";
+
+export const COVERAGE_CHANGES_SCHEMA_DESCRIPTION =
+  "通常只为当前回答分类提交主题覆盖变化；状态必须与 assessment.followUpNeeded 推导结果一致，其他分类不得改变聚合状态。";
+
+export const COVERAGE_STATUS_SCHEMA_DESCRIPTION =
+  "当前回答分类：followUpNeeded=true 使用 partial，false 使用 sufficient；该分类达到第 3 题时使用 exhausted，未达到时不得提前使用 exhausted。";
+
+const turnAnswerAssessmentSchema = answerAssessmentSchema.describe(
+  ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION,
+);
+
+const turnCoverageStatusSchema = coverageStatusSchema.describe(
+  COVERAGE_STATUS_SCHEMA_DESCRIPTION,
+);
+
 const coverageChangeSchema = z.object({
   category: questionCategorySchema,
   topic: z.string().trim().min(1).max(200),
-  status: coverageStatusSchema,
+  status: turnCoverageStatusSchema,
   resumeEvidenceIds: z.array(z.string().min(1)).max(20),
 }).strict();
 
@@ -35,8 +52,12 @@ const finishDecisionSchema = z.object({
 }).strict();
 
 export const turnProposalPrefixSchema = z.object({
-  assessment: answerAssessmentSchema.nullable(),
-  coverageChanges: z.array(coverageChangeSchema).max(9),
+  assessment: turnAnswerAssessmentSchema
+    .nullable()
+    .describe(ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION),
+  coverageChanges: z.array(coverageChangeSchema)
+    .max(9)
+    .describe(COVERAGE_CHANGES_SCHEMA_DESCRIPTION),
   decision: z.discriminatedUnion("action", [
     questionDecisionSchema,
     finishDecisionSchema,

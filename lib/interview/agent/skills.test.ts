@@ -15,6 +15,12 @@ test("loads answer planning without formal scoring tools", () => {
   assert.equal(resolved.skills.some((skill) => skill.name === "answer-planning"), true);
   assert.equal(resolved.toolNames.has("record_answer_evaluation" as never), false);
   assert.equal(resolved.toolNames.has("get_interview_history"), true);
+  const answerPlanning = resolved.skills.find(
+    (skill) => skill.name === "answer-planning",
+  );
+  assert.match(answerPlanning?.instructions ?? "", /followUpNeeded=true.*partial/);
+  assert.match(answerPlanning?.instructions ?? "", /followUpNeeded=false.*sufficient/);
+  assert.match(answerPlanning?.instructions ?? "", /第 3 题.*exhausted/);
 });
 
 test("prefers injected history and coverage over redundant reads", () => {

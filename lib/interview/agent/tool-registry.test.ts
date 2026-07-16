@@ -61,7 +61,35 @@ test("uses the complete interview turn proposal as terminal input", () => {
 test("exposes the candidate response contract in the provider JSON Schema", () => {
   const schema = z.toJSONSchema(
     interviewToolInputSchemas.submit_interview_turn,
-  ) as { properties?: { responseText?: { description?: string } } };
+  ) as {
+    properties?: {
+      assessment?: { description?: string };
+      coverageChanges?: {
+        description?: string;
+        items?: {
+          properties?: { status?: { description?: string } };
+        };
+      };
+      responseText?: { description?: string };
+    };
+  };
+
+  assert.match(
+    schema.properties?.assessment?.description ?? "",
+    /followUpNeeded=true.*partial/,
+  );
+  assert.match(
+    schema.properties?.assessment?.description ?? "",
+    /followUpNeeded=false.*sufficient/,
+  );
+  assert.match(
+    schema.properties?.coverageChanges?.description ?? "",
+    /当前回答分类/,
+  );
+  assert.match(
+    schema.properties?.coverageChanges?.items?.properties?.status?.description ?? "",
+    /第 3 题.*exhausted/,
+  );
 
   assert.equal(
     schema.properties?.responseText?.description,
