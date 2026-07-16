@@ -38,6 +38,25 @@ test("renders expanded reasoning and provisional response", () => {
   assert.match(html, /content-visibility:auto/);
 });
 
+test("labels the public narrative as analysis rather than hidden thinking", () => {
+  const html = renderToStaticMarkup(<AgentLiveTurn
+    turn={liveTurn({
+      reasoningEntries: [{
+        entryId: "analysis",
+        attemptId: "a1",
+        kind: "reasoning",
+        text: "回答提供了项目背景，但缺少具体技术取舍。",
+        status: "completed",
+        discarded: false,
+      }],
+    })}
+    active={false}
+    onToggle={() => {}}
+  />);
+  assert.match(html, /查看分析过程/);
+  assert.doesNotMatch(html, /查看思考过程/);
+});
+
 test("shows discarded revisions with reduced emphasis and sanitized tool labels", () => {
   const html = renderToStaticMarkup(<AgentLiveTurn
     turn={liveTurn({
@@ -78,7 +97,37 @@ test("shows a neutral placeholder before the first reasoning delta arrives", () 
     active
     onToggle={() => {}}
   />);
+  assert.match(html, /面试官分析中/);
   assert.match(html, /正在分析回答内容与简历证据，规划下一步问题/);
+});
+
+test("uses analysis terminology for failed and empty public narratives", () => {
+  const failedHtml = renderToStaticMarkup(<AgentLiveTurn
+    turn={liveTurn({
+      reasoningEntries: [],
+      thinking: { expanded: true, userToggled: false, failed: true },
+    })}
+    active={false}
+    onToggle={() => {}}
+  />);
+  assert.match(failedHtml, /本轮分析未能完成/);
+  assert.match(failedHtml, /本轮没有可公开的分析记录/);
+
+  const completedEntryHtml = renderToStaticMarkup(<AgentLiveTurn
+    turn={liveTurn({
+      reasoningEntries: [{
+        entryId: "analysis",
+        attemptId: "a1",
+        kind: "reasoning",
+        text: "",
+        status: "completed",
+        discarded: false,
+      }],
+    })}
+    active={false}
+    onToggle={() => {}}
+  />);
+  assert.match(completedEntryHtml, /此步骤没有可公开的补充分析/);
 });
 
 test("hides an empty completed thinking panel", () => {

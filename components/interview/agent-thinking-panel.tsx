@@ -12,7 +12,7 @@ export function AgentThinkingPanel({ thinking, entries, active, onToggle }: {
   onToggle: (expanded: boolean) => void;
 }) {
   const contentId = useId();
-  const label = thinking.failed ? "本轮思考未能完成" : active ? "面试官思考中" : "查看思考过程";
+  const label = thinking.failed ? "本轮分析未能完成" : active ? "面试官分析中" : "查看分析过程";
 
   return <div className="max-w-[86%] border-l-2 border-primary/20 pl-4 text-sm text-muted-foreground">
     <button
@@ -32,7 +32,7 @@ export function AgentThinkingPanel({ thinking, entries, active, onToggle }: {
       aria-live={active ? "polite" : "off"}
     >
       {entries.length > 0 ? entries.map((entry) => <ReasoningEntryView key={`${entry.attemptId}:${entry.entryId}`} entry={entry} />) : (
-        <p>{active ? "正在分析回答内容与简历证据，规划下一步问题。" : "本轮没有可公开的思考记录。"}</p>
+        <p>{active ? "正在分析回答内容与简历证据，规划下一步问题。" : "本轮没有可公开的分析记录。"}</p>
       )}
     </div> : null}
   </div>;
@@ -42,7 +42,7 @@ function ReasoningEntryView({ entry }: { entry: ReasoningEntry }) {
   const text = entry.kind === "reasoning" && !entry.text
     ? entry.status === "streaming"
       ? "正在分析回答内容与简历证据，规划下一步问题。"
-      : "此步骤没有可公开的补充内容。"
+      : "此步骤没有可公开的补充分析。"
     : entry.text;
 
   return <div className={cn("space-y-1", entry.discarded && "opacity-60")}>
