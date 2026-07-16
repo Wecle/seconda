@@ -6,7 +6,7 @@ import {
   validateResponseProgress,
 } from "./response-validator";
 
-test("rejects unsafe response progress before a complete question is required", () => {
+test("rejects unsafe response progress without enforcing question completeness", () => {
   assert.deepEqual(validateResponseProgress({
     action: "ask",
     language: "zh",
@@ -253,7 +253,7 @@ test("accepts a declarative finish and rejects interrogative finishes", () => {
   }).ok, false);
 });
 
-test("counts multilingual question punctuation as a single question", () => {
+test("accepts supported-language question punctuation", () => {
   assert.deepEqual(validateFinalResponse({
     action: "clarify",
     language: "es",
