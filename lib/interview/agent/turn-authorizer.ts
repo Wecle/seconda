@@ -27,24 +27,45 @@ export type AuthorizedTurnProposal = {
   projectedState: ProjectedTurnState;
 };
 
-export type RejectedTurnProposal = {
-  allowed: false;
-  reason:
-    | "OPENING_ASSESSMENT_FORBIDDEN"
-    | "OPENING_COVERAGE_FORBIDDEN"
-    | "ANSWER_ASSESSMENT_REQUIRED"
-    | "ANSWER_CATEGORY_REQUIRED"
-    | "CONTRADICTORY_COVERAGE_CHANGE"
-    | "INVALID_PROPOSAL"
-    | "CATEGORY_LIMIT"
-    | "DUPLICATE_QUESTION"
-    | "MISSING_EVIDENCE"
-    | "INVALID_FINISH_REASON"
-    | "OPENING_CANNOT_FINISH"
-    | "COMPLETION_NOT_READY"
-    | "POLICY_REQUIRES_FINISH"
-    | "INVALID_ACTION";
+export type CoverageConflictDetail = {
+  category: QuestionCategory;
+  topic: string;
+  receivedStatus: CoverageStatus;
+  expectedStatuses: CoverageStatus[];
+  conflictKind:
+    | "assessment_status_mismatch"
+    | "premature_exhausted"
+    | "non_answer_category_change";
 };
+
+type NonCoverageRejectionReason = Exclude<
+  | "OPENING_ASSESSMENT_FORBIDDEN"
+  | "OPENING_COVERAGE_FORBIDDEN"
+  | "ANSWER_ASSESSMENT_REQUIRED"
+  | "ANSWER_CATEGORY_REQUIRED"
+  | "CONTRADICTORY_COVERAGE_CHANGE"
+  | "INVALID_PROPOSAL"
+  | "CATEGORY_LIMIT"
+  | "DUPLICATE_QUESTION"
+  | "MISSING_EVIDENCE"
+  | "INVALID_FINISH_REASON"
+  | "OPENING_CANNOT_FINISH"
+  | "COMPLETION_NOT_READY"
+  | "POLICY_REQUIRES_FINISH"
+  | "INVALID_ACTION",
+  "CONTRADICTORY_COVERAGE_CHANGE"
+>;
+
+export type RejectedTurnProposal =
+  | {
+      allowed: false;
+      reason: "CONTRADICTORY_COVERAGE_CHANGE";
+      detail: CoverageConflictDetail;
+    }
+  | {
+      allowed: false;
+      reason: NonCoverageRejectionReason;
+    };
 
 export type TurnProposalAuthorization =
   | AuthorizedTurnProposal
@@ -57,7 +78,7 @@ type LimitRejectionReason = Extract<
 
 const limitRejectionReasonMap: Record<
   LimitRejectionReason,
-  RejectedTurnProposal["reason"]
+  NonCoverageRejectionReason
 > = {
   category_limit: "CATEGORY_LIMIT",
   duplicate_question: "DUPLICATE_QUESTION",
@@ -116,7 +137,11 @@ export function authorizeTurnProposal(input: {
     coverageChanges: parsedPrefix.data.coverageChanges,
   });
   if (!projectedStateResult.ok) {
-    return { allowed: false, reason: "CONTRADICTORY_COVERAGE_CHANGE" };
+    return {
+      allowed: false,
+      reason: "CONTRADICTORY_COVERAGE_CHANGE",
+      detail: projectedStateResult.detail,
+    };
   }
 
   const prefix = turnProposalPrefixSchema.parse({
@@ -184,7 +209,7 @@ function projectTurnState(
   ok: true;
   projectedState: ProjectedTurnState;
   normalizedCoverageChanges: TurnProposalPrefix["coverageChanges"];
-} | { ok: false } {
+} | { ok: false; detail: CoverageConflictDetail } {
   const categoryStatuses = { ...state.categoryStatuses };
   let consecutiveNoFollowUpAssessments =
     state.consecutiveNoFollowUpAssessments ?? 0;
@@ -216,13 +241,36 @@ function projectTurnState(
       categoryCount >= MAX_QUESTIONS_PER_CATEGORY;
 
     if (change.status === "exhausted" && !categoryIsExhausted) {
-      return { ok: false };
+      return {
+        ok: false,
+        detail: {
+          category: change.category,
+          topic: change.topic,
+          receivedStatus: change.status,
+          expectedStatuses:
+            change.category === input.answerCategory && assessmentStatus
+              ? [assessmentStatus]
+              : [categoryStatuses[change.category] ?? "uncovered"],
+          conflictKind: "premature_exhausted",
+        },
+      };
     }
 
     if (change.category === input.answerCategory && assessmentStatus) {
       const compatibleWithAssessment = change.status === assessmentStatus
         || (categoryIsExhausted && change.status === "exhausted");
-      if (!compatibleWithAssessment) return { ok: false };
+      if (!compatibleWithAssessment) {
+        return {
+          ok: false,
+          detail: {
+            category: change.category,
+            topic: change.topic,
+            receivedStatus: change.status,
+            expectedStatuses: [assessmentStatus],
+            conflictKind: "assessment_status_mismatch",
+          },
+        };
+      }
 
       normalizedCoverageChanges.push({
         ...change,
@@ -232,7 +280,18 @@ function projectTurnState(
     }
 
     const projectedStatus = categoryStatuses[change.category] ?? "uncovered";
-    if (change.status !== projectedStatus) return { ok: false };
+    if (change.status !== projectedStatus) {
+      return {
+        ok: false,
+        detail: {
+          category: change.category,
+          topic: change.topic,
+          receivedStatus: change.status,
+          expectedStatuses: [projectedStatus],
+          conflictKind: "non_answer_category_change",
+        },
+      };
+    }
     normalizedCoverageChanges.push(change);
   }
 

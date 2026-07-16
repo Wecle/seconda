@@ -223,7 +223,17 @@ test("rejects contradictory coverage changes, including assessment conflicts", (
         },
       ],
     }),
-  }), { allowed: false, reason: "CONTRADICTORY_COVERAGE_CHANGE" });
+  }), {
+    allowed: false,
+    reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "technical_depth",
+      topic: "降级结果",
+      receivedStatus: "sufficient",
+      expectedStatuses: ["partial"],
+      conflictKind: "assessment_status_mismatch",
+    },
+  });
 
   assert.deepEqual(authorizeTurnProposal({
     state: stateWith(),
@@ -238,7 +248,47 @@ test("rejects contradictory coverage changes, including assessment conflicts", (
         resumeEvidenceIds: ["evidence-1"],
       }],
     }),
-  }), { allowed: false, reason: "CONTRADICTORY_COVERAGE_CHANGE" });
+  }), {
+    allowed: false,
+    reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "technical_depth",
+      topic: "降级机制",
+      receivedStatus: "sufficient",
+      expectedStatuses: ["partial"],
+      conflictKind: "assessment_status_mismatch",
+    },
+  });
+});
+
+test("describes an assessment coverage status mismatch", () => {
+  assert.deepEqual(authorizeTurnProposal({
+    state: stateWith({
+      categoryCounts: { introduction: 1 },
+      categoryStatuses: { introduction: "partial" },
+    }),
+    mode: "answer",
+    answerCategory: "introduction",
+    prefix: askPrefix({
+      assessment: validAssessment({ followUpNeeded: false }),
+      coverageChanges: [{
+        category: "introduction",
+        topic: "自我介绍",
+        status: "partial",
+        resumeEvidenceIds: ["evidence-1"],
+      }],
+    }),
+  }), {
+    allowed: false,
+    reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "introduction",
+      topic: "自我介绍",
+      receivedStatus: "partial",
+      expectedStatuses: ["sufficient"],
+      conflictKind: "assessment_status_mismatch",
+    },
+  });
 });
 
 test("rejects a non-answer category aggregate upgrade", () => {
@@ -275,6 +325,13 @@ test("rejects a non-answer category aggregate upgrade", () => {
   assert.deepEqual(result, {
     allowed: false,
     reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "introduction",
+      topic: "自我介绍",
+      receivedStatus: "exhausted",
+      expectedStatuses: ["partial"],
+      conflictKind: "premature_exhausted",
+    },
   });
 });
 
@@ -308,8 +365,8 @@ test("projects the current answer category as exhausted at its third question", 
   assert.equal(result.prefix.coverageChanges[0]?.status, "exhausted");
 });
 
-test("rejects exhausted coverage below the category question maximum", () => {
-  assert.deepEqual(authorizeTurnProposal({
+test("describes premature category exhaustion", () => {
+  const result = authorizeTurnProposal({
     state: stateWith({ categoryCounts: { technical_depth: 2 } }),
     mode: "answer",
     answerCategory: "technical_depth",
@@ -322,7 +379,52 @@ test("rejects exhausted coverage below the category question maximum", () => {
         resumeEvidenceIds: ["evidence-1"],
       }],
     }),
-  }), { allowed: false, reason: "CONTRADICTORY_COVERAGE_CHANGE" });
+  });
+
+  assert.deepEqual(result, {
+    allowed: false,
+    reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "technical_depth",
+      topic: "降级机制",
+      receivedStatus: "exhausted",
+      expectedStatuses: ["partial"],
+      conflictKind: "premature_exhausted",
+    },
+  });
+});
+
+test("describes a non-answer category status change", () => {
+  const result = authorizeTurnProposal({
+    state: stateWith({
+      categoryStatuses: {
+        technical_depth: "partial",
+        introduction: "uncovered",
+      },
+    }),
+    mode: "answer",
+    answerCategory: "technical_depth",
+    prefix: askPrefix({
+      coverageChanges: [{
+        category: "introduction",
+        topic: "自我介绍",
+        status: "partial",
+        resumeEvidenceIds: ["evidence-1"],
+      }],
+    }),
+  });
+
+  assert.deepEqual(result, {
+    allowed: false,
+    reason: "CONTRADICTORY_COVERAGE_CHANGE",
+    detail: {
+      category: "introduction",
+      topic: "自我介绍",
+      receivedStatus: "partial",
+      expectedStatuses: ["uncovered"],
+      conflictKind: "non_answer_category_change",
+    },
+  });
 });
 
 test("uses response text for final duplicate-question authorization", () => {
