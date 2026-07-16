@@ -596,6 +596,7 @@ test("commits a multi-clause response without repair or retraction", async () =>
   assert.equal(result.exitReason, "completed");
   const events = await fixture.publicEvents();
   assert.equal(events.some((event) => event.type === "response_discarded"), false);
+  assert.equal(events.filter((event) => event.type === "attempt_started").length, 1);
   assert.equal(events.filter((event) => event.type === "response_started").length, 1);
   const snapshot = fixture.repository.inspectInterview("interview");
   assert.equal(snapshot.messages.length, 1);
