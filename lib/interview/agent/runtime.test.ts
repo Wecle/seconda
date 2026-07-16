@@ -6,6 +6,7 @@ import { z } from "zod";
 import {
   publicAgentEventPayloadSchemas,
   type InterviewAgentState,
+  type QuestionCategory,
 } from "./contracts";
 import {
   createStreamingInterviewAgentModelPort,
@@ -56,6 +57,39 @@ function openingProposal(overrides?: Partial<InterviewTurnProposal>): InterviewT
     },
     responseText: "请说明你如何设计回退机制？",
     ...overrides,
+  };
+}
+
+function answerProposal(input: {
+  followUpNeeded: boolean;
+  status: "partial" | "sufficient" | "exhausted";
+}): InterviewTurnProposal {
+  return {
+    assessment: {
+      completeness: "high",
+      specificity: "medium",
+      evidenceStrength: "strong",
+      reflectionDepth: "surface",
+      followUpNeeded: input.followUpNeeded,
+      missingPoints: [],
+      extractedEvidence: ["候选人介绍了近期经历和技术方向"],
+      publicSummary: "回答提供了近期经历和技术方向。",
+    },
+    coverageChanges: [{
+      category: "introduction",
+      topic: "自我介绍",
+      status: input.status,
+      resumeEvidenceIds: ["resume:profile"],
+    }],
+    decision: {
+      action: "ask",
+      category: "resume_project",
+      intent: "new_topic",
+      evidenceIds: ["resume:project"],
+      coverageTarget: "项目职责与关键取舍",
+      estimatedInformationGain: "high",
+    },
+    responseText: "请选择一个近期项目，说明你的职责和关键技术取舍。",
   };
 }
 
@@ -417,6 +451,7 @@ async function createRuntimeFixture(options?: {
   hooks?: readonly BeforeToolPipelineHook[];
   progressHash?: () => string;
   allowedTerms?: readonly string[];
+  answerCategory?: QuestionCategory;
 }) {
   const repository = createInMemoryInterviewAgentRepository(options?.initialState ?? {
     interviewId: "interview",
@@ -435,6 +470,29 @@ async function createRuntimeFixture(options?: {
     owner: "worker",
     generation: claimed.run!.leaseGeneration,
   };
+  let answerMessageId: string | null = null;
+  if (options?.answerCategory) {
+    const asked = await repository.commitQuestionOutcome({
+      runId: run.id,
+      interviewId: "interview",
+      toolCallId: "seed-question",
+      lease,
+      category: options.answerCategory,
+      topic: "自我介绍",
+      question: "请介绍一下自己。",
+      responseText: "请介绍一下自己。",
+      resumeEvidenceIds: ["resume:profile"],
+    });
+    const answer = await repository.appendMessage({
+      interviewId: "interview",
+      runId: run.id,
+      role: "user",
+      kind: "answer",
+      content: "我介绍了近期经历和技术方向。",
+      questionId: asked.questionId,
+    });
+    answerMessageId = answer.id;
+  }
   const model = options?.model ?? scriptedModel([
     streamingTerminalScript({ proposal: openingProposal() }),
   ]);
@@ -450,9 +508,9 @@ async function createRuntimeFixture(options?: {
     lease,
     progressHash: options?.progressHash ?? (() => "progress"),
     turnContext: {
-      mode: "opening" as const,
-      answerCategory: null,
-      answerMessageId: null,
+      mode: options?.answerCategory ? "answer" as const : "opening" as const,
+      answerCategory: options?.answerCategory ?? null,
+      answerMessageId,
       language: "zh" as const,
       persona: "standard" as const,
       allowedTerms: options?.allowedTerms ?? ["回退机制", "项目经历"],
@@ -478,6 +536,60 @@ async function createRuntimeFixture(options?: {
     },
   };
 }
+
+test("repairs an introduction coverage mismatch with expected and received statuses", async () => {
+  let repairInstruction = "";
+  const repaired: StreamScript = async (input, callNumber) => {
+    repairInstruction = input.messages
+      .filter((message) => message.role === "system")
+      .map((message) => message.content)
+      .join("\n");
+    return streamingTerminalScript({
+      proposal: answerProposal({
+        followUpNeeded: false,
+        status: "sufficient",
+      }),
+    })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    answerCategory: "introduction",
+    initialState: {
+      interviewId: "interview",
+      candidateRoundCount: 1,
+      categoryCounts: {},
+      categoryStatuses: {},
+      recentQuestions: [],
+      requestedUserEnd: false,
+      consecutiveNoFollowUpAssessments: 0,
+    },
+    allowedTerms: ["项目", "职责", "技术", "取舍", "近期经历", "技术方向"],
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: answerProposal({
+          followUpNeeded: false,
+          status: "partial",
+        }),
+      }),
+      repaired,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.match(repairInstruction, /introduction/);
+  assert.match(repairInstruction, /自我介绍/);
+  assert.match(repairInstruction, /应为 sufficient/);
+  assert.match(repairInstruction, /不能为 partial/);
+  assert.match(repairInstruction, /followUpNeeded=false.*sufficient/);
+  const snapshot = fixture.repository.inspectInterview("interview");
+  assert.equal(snapshot.assessments.length, 1);
+  assert.equal(snapshot.messages.filter((message) => message.role === "assistant").length, 2);
+  assert.equal(
+    (await fixture.publicEvents()).filter((event) => event.type === "message_committed").length,
+    1,
+  );
+});
 
 test("publishes live response before domain commit", async () => {
   const gate = deferred<void>();
