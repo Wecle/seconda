@@ -11,15 +11,19 @@ test("accepts paraphrased acknowledgement with declared sources", () => {
   assert.equal(composeCandidateResponse(plan), `${plan.acknowledgement}\n\n${plan.question}`);
 });
 
-test("still rejects multiple questions and questions in acknowledgement", () => {
-  assert.equal(groundedResponsePlanSchema.safeParse({
-    acknowledgement: "回答很好。",
-    question: "为什么？怎么做？",
-    claims: [],
-  }).success, false);
-  assert.equal(groundedResponsePlanSchema.safeParse({
-    acknowledgement: "你为什么这样做？",
-    question: "请说明原因？",
-    claims: [{ text: "这样做", sourceIds: ["answer:12"] }],
-  }).success, false);
+test("accepts multiple question clauses and questions in acknowledgement", () => {
+  for (const input of [
+    {
+      acknowledgement: "你为什么这样做？这个取舍值得继续展开。",
+      question: "为什么失败？怎么恢复？如何验证？",
+      claims: [{ text: "这样做", sourceIds: ["answer:12"] }],
+    },
+    {
+      acknowledgement: "回答很好。",
+      question: "请围绕失败、恢复和验证说明你的处理思路",
+      claims: [],
+    },
+  ]) {
+    assert.equal(groundedResponsePlanSchema.safeParse(input).success, true);
+  }
 });

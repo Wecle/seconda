@@ -3,7 +3,6 @@ export type ResponseValidationResult =
   | {
     ok: false;
     code:
-      | "MULTIPLE_QUESTIONS"
       | "FINISH_ASKS_QUESTION"
       | "FORMAL_SCORE"
       | "LANGUAGE_MISMATCH"
@@ -103,9 +102,6 @@ export function validateFinalResponse(input: {
   if (input.action === "finish" && (questionCount > 0 || startsWithQuestionIntent(input.text))) {
     return invalid("FINISH_ASKS_QUESTION", "结束语不得继续提问。");
   }
-  if (input.action !== "finish" && (questionCount !== 1 || hasCompoundQuestion(input.text))) {
-    return invalid("MULTIPLE_QUESTIONS", "每轮必须且只能提出一个问题。");
-  }
 
   return { ok: true };
 }
@@ -149,9 +145,6 @@ function validateResponse(input: {
   if (input.action === "finish" && (questionCount > 0 || startsWithQuestionIntent(input.text))) {
     return invalid("FINISH_ASKS_QUESTION", "结束语不得继续提问。");
   }
-  if (input.action !== "finish" && (questionCount > 1 || hasCompoundQuestion(input.text))) {
-    return invalid("MULTIPLE_QUESTIONS", "每轮必须且只能提出一个问题。");
-  }
 
   const unauthorizedTerm = findUnauthorizedTerm(
     input.text,
@@ -190,15 +183,6 @@ function countQuestions(text: string): number {
 
 function startsWithQuestionIntent(text: string): boolean {
   return /(?:^|[.!?。！？]\s*)(?:¿|can\b|could\b|do\b|does\b|did\b|how\b|what\b|when\b|where\b|which\b|why\b|would\b|(?:please\s+)?(?:tell|describe|explain|clarify|discuss|share)\b|你能|你可以|能否|是否|为什么|怎么|如何|请问|请(?:介绍|说明|讲讲|分享)|puedes\b|podr[ií]as\b|c[oó]mo\b|por\s+qu[eé]\b|(?:por\s+favor[,]?\s*)?(?:explica|aclare|describe|cu[eé]ntame)\b|k[oö]nnen\b|wie\b|warum\b|was\b|(?:bitte\s+)?(?:erkl[aä]ren|beschreiben|erz[aä]hlen)\b)/iu.test(text);
-}
-
-function hasCompoundQuestion(text: string): boolean {
-  return [
-    /\b(?:what|why|how|when|where|which)\b[^?？]{0,300}?(?:(?:,|;)\s*|(?:,|;)?\s+(?:and|then|also)\s+)\b(?:what|why|how|when|where|which)\b/iu,
-    /(?:为什么|怎么|如何|什么|哪(?:个|些)?|何时|哪里)[^?？]{0,300}?(?:(?:，|,|；|;)\s*|(?:，|,|；|;)?\s*(?:以及|并且|然后|还要)[^?？]{0,8})(?:为什么|怎么|如何|什么|哪(?:个|些)?|何时|哪里)/u,
-    /\b(?:qu[eé]|por\s+qu[eé]|c[oó]mo|cu[aá]ndo|d[oó]nde|cu[aá]l)\b[^?？]{0,300}?(?:(?:,|;)\s*|(?:,|;)?\s+(?:y|luego|adem[aá]s)\s+)\b(?:qu[eé]|por\s+qu[eé]|c[oó]mo|cu[aá]ndo|d[oó]nde|cu[aá]l)\b/iu,
-    /\b(?:was|warum|wie|wann|wo|welche)\b[^?？]{0,300}?(?:(?:,|;)\s*|(?:,|;)?\s+(?:und|dann|außerdem)\s+)\b(?:was|warum|wie|wann|wo|welche)\b/iu,
-  ].some((pattern) => pattern.test(text));
 }
 
 function isLanguageMismatch(

@@ -16,7 +16,6 @@ test("rejects unsafe response progress before a complete question is required", 
   for (const input of [
     { text: "你的逻辑性是 8 分。", allowedTerms: ["8"] },
     { text: "你提到了 60 秒回退机制。", allowedTerms: ["30 秒", "回退机制"] },
-    { text: "为什么这样做？如何验证？", allowedTerms: [] },
     { text: "responseText: 请继续", allowedTerms: [] },
   ]) {
     assert.equal(validateResponseProgress({
@@ -38,6 +37,23 @@ test("rejects unsafe response progress before a complete question is required", 
     text: "长".repeat(2_001),
     allowedTerms: [],
   }).ok, false);
+});
+
+test("allows multiple question clauses and declarative prompts for one structured action", () => {
+  for (const input of [
+    { language: "zh" as const, text: "你会怎样设计这条监控链路？采集怎么做？上报和分析为什么这样取舍？" },
+    { language: "en" as const, text: "What failed, and how did you recover? How did you verify the result?" },
+    { language: "es" as const, text: "Explica el diseño, cómo lo validaste y qué cambiarías." },
+    { language: "de" as const, text: "Beschreiben Sie den Entwurf und wie Sie das Ergebnis geprüft haben." },
+    { language: "zh" as const, text: "请围绕监控链路说明采集、上报和分析的设计" },
+  ]) {
+    assert.deepEqual(validateFinalResponse({
+      action: "ask",
+      language: input.language,
+      text: input.text,
+      allowedTerms: [],
+    }), { ok: true }, input.text);
+  }
 });
 
 test("defers only trailing grounded token prefixes during response progress", () => {
@@ -166,19 +182,19 @@ test("handles compact units, decimal chunks, and normalized numeric grounding", 
   }), { ok: true });
 });
 
-test("accepts one grounded question and rejects unsafe final text", () => {
+test("accepts grounded final text and rejects unsafe final text", () => {
   assert.deepEqual(validateFinalResponse({
     action: "ask",
     language: "zh",
     text: "你提到了 30 秒回退机制，能说明自动降级的触发条件吗？",
     allowedTerms: ["30 秒", "回退机制", "自动降级"],
   }), { ok: true });
-  assert.equal(validateFinalResponse({
+  assert.deepEqual(validateFinalResponse({
     action: "ask",
     language: "zh",
     text: "为什么？如何处理？",
     allowedTerms: [],
-  }).ok, false);
+  }), { ok: true });
   assert.equal(validateFinalResponse({
     action: "ask",
     language: "zh",
@@ -464,52 +480,21 @@ test("does not confuse a grounded domain score with formal assessment", () => {
   }), { ok: true });
 });
 
-test("rejects compound questions and finish imperatives", () => {
-  const compound = validateFinalResponse({
-    action: "ask",
-    language: "en",
-    text: "What failed, and how did you recover?",
-    allowedTerms: [],
-  });
-  assert.equal(compound.ok, false);
-  if (!compound.ok) assert.equal(compound.code, "MULTIPLE_QUESTIONS");
-  assert.equal(validateFinalResponse({
-    action: "ask",
-    language: "en",
-    text: "What failed; how did you recover?",
-    allowedTerms: [],
-  }).ok, false);
-
-  assert.equal(validateFinalResponse({
-    action: "ask",
-    language: "zh",
-    text: "为什么会失败，以及你是如何恢复的？",
-    allowedTerms: [],
-  }).ok, false);
-  assert.equal(validateFinalResponse({
-    action: "ask",
-    language: "zh",
-    text: "为什么会失败；如何恢复？",
-    allowedTerms: [],
-  }).ok, false);
-  assert.equal(validateFinalResponse({
-    action: "finish",
-    language: "en",
-    text: "Please tell me more about the project.",
-    allowedTerms: [],
-  }).ok, false);
-  assert.equal(validateFinalResponse({
-    action: "finish",
-    language: "en",
-    text: "Thank you. Please tell me more about the project.",
-    allowedTerms: [],
-  }).ok, false);
-  assert.equal(validateFinalResponse({
-    action: "finish",
-    language: "zh",
-    text: "面试结束。请介绍更多。",
-    allowedTerms: [],
-  }).ok, false);
+test("rejects candidate prompts when the structured action is finish", () => {
+  for (const input of [
+    { language: "en" as const, text: "Please tell me more about the project." },
+    { language: "en" as const, text: "Thank you. Please tell me more about the project." },
+    { language: "zh" as const, text: "面试结束。请介绍更多。" },
+  ]) {
+    const result = validateFinalResponse({
+      action: "finish",
+      language: input.language,
+      text: input.text,
+      allowedTerms: [],
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.code, "FINISH_ASKS_QUESTION");
+  }
 });
 
 test("rejects public PII and internal credentials", () => {
