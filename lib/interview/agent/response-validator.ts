@@ -115,6 +115,21 @@ export function validateResponseProgress(input: {
   return validateResponse(input, true);
 }
 
+export function validateConfiguredLanguage(input: {
+  language: ResponseLanguage;
+  text: string;
+  allowedTerms: readonly string[];
+}): ResponseValidationResult {
+  if (hasEnoughLanguageSignal(input.text) && isLanguageMismatch(
+    input.language,
+    input.text,
+    input.allowedTerms,
+  )) {
+    return invalid("LANGUAGE_MISMATCH", "回复语言与面试配置不一致。");
+  }
+  return { ok: true };
+}
+
 function validateResponse(input: {
   action: "ask" | "clarify" | "finish";
   language: ResponseLanguage;
@@ -133,13 +148,8 @@ function validateResponse(input: {
   if (containsFormalScore(input.text)) {
     return invalid("FORMAL_SCORE", "面试过程中的回复不得包含正式评分。");
   }
-  if (hasEnoughLanguageSignal(input.text) && isLanguageMismatch(
-    input.language,
-    input.text,
-    input.allowedTerms,
-  )) {
-    return invalid("LANGUAGE_MISMATCH", "回复语言与面试配置不一致。");
-  }
+  const languageValidation = validateConfiguredLanguage(input);
+  if (!languageValidation.ok) return languageValidation;
 
   const questionCount = countQuestions(input.text);
   if (input.action === "finish" && (questionCount > 0 || startsWithQuestionIntent(input.text))) {

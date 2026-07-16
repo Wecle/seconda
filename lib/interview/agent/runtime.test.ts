@@ -33,6 +33,17 @@ type CrashBoundary =
   | "after_response_finished"
   | "after_message_committed";
 
+const DEFAULT_READ_ANALYSIS = "先核对执行下一步所需的公开业务信息。";
+const DEFAULT_TERMINAL_ANALYSIS =
+  "候选人的回答提供了当前方向信息。我会基于已核实内容选择下一步问题，并聚焦仍需补充的关键细节。";
+
+function providerTerminalInput(
+  proposal: InterviewTurnProposal,
+  publicAnalysis = DEFAULT_TERMINAL_ANALYSIS,
+) {
+  return { publicAnalysis, ...proposal };
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   let reject!: (reason?: unknown) => void;
@@ -102,6 +113,8 @@ function longOpeningProposal(): InterviewTurnProposal {
 
 function streamingTerminalScript(options: {
   proposal: InterviewTurnProposal;
+  publicAnalysis?: string;
+  publicAnalysisChunks?: readonly string[];
   reasoning?: string;
   chunks?: readonly string[];
   beforeFinal?: Promise<void>;
@@ -125,14 +138,28 @@ function streamingTerminalScript(options: {
       });
       options.acknowledgements?.push(acknowledged);
     }
+    const requestedPublicAnalysis = options.publicAnalysis ?? DEFAULT_TERMINAL_ANALYSIS;
+    const publicAnalysisChunks = options.publicAnalysisChunks ?? [requestedPublicAnalysis];
+    for (const analysisChunk of publicAnalysisChunks) {
+      await input.onStreamEvent({
+        type: "tool_input_delta",
+        attemptId,
+        toolCallId: `terminal-${callNumber}`,
+        toolName: "submit_interview_turn",
+        inputText: JSON.stringify({ publicAnalysis: analysisChunk }),
+        partialInput: { publicAnalysis: analysisChunk },
+      });
+    }
+    const publicAnalysis = publicAnalysisChunks.at(-1) ?? requestedPublicAnalysis;
     const { responseText, ...prefix } = options.proposal;
+    const providerPrefix = { publicAnalysis, ...prefix };
     const prefixAcknowledged = await input.onStreamEvent({
       type: "tool_input_delta",
       attemptId,
       toolCallId: `terminal-${callNumber}`,
       toolName: "submit_interview_turn",
-      inputText: JSON.stringify(prefix),
-      partialInput: { ...prefix, responseText: "" },
+      inputText: JSON.stringify(providerPrefix),
+      partialInput: { ...providerPrefix, responseText: "" },
     });
     options.acknowledgements?.push(prefixAcknowledged);
     let observed = "";
@@ -143,8 +170,8 @@ function streamingTerminalScript(options: {
         attemptId,
         toolCallId: `terminal-${callNumber}`,
         toolName: "submit_interview_turn",
-        inputText: JSON.stringify({ ...prefix, responseText: observed }),
-        partialInput: { ...prefix, responseText: observed },
+        inputText: JSON.stringify({ ...providerPrefix, responseText: observed }),
+        partialInput: { ...providerPrefix, responseText: observed },
       });
       options.acknowledgements?.push(responseAcknowledged);
     }
@@ -154,7 +181,7 @@ function streamingTerminalScript(options: {
         type: "tool_call",
         callId: `terminal-${callNumber}`,
         toolName: "submit_interview_turn",
-        args: options.proposal,
+        args: providerTerminalInput(options.proposal, publicAnalysis),
       },
       attemptId,
       provisionalMessageId: messageId,
@@ -312,15 +339,15 @@ function readToolScript(): StreamScript {
       attemptId,
       toolCallId: `read-${attemptNumber}`,
       toolName: "get_coverage_state",
-      inputText: "{}",
-      partialInput: {},
+      inputText: JSON.stringify({ publicAnalysis: DEFAULT_READ_ANALYSIS }),
+      partialInput: { publicAnalysis: DEFAULT_READ_ANALYSIS },
     });
     return {
       step: {
         type: "tool_call",
         callId: `read-${attemptNumber}`,
         toolName: "get_coverage_state",
-        args: {},
+        args: { publicAnalysis: DEFAULT_READ_ANALYSIS },
       },
       attemptId,
       provisionalMessageId: `message-${attemptNumber}`,
@@ -330,7 +357,8 @@ function readToolScript(): StreamScript {
 
 function readToolScriptWith(options: {
   callId: string;
-  args?: unknown;
+  args?: Record<string, unknown>;
+  publicAnalysisChunks?: readonly string[];
   afterStream?: () => never;
 }): StreamScript {
   return async (input) => {
@@ -342,21 +370,27 @@ function readToolScriptWith(options: {
       attemptNumber,
       provisionalMessageId: `message-${attemptNumber}`,
     });
-    await input.onStreamEvent({
-      type: "tool_input_delta",
-      attemptId,
-      toolCallId: options.callId,
-      toolName: "get_coverage_state",
-      inputText: JSON.stringify(options.args ?? {}),
-      partialInput: options.args ?? {},
-    });
+    const publicAnalysisChunks = options.publicAnalysisChunks ?? [DEFAULT_READ_ANALYSIS];
+    for (const publicAnalysis of publicAnalysisChunks) {
+      await input.onStreamEvent({
+        type: "tool_input_delta",
+        attemptId,
+        toolCallId: options.callId,
+        toolName: "get_coverage_state",
+        inputText: JSON.stringify({ publicAnalysis, ...(options.args ?? {}) }),
+        partialInput: { publicAnalysis, ...(options.args ?? {}) },
+      });
+    }
     options.afterStream?.();
     return {
       step: {
         type: "tool_call",
         callId: options.callId,
         toolName: "get_coverage_state",
-        args: options.args ?? {},
+        args: {
+          publicAnalysis: publicAnalysisChunks.at(-1) ?? DEFAULT_READ_ANALYSIS,
+          ...(options.args ?? {}),
+        },
       },
       attemptId,
       provisionalMessageId: `message-${attemptNumber}`,
@@ -537,6 +571,272 @@ async function createRuntimeFixture(options?: {
     },
   };
 }
+
+test("streams cumulative tool public analysis once before the read tool lifecycle", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      readToolScriptWith({
+        callId: "coverage-public-analysis",
+        publicAnalysisChunks: ["先检查", "先检查能力覆盖度。"],
+      }),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+
+  await runInterviewAgent(fixture.runOptions);
+
+  const events = await fixture.publicEvents();
+  const reasoning = events.filter((event) => event.type === "reasoning_delta")
+    .map((event) => (event.payload as { text: string }).text)
+    .join("");
+  assert.match(reasoning, /先检查能力覆盖度/);
+  assert.equal(reasoning.match(/先检查能力覆盖度/g)?.length, 1);
+  assert.ok(
+    events.findIndex((event) => event.type === "reasoning_delta")
+      < events.findIndex((event) => event.type === "tool_call_started"),
+  );
+});
+
+test("strips public analysis before tool execution and loop hashing", async () => {
+  let receivedInput: unknown;
+  const persistedPendingCalls: unknown[] = [];
+  const fixture = await createRuntimeFixture();
+  const tools = new Map(fixture.runOptions.tools);
+  const coverage = tools.get("get_coverage_state")!;
+  tools.set("get_coverage_state", {
+    ...coverage,
+    async execute(input) {
+      receivedInput = input;
+      return [];
+    },
+  });
+  const repository = new Proxy(fixture.repository, {
+    get(target, property, receiver) {
+      if (property !== "saveCheckpoint") return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<InterviewAgentRepository["saveCheckpoint"]>) => {
+        if (args[1].pendingToolCall) persistedPendingCalls.push(args[1].pendingToolCall);
+        return target.saveCheckpoint(...args);
+      };
+    },
+  });
+  const result = await runInterviewAgent({
+    ...fixture.runOptions,
+    repository,
+    tools,
+    model: scriptedModel([
+      readToolScriptWith({ callId: "strip-analysis" }),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+
+  assert.equal(result.exitReason, "completed");
+  assert.deepEqual(receivedInput, {});
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(JSON.stringify(checkpoint?.loopDetector).includes("publicAnalysis"), false);
+  assert.ok(persistedPendingCalls.length >= 2);
+  assert.equal(JSON.stringify(persistedPendingCalls).includes("publicAnalysis"), false);
+});
+
+test("repairs missing tool public analysis with the existing invalid-action budget", async () => {
+  const missingAnalysis: StreamScript = async (input) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: `message-${attemptNumber}`,
+    });
+    return {
+      step: {
+        type: "tool_call",
+        callId: "missing-analysis",
+        toolName: "get_coverage_state",
+        args: {},
+      },
+      attemptId,
+      provisionalMessageId: `message-${attemptNumber}`,
+    };
+  };
+  const repairMessages: string[] = [];
+  const valid = streamingTerminalScript({ proposal: openingProposal() });
+  const captureRepair: StreamScript = async (input, callNumber) => {
+    repairMessages.push(...input.messages.filter((message) => message.role === "system")
+      .map((message) => message.content));
+    return valid(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([missingAnalysis, captureRepair]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const discarded = (await fixture.publicEvents()).find((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_REQUIRED"
+  ));
+  assert.ok(discarded);
+  assert.equal(repairMessages.some((message) => message.includes("publicAnalysis")), true);
+  assert.equal((await fixture.repository.getRun(fixture.run.id))?.checkpoint
+    ?.invalidModelActionCount, 1);
+});
+
+test("rejects a cumulative public analysis rewrite", async () => {
+  const rewritten = readToolScriptWith({
+    callId: "rewritten-analysis",
+    publicAnalysisChunks: ["先检查能力覆盖度。", "改为查看其他内容。"],
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([rewritten, rewritten, rewritten]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  assert.equal((await fixture.repository.getRun(fixture.run.id))?.checkpoint
+    ?.invalidModelActionCount, 3);
+  assert.equal((await fixture.publicEvents()).filter((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_REWRITTEN"
+  )).length, 3);
+});
+
+test("charges terminal public analysis repairs to the invalid-action budget", async () => {
+  const rewritten = streamingTerminalScript({
+    proposal: openingProposal(),
+    publicAnalysisChunks: ["先检查回答信息。", "改写已经公开的分析。"],
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([rewritten, rewritten, rewritten]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.invalidModelActionCount, 3);
+  assert.equal(checkpoint?.terminalAttemptCount, 0);
+});
+
+test("withholds split sensitive tool public analysis before persistence", async () => {
+  const sensitive = readToolScriptWith({
+    callId: "sensitive-analysis",
+    publicAnalysisChunks: [
+      `${"公开核对。".repeat(30)} DATABASE_`,
+      `${"公开核对。".repeat(30)} DATABASE_URL=postgresql://secret`,
+    ],
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([sensitive, streamingTerminalScript({ proposal: openingProposal() })]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const firstAttemptEvents = (await fixture.publicEvents()).filter(
+    (event) => event.attemptId === "attempt-1",
+  );
+  assert.equal(JSON.stringify(firstAttemptEvents).includes("DATABASE_"), false);
+  assert.equal(firstAttemptEvents.some((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "REASONING_SENSITIVE_CONTENT"
+  )), true);
+});
+
+test("withholds split sensitive terminal public analysis before authorization", async () => {
+  const safePrefix = `${"公开核对。".repeat(30)} DATABASE_`;
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: openingProposal(),
+        publicAnalysisChunks: [
+          safePrefix,
+          `${safePrefix}URL=postgresql://secret`,
+        ],
+      }),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const firstAttemptEvents = (await fixture.publicEvents()).filter(
+    (event) => event.attemptId === "attempt-1",
+  );
+  assert.equal(JSON.stringify(firstAttemptEvents).includes("DATABASE_"), false);
+  assert.equal(firstAttemptEvents.some((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "REASONING_SENSITIVE_CONTENT"
+  )), true);
+  assert.equal(firstAttemptEvents.some((event) => event.type === "proposal_authorized"), false);
+});
+
+test("streams terminal public analysis before authorization and strips it from hooks", async () => {
+  let committedInput: unknown;
+  const hook: BeforeToolPipelineHook = {
+    phase: "before",
+    async run(input) {
+      if (input.toolName === "submit_interview_turn") committedInput = input.input;
+      return { action: "continue", input: input.input };
+    },
+  };
+  const fixture = await createRuntimeFixture({
+    hooks: [hook],
+    model: scriptedModel([streamingTerminalScript({ proposal: openingProposal() })]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const events = await fixture.publicEvents();
+  assert.ok(
+    events.findIndex((event) => event.type === "reasoning_delta")
+      < events.findIndex((event) => event.type === "proposal_authorized"),
+  );
+  assert.equal(
+    committedInput !== null
+      && typeof committedInput === "object"
+      && Object.hasOwn(committedInput, "publicAnalysis"),
+    false,
+  );
+});
+
+test("rejects terminal public analysis appended after proposal authorization", async () => {
+  const proposal = openingProposal();
+  const streamed = streamingTerminalScript({ proposal });
+  const lateAnalysis: StreamScript = async (input, callNumber) => {
+    const result = await streamed(input, callNumber);
+    assert.equal(result.step.type, "tool_call");
+    return {
+      ...result,
+      step: {
+        ...result.step,
+        args: providerTerminalInput(
+          proposal,
+          `${DEFAULT_TERMINAL_ANALYSIS}授权后追加的内容。`,
+        ),
+      },
+    };
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([lateAnalysis, lateAnalysis, lateAnalysis]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const events = await fixture.publicEvents();
+  assert.equal(JSON.stringify(events).includes("授权后追加的内容"), false);
+  assert.equal(events.filter((event) => (
+    event.type === "response_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+  )).length, 3);
+  const checkpoint = (await fixture.repository.getRun(fixture.run.id))?.checkpoint;
+  assert.equal(checkpoint?.invalidModelActionCount, 3);
+  assert.equal(checkpoint?.terminalAttemptCount, 0);
+});
 
 test("repairs an introduction coverage mismatch with expected and received statuses", async () => {
   let repairInstruction = "";
@@ -1284,7 +1584,8 @@ test("discards a short reasoning tail when its provider stream aborts", async ()
 test("discards a pre-ack provider attempt before the model port retries", async () => {
   let providerCalls = 0;
   const proposal = openingProposal();
-  const serialized = JSON.stringify(proposal);
+  const providerProposal = providerTerminalInput(proposal);
+  const serialized = JSON.stringify(providerProposal);
   const model = createStreamingInterviewAgentModelPort({
     candidates: [{ model: "fast" }],
     classifyError: () => "transient",
@@ -1327,7 +1628,7 @@ test("discards a pre-ack provider attempt before the model port retries", async 
             type: "tool-call",
             toolCallId: "terminal-call",
             toolName: "submit_interview_turn",
-            input: proposal,
+            input: providerProposal,
           } as const;
         })(),
       };
@@ -1368,15 +1669,21 @@ test("publishes only sanitized read-tool lifecycle payloads", async () => {
       attemptId,
       toolCallId: "read-coverage",
       toolName: "get_coverage_state",
-      inputText: "{\"secret\":\"private-argument\"}",
-      partialInput: { secret: "private-argument" },
+      inputText: JSON.stringify({
+        publicAnalysis: DEFAULT_READ_ANALYSIS,
+        secret: "private-argument",
+      }),
+      partialInput: {
+        publicAnalysis: DEFAULT_READ_ANALYSIS,
+        secret: "private-argument",
+      },
     });
     return {
       step: {
         type: "tool_call",
         callId: "read-coverage",
         toolName: "get_coverage_state",
-        args: {},
+        args: { publicAnalysis: DEFAULT_READ_ANALYSIS },
       },
       attemptId,
       provisionalMessageId: "message-read",
@@ -1751,7 +2058,8 @@ test("repairs nested Runtime validation failures after a public terminal respons
   const proposal = openingProposal({
     responseText: "请说明你如何使用 Kubernetes 设计回退机制？",
   });
-  const serialized = JSON.stringify(proposal);
+  const providerProposal = providerTerminalInput(proposal);
+  const serialized = JSON.stringify(providerProposal);
   const splitAt = serialized.indexOf("Kubernetes");
   assert.ok(splitAt > 0);
   const invalid = invalidProviderModel(() => [
@@ -1778,7 +2086,7 @@ test("repairs nested Runtime validation failures after a public terminal respons
       type: "tool-call",
       toolCallId: "terminal-validation",
       toolName: "submit_interview_turn",
-      input: proposal,
+      input: providerProposal,
     },
   ]);
   const fixture = await createRuntimeFixture({ model: invalid.model });

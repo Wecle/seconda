@@ -2,9 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  validateConfiguredLanguage,
   validateFinalResponse,
   validateResponseProgress,
 } from "./response-validator";
+
+test("validates configured language for public analysis", () => {
+  assert.deepEqual(validateConfiguredLanguage({
+    language: "zh",
+    text: "Based on the answer, I will inspect the project evidence before choosing a follow-up.",
+    allowedTerms: [],
+  }), {
+    ok: false,
+    code: "LANGUAGE_MISMATCH",
+    message: "回复语言与面试配置不一致。",
+  });
+});
 
 test("rejects unsafe response progress without enforcing question completeness", () => {
   assert.deepEqual(validateResponseProgress({

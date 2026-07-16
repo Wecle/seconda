@@ -23,9 +23,14 @@ import type {
   RunLeaseToken,
 } from "./repository";
 import {
+  validateConfiguredLanguage,
   validateFinalResponse,
   validateResponseProgress,
 } from "./response-validator";
+import {
+  readPublicAnalysisDelta,
+  stripPublicAnalysis,
+} from "./public-analysis";
 import { createSafeTailBuffer, type SafeTailBuffer } from "./safe-tail-buffer";
 import {
   executeInterviewTool,
@@ -74,6 +79,7 @@ type AttemptState = {
   observedReasoningText: string;
   reasoningTail: SafeTailBuffer;
   reasoningStarted: boolean;
+  observedToolAnalyses: Map<string, string>;
   responseDeltaCount: number;
   publicReadTools: Set<string>;
   terminalToolCallId: string | null;
@@ -243,6 +249,7 @@ export async function runInterviewAgent(
       observedReasoningText: "",
       reasoningTail: createSafeTailBuffer(REASONING_SAFE_TAIL_CHARACTERS),
       reasoningStarted: false,
+      observedToolAnalyses: new Map<string, string>(),
       responseDeltaCount: 0,
       publicReadTools: new Set<string>(),
       terminalToolCallId: null,
@@ -300,18 +307,13 @@ export async function runInterviewAgent(
         throw new AttemptFailure(reasoningValidation.code, reasoningValidation.message);
       }
       attempt.observedReasoningText = reasoningValidation.text;
-      if (!attempt.reasoningStarted) {
-        attempt.reasoningStarted = true;
-        await appendPublicEvent("reasoning_started", {
-          runId: options.runId,
-          attemptId: attempt.attemptId,
-          entryId: `reasoning:${attempt.attemptId}`,
-        }, attempt, `reasoning:${attempt.attemptId}:started`);
-      }
+      await startReasoningIfNeeded(attempt);
       const safePrefix = attempt.reasoningTail.acceptValidated(reasoningValidation.text);
       if (safePrefix) await attempt.reasoning.append(safePrefix);
       return publicWriteCount > writesBefore;
     }
+
+    await handleToolPublicAnalysis(attempt, event.toolCallId, event.partialInput);
 
     if (isTerminalTool(event.toolName)) {
       attempt.terminalSeen = true;
@@ -319,8 +321,10 @@ export async function runInterviewAgent(
       if (attempt.terminalToolCallId !== event.toolCallId) {
         throw new AttemptFailure("TERMINAL_CALL_CHANGED", "终结工具调用标识发生变化。");
       }
-      await finishReasoning(attempt);
-      await handleTerminalProgress(attempt, event.partialInput);
+      await handleTerminalProgress(
+        attempt,
+        stripPublicAnalysisFromPartial(event.partialInput),
+      );
       return publicWriteCount > writesBefore;
     }
 
@@ -328,19 +332,68 @@ export async function runInterviewAgent(
     if (!publicLabel) {
       throw new AttemptFailure("UNKNOWN_TOOL", "模型调用了未授权工具。");
     }
-    if (!attempt.publicReadTools.has(event.toolCallId)) {
-      await finishReasoning(attempt);
-      attempt.publicReadTools.add(event.toolCallId);
-      await appendPhase("tool_running", attempt);
-      await appendPublicEvent("tool_call_started", {
-        runId: options.runId,
-        attemptId: attempt.attemptId,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        publicLabel,
-      }, attempt, `tool:${attempt.attemptId}:${event.toolCallId}:public-started`);
-    }
     return publicWriteCount > writesBefore;
+  }
+
+  async function startReasoningIfNeeded(attempt: AttemptState) {
+    if (attempt.reasoningStarted) return;
+    attempt.reasoningStarted = true;
+    await appendPublicEvent("reasoning_started", {
+      runId: options.runId,
+      attemptId: attempt.attemptId,
+      entryId: `reasoning:${attempt.attemptId}`,
+    }, attempt, `reasoning:${attempt.attemptId}:started`);
+  }
+
+  async function handleToolPublicAnalysis(
+    attempt: AttemptState,
+    toolCallId: string,
+    partialInput: unknown,
+  ) {
+    const previous = attempt.observedToolAnalyses.get(toolCallId) ?? "";
+    const progress = readPublicAnalysisDelta(partialInput, previous);
+    if (progress.status === "accumulating" || progress.status === "unchanged") return;
+    if (progress.status === "invalid") {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_INVALID",
+        "publicAnalysis 必须是非空公开文本。",
+      );
+    }
+    if (progress.status === "rewritten") {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_REWRITTEN",
+        "模型改写了已公开的分析前缀。",
+      );
+    }
+    if (
+      attempt.authorized
+      && attempt.terminalToolCallId === toolCallId
+    ) {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_INVALID",
+        "终结提案开始授权后不得继续追加 publicAnalysis。",
+      );
+    }
+    const languageValidation = validateConfiguredLanguage({
+      language: context.language,
+      text: progress.fullText,
+      allowedTerms: context.allowedTerms,
+    });
+    if (!languageValidation.ok) {
+      throw new AttemptFailure("PUBLIC_ANALYSIS_INVALID", languageValidation.message);
+    }
+    const reasoningValidation = validatePublicReasoningDelta(
+      progress.delta,
+      attempt.observedReasoningText,
+    );
+    if (!reasoningValidation.ok) {
+      throw new AttemptFailure(reasoningValidation.code, reasoningValidation.message);
+    }
+    attempt.observedToolAnalyses.set(toolCallId, progress.fullText);
+    attempt.observedReasoningText = reasoningValidation.text;
+    await startReasoningIfNeeded(attempt);
+    const safePrefix = attempt.reasoningTail.acceptValidated(reasoningValidation.text);
+    if (safePrefix) await attempt.reasoning.append(safePrefix);
   }
 
   async function handleTerminalProgress(attempt: AttemptState, partialInput: unknown) {
@@ -354,6 +407,7 @@ export async function runInterviewAgent(
     }
 
     if (!attempt.authorized) {
+      await finishReasoning(attempt);
       await options.repository.saveCheckpoint(
         options.runId,
         checkpointFor("proposal_streaming"),
@@ -375,7 +429,6 @@ export async function runInterviewAgent(
             : undefined,
         );
       }
-      await finishReasoning(attempt);
       await options.repository.authorizeProposal({
         runId: options.runId,
         lease: options.lease,
@@ -541,12 +594,20 @@ export async function runInterviewAgent(
         throw new AttemptFailure("TOOL_CALL_REQUIRED", "模型必须调用当前可用工具。");
       }
 
+      await handleToolPublicAnalysis(selectedAttempt, step.callId, step.args);
+      const { businessInput: checkpointBusinessInput } = stripCompletePublicAnalysis(
+        step.args,
+      );
+      const pendingBusinessToolCall = {
+        ...step,
+        args: checkpointBusinessInput,
+      };
       toolCallCount += 1;
       await options.repository.saveCheckpoint(
           options.runId,
           checkpointFor(
           selectedAttempt.authorized ? "responding" : "reasoning",
-          step,
+          pendingBusinessToolCall,
         ),
         options.lease,
       );
@@ -627,6 +688,9 @@ export async function runInterviewAgent(
     if (!definition || !publicLabel) {
       throw new AttemptFailure("UNKNOWN_TOOL", "模型调用了未授权只读工具。");
     }
+    await handleToolPublicAnalysis(attempt, step.callId, step.args);
+    const { businessInput } = stripCompletePublicAnalysis(step.args);
+    const parsedBusinessInput = definition.inputSchema.parse(businessInput);
     await finishReasoning(attempt);
     if (!attempt.publicReadTools.has(step.callId)) {
       attempt.publicReadTools.add(step.callId);
@@ -641,7 +705,7 @@ export async function runInterviewAgent(
     }
     const result = await executeInterviewTool({
       definition,
-      rawInput: step.args,
+      rawInput: parsedBusinessInput,
       context: {
         interviewId: options.interviewId,
         runId: options.runId,
@@ -672,7 +736,7 @@ export async function runInterviewAgent(
     });
     const loopDecision = loopDetector.record({
       toolName: step.toolName,
-      args: step.args,
+      args: parsedBusinessInput,
       result,
       progressHash: options.progressHash(),
       phase: "planning",
@@ -703,7 +767,9 @@ export async function runInterviewAgent(
         "终结提案没有经过完整的增量授权与回复流。",
       );
     }
-    const finalProposal = interviewTurnProposalSchema.parse(step.args);
+    await handleToolPublicAnalysis(attempt, step.callId, step.args);
+    const { businessInput } = stripCompletePublicAnalysis(step.args);
+    const finalProposal = interviewTurnProposalSchema.parse(businessInput);
     const { responseText, ...finalPrefix } = finalProposal;
     if (hashTurnProposalPrefix(finalPrefix) !== attempt.authorized.proposalHash) {
       throw new AttemptFailure("AUTHORIZED_PREFIX_CHANGED", "最终提案与授权提案不一致。");
@@ -745,7 +811,7 @@ export async function runInterviewAgent(
     if (!terminalDefinition) {
       throw new AttemptFailure("UNKNOWN_TOOL", "终结工具不在当前授权工具集中。");
     }
-    const parsed = terminalDefinition.inputSchema.safeParse(step.args);
+    const parsed = terminalDefinition.inputSchema.safeParse(businessInput);
     if (!parsed.success) {
       throw new AttemptFailure("INVALID_TOOL_INPUT", "终结工具参数格式无效。");
     }
@@ -997,6 +1063,27 @@ function validatePublicReasoningDelta(text: string, currentText: string):
   return { ok: true, text: combinedText };
 }
 
+function stripPublicAnalysisFromPartial(input: unknown): unknown {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return input;
+  const businessInput = { ...input as Record<string, unknown> };
+  delete businessInput.publicAnalysis;
+  return businessInput;
+}
+
+function stripCompletePublicAnalysis(input: unknown) {
+  try {
+    return stripPublicAnalysis(input);
+  } catch (error) {
+    if (readErrorCode(error) === "PUBLIC_ANALYSIS_REQUIRED") {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_REQUIRED",
+        "工具调用必须包含非空 publicAnalysis。",
+      );
+    }
+    throw error;
+  }
+}
+
 function readCommittedEventSequence(outcome: unknown) {
   if (
     !outcome
@@ -1071,6 +1158,14 @@ function classifyRepairCharge(
     findErrorByCode(error, "UNKNOWN_TOOL")
     || readProtocolKind(protocolError) === "inactive_tool"
   ) return "unknown";
+  if (
+    attemptFailure
+    && (
+      attemptFailure.code === "PUBLIC_ANALYSIS_REQUIRED"
+      || attemptFailure.code === "PUBLIC_ANALYSIS_INVALID"
+      || attemptFailure.code === "PUBLIC_ANALYSIS_REWRITTEN"
+    )
+  ) return "invalid";
   if (
     attempt?.terminalSeen
     || attempt?.authorized
@@ -1198,6 +1293,13 @@ function readRecoverableRepairCode(
 }
 
 function repairGuidance(code: string, error?: unknown) {
+  if (
+    code === "PUBLIC_ANALYSIS_REQUIRED"
+    || code === "PUBLIC_ANALYSIS_INVALID"
+    || code === "PUBLIC_ANALYSIS_REWRITTEN"
+  ) {
+    return "先生成非空、可公开且单调追加的 publicAnalysis；只描述业务判断，不得包含隐藏推理、内部规则或私密参数。";
+  }
   if (code === "CONTRADICTORY_COVERAGE_CHANGE") {
     return coverageRepairGuidance(
       findErrorInstance(error, AttemptFailure)?.coverageConflict,
