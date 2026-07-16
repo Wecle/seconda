@@ -13,6 +13,7 @@ import { RESPONSE_TEXT_SCHEMA_DESCRIPTION } from "./turn-proposal";
 
 const submitTool = [{ name: "submit_interview_turn", description: "submit" }];
 const openingProposal = {
+  publicAnalysis: "候选人的方向清晰，下一步邀请其介绍最近经历与岗位期待。",
   assessment: null,
   coverageChanges: [],
   decision: {
@@ -35,6 +36,10 @@ test("system prompt requests public progress without hidden reasoning", () => {
   }
   assert.match(AGENT_SYSTEM_PROMPT, /公开.*进度/);
   assert.match(AGENT_SYSTEM_PROMPT, /隐藏.*推理/);
+  assert.match(AGENT_SYSTEM_PROMPT, /每次工具调用.*publicAnalysis/);
+  assert.match(AGENT_SYSTEM_PROMPT, /只读工具.*一句/);
+  assert.match(AGENT_SYSTEM_PROMPT, /submit_interview_turn.*2–4 句/);
+  assert.match(AGENT_SYSTEM_PROMPT, /publicAnalysis.*先于其他工具字段/);
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
   assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=true.*partial/);
   assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=false.*sufficient/);
@@ -69,6 +74,14 @@ test("builds real AI SDK tools without execute handlers", () => {
   assert.deepEqual(Object.keys(tools), ["submit_interview_turn"]);
   assert.equal("inputSchema" in tools.submit_interview_turn, true);
   assert.equal("execute" in tools.submit_interview_turn, false);
+  const inputSchema = tools.submit_interview_turn.inputSchema as {
+    safeParse(input: unknown): { success: boolean };
+  };
+  assert.equal(inputSchema.safeParse(openingProposal).success, true);
+  const businessOnlyProposal = Object.fromEntries(
+    Object.entries(openingProposal).filter(([key]) => key !== "publicAnalysis"),
+  );
+  assert.equal(inputSchema.safeParse(businessOnlyProposal).success, false);
 });
 
 test("production DeepSeek Agent wiring sends a conversational required-tool request", async () => {
@@ -225,6 +238,13 @@ test("streams public text and growing partial terminal input across chunk bounda
   assert.equal(inputEvents[1].inputText, serialized);
   assert.notEqual(inputEvents[0].partialInput, undefined);
   assert.deepEqual(inputEvents[1].partialInput, openingProposal);
+  assert.equal(
+    events.some((event) => event.type === "tool_input_delta"
+      && typeof event.partialInput === "object"
+      && event.partialInput !== null
+      && "publicAnalysis" in event.partialInput),
+    true,
+  );
   assert.deepEqual(result.step, {
     type: "tool_call",
     callId: "call-1",
@@ -585,7 +605,7 @@ test("rejects conflicting tool stream protocols instead of taking the last call"
           type: "tool-call",
           toolCallId: "call-1",
           toolName: "get_coverage_state",
-          input: {},
+          input: { publicAnalysis: "先检查当前能力覆盖情况。" },
         },
       ],
     },
@@ -644,7 +664,10 @@ test("classifies malformed active-tool arguments as a model action error", async
         type: "tool-call",
         toolCallId: "call-malformed",
         toolName: "get_coverage_state",
-        input: { unexpected: true },
+        input: {
+          publicAnalysis: "先检查当前能力覆盖情况。",
+          unexpected: true,
+        },
       }),
     }),
   });

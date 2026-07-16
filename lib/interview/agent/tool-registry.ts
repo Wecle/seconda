@@ -5,6 +5,7 @@ import type {
   InterviewToolContext,
   InterviewToolDefinition,
 } from "./tool-pipeline";
+import { withPublicAnalysis } from "./public-analysis";
 import { interviewTurnProposalSchema } from "./turn-proposal";
 
 export const interviewToolNames = [
@@ -46,6 +47,25 @@ export const interviewToolInputSchemas = {
   submit_interview_turn: interviewTurnProposalSchema,
 } satisfies Record<InterviewToolName, z.ZodType>;
 
+export const providerInterviewToolInputSchemas = {
+  get_resume_evidence: withPublicAnalysis(
+    interviewToolInputSchemas.get_resume_evidence,
+    "read",
+  ),
+  get_interview_history: withPublicAnalysis(
+    interviewToolInputSchemas.get_interview_history,
+    "read",
+  ),
+  get_coverage_state: withPublicAnalysis(
+    interviewToolInputSchemas.get_coverage_state,
+    "read",
+  ),
+  submit_interview_turn: withPublicAnalysis(
+    interviewTurnProposalSchema,
+    "terminal",
+  ),
+} satisfies Record<InterviewToolName, z.ZodType>;
+
 export const publicInterviewToolLabels = {
   get_resume_evidence: "核对简历证据",
   get_interview_history: "回顾面试记录",
@@ -60,7 +80,7 @@ export function createAgentProviderStepSchema(
     type: z.literal("tool_call"),
     callId: z.string().min(1),
     toolName: z.literal(toolName),
-    args: interviewToolInputSchemas[toolName],
+    args: providerInterviewToolInputSchemas[toolName],
   }).strict());
   return z.union(
     branches as unknown as [z.ZodObject, ...z.ZodObject[]],
