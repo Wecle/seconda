@@ -803,6 +803,179 @@ test("streams terminal public analysis before authorization and strips it from h
   );
 });
 
+test("waits for a late terminal public analysis field to become complete before authorization", async () => {
+  const proposal = openingProposal();
+  const lateAnalysis: StreamScript = async (input, callNumber) => {
+    const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+    const attemptId = `attempt-${attemptNumber}`;
+    const callId = `terminal-${callNumber}`;
+    const messageId = `message-${callNumber}`;
+    await input.onAttemptStarted?.({
+      model: "fake",
+      attemptId,
+      attemptNumber,
+      provisionalMessageId: messageId,
+    });
+    const { responseText, ...prefix } = proposal;
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: JSON.stringify({ ...prefix, responseText: "" }),
+      partialInput: { ...prefix, responseText: "" },
+    });
+    const partialAnalysis = "候选人的回答提供了当前方向信息。";
+    const incompleteLateInput = `${JSON.stringify({ ...prefix, responseText: "" }).slice(0, -1)},"publicAnalysis":"${partialAnalysis}`;
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: incompleteLateInput,
+      partialInput: {
+        ...prefix,
+        responseText: "",
+        publicAnalysis: partialAnalysis,
+      },
+    });
+    const completePrefix = {
+      ...prefix,
+      responseText: "",
+      publicAnalysis: DEFAULT_TERMINAL_ANALYSIS,
+    };
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: JSON.stringify(completePrefix),
+      partialInput: completePrefix,
+    });
+    await input.onStreamEvent({
+      type: "tool_input_delta",
+      attemptId,
+      toolCallId: callId,
+      toolName: "submit_interview_turn",
+      inputText: JSON.stringify({ ...completePrefix, responseText }),
+      partialInput: { ...completePrefix, responseText },
+    });
+    return {
+      step: {
+        type: "tool_call",
+        callId,
+        toolName: "submit_interview_turn",
+        args: providerTerminalInput(proposal),
+      },
+      attemptId,
+      provisionalMessageId: messageId,
+    };
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([lateAnalysis]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const events = await fixture.publicEvents();
+  assert.ok(
+    events.findIndex((event) => event.type === "reasoning_delta")
+      < events.findIndex((event) => event.type === "proposal_authorized"),
+  );
+});
+
+test("rejects blank terminal public analysis before proposal authorization", async () => {
+  const blank = streamingTerminalScript({
+    proposal: openingProposal(),
+    publicAnalysis: "   ",
+  });
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([blank, blank, blank]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "terminal_action_failed");
+  const events = await fixture.publicEvents();
+  assert.equal(events.some((event) => event.type === "proposal_authorized"), false);
+  assert.equal(events.filter((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+  )).length, 3);
+});
+
+test("enforces read and terminal public analysis limits across cumulative deltas", async () => {
+  const cases = [
+    {
+      script: () => readToolScriptWith({
+        callId: "overlong-read-analysis",
+        publicAnalysisChunks: [
+          "核".repeat(297),
+          `${"核".repeat(297)}超长标记`,
+        ],
+      }),
+      leakedText: "超长标记",
+    },
+    {
+      script: () => streamingTerminalScript({
+        proposal: openingProposal(),
+        publicAnalysisChunks: [
+          "核".repeat(1_197),
+          `${"核".repeat(1_197)}超长标记`,
+        ],
+      }),
+      leakedText: "超长标记",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const invalid = testCase.script();
+    const fixture = await createRuntimeFixture({
+      model: scriptedModel([invalid, invalid, invalid]),
+    });
+    const result = await runInterviewAgent(fixture.runOptions);
+    const events = await fixture.publicEvents();
+
+    assert.equal(result.exitReason, "terminal_action_failed");
+    assert.equal(JSON.stringify(events).includes(testCase.leakedText), false);
+    assert.equal(events.some((event) => event.type === "proposal_authorized"), false);
+    assert.equal(events.filter((event) => (
+      event.type === "attempt_discarded"
+      && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+    )).length, 3);
+  }
+});
+
+test("withholds formal scores and internal protocol fields split across analysis deltas", async () => {
+  const cases = [
+    ["你的评", "分为8分"],
+    ["response", "Text"],
+    ["assess", "ment"],
+    ["coverage", "Changes"],
+  ] as const;
+
+  for (const [firstHalf, secondHalf] of cases) {
+    const safePrefix = `${"公开核对。".repeat(20)}${firstHalf}`;
+    const invalid = readToolScriptWith({
+      callId: `unsafe-analysis-${firstHalf}`,
+      publicAnalysisChunks: [safePrefix, `${safePrefix}${secondHalf}`],
+    });
+    const fixture = await createRuntimeFixture({
+      model: scriptedModel([invalid, invalid, invalid]),
+    });
+    const result = await runInterviewAgent(fixture.runOptions);
+    const events = await fixture.publicEvents();
+
+    assert.equal(result.exitReason, "terminal_action_failed");
+    assert.equal(JSON.stringify(events).includes(`${firstHalf}${secondHalf}`), false);
+    assert.equal(events.filter((event) => (
+      event.type === "attempt_discarded"
+      && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+    )).length, 3);
+  }
+});
+
 test("rejects terminal public analysis appended after proposal authorization", async () => {
   const proposal = openingProposal();
   const streamed = streamingTerminalScript({ proposal });
