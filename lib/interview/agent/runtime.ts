@@ -38,6 +38,7 @@ import {
 import {
   authorizeTurnProposal,
   type AuthorizedTurnProposal,
+  type CoverageConflictDetail,
 } from "./turn-authorizer";
 import {
   hashTurnProposalPrefix,
@@ -369,6 +370,9 @@ export async function runInterviewAgent(
         throw new AttemptFailure(
           authorization.reason,
           `提案未通过确定性授权：${authorization.reason}`,
+          authorization.reason === "CONTRADICTORY_COVERAGE_CHANGE"
+            ? { coverageConflict: authorization.detail }
+            : undefined,
         );
       }
       await finishReasoning(attempt);
@@ -1019,11 +1023,17 @@ function describeTool(name: string) {
 
 class AttemptFailure extends Error {
   readonly code: string;
+  readonly coverageConflict?: CoverageConflictDetail;
 
-  constructor(code: string, message: string) {
+  constructor(
+    code: string,
+    message: string,
+    options?: { coverageConflict?: CoverageConflictDetail },
+  ) {
     super(message);
     this.name = "AttemptFailure";
     this.code = code;
+    this.coverageConflict = options?.coverageConflict;
   }
 }
 
@@ -1145,7 +1155,23 @@ function repairInstruction(error: unknown) {
   return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error)}重新生成完整提案；responseText 必须最后输出，且不得修改已生成的文本前缀。`;
 }
 
+const coverageStatusRepairRule =
+  "followUpNeeded=false 时使用 sufficient，true 时使用 partial；分类达到第 3 题时使用 exhausted，未达到时不得提前 exhausted。";
+
+function coverageRepairGuidance(detail?: CoverageConflictDetail) {
+  if (!detail) {
+    return `修正 coverageChanges 状态。${coverageStatusRepairRule}`;
+  }
+  const expected = detail.expectedStatuses.join(" 或 ");
+  return `coverageChanges 中分类 ${detail.category}、主题“${detail.topic}”的状态应为 ${expected}，不能为 ${detail.receivedStatus}。${coverageStatusRepairRule}`;
+}
+
 function repairGuidance(code: string, error?: unknown) {
+  if (code === "CONTRADICTORY_COVERAGE_CHANGE") {
+    return coverageRepairGuidance(
+      findErrorInstance(error, AttemptFailure)?.coverageConflict,
+    );
+  }
   if (code === "UNAUTHORIZED_TERM") {
     return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
   }
