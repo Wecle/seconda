@@ -23,11 +23,13 @@ import type {
   RunLeaseToken,
 } from "./repository";
 import {
-  validateConfiguredLanguage,
   validateFinalResponse,
+  validatePublicAnalysisContent,
   validateResponseProgress,
 } from "./response-validator";
 import {
+  READ_PUBLIC_ANALYSIS_SCHEMA,
+  TERMINAL_PUBLIC_ANALYSIS_SCHEMA,
   readPublicAnalysisDelta,
   stripPublicAnalysis,
 } from "./public-analysis";
@@ -80,6 +82,7 @@ type AttemptState = {
   reasoningTail: SafeTailBuffer;
   reasoningStarted: boolean;
   observedToolAnalyses: Map<string, string>;
+  completedToolAnalyses: Set<string>;
   responseDeltaCount: number;
   publicReadTools: Set<string>;
   terminalToolCallId: string | null;
@@ -250,6 +253,7 @@ export async function runInterviewAgent(
       reasoningTail: createSafeTailBuffer(REASONING_SAFE_TAIL_CHARACTERS),
       reasoningStarted: false,
       observedToolAnalyses: new Map<string, string>(),
+      completedToolAnalyses: new Set<string>(),
       responseDeltaCount: 0,
       publicReadTools: new Set<string>(),
       terminalToolCallId: null,
@@ -313,7 +317,13 @@ export async function runInterviewAgent(
       return publicWriteCount > writesBefore;
     }
 
-    await handleToolPublicAnalysis(attempt, event.toolCallId, event.partialInput);
+    await handleToolPublicAnalysis(
+      attempt,
+      event.toolCallId,
+      event.toolName,
+      event.partialInput,
+      event.inputText,
+    );
 
     if (isTerminalTool(event.toolName)) {
       attempt.terminalSeen = true;
@@ -348,11 +358,13 @@ export async function runInterviewAgent(
   async function handleToolPublicAnalysis(
     attempt: AttemptState,
     toolCallId: string,
+    toolName: string,
     partialInput: unknown,
+    inputText?: string,
   ) {
     const previous = attempt.observedToolAnalyses.get(toolCallId) ?? "";
     const progress = readPublicAnalysisDelta(partialInput, previous);
-    if (progress.status === "accumulating" || progress.status === "unchanged") return;
+    if (progress.status === "accumulating") return;
     if (progress.status === "invalid") {
       throw new AttemptFailure(
         "PUBLIC_ANALYSIS_INVALID",
@@ -365,6 +377,26 @@ export async function runInterviewAgent(
         "模型改写了已公开的分析前缀。",
       );
     }
+    const analysisSchema = isTerminalTool(toolName)
+      ? TERMINAL_PUBLIC_ANALYSIS_SCHEMA
+      : READ_PUBLIC_ANALYSIS_SCHEMA;
+    const schemaValidation = analysisSchema.safeParse(progress.fullText);
+    if (!schemaValidation.success) {
+      throw new AttemptFailure(
+        "PUBLIC_ANALYSIS_INVALID",
+        `publicAnalysis 必须是非空文本，且不得超过${isTerminalTool(toolName) ? 1_200 : 300}个字符。`,
+      );
+    }
+    if (progress.status === "unchanged") {
+      attempt.observedToolAnalyses.set(toolCallId, progress.fullText);
+      if (
+        inputText === undefined
+        || hasCompleteJsonStringField(inputText, "publicAnalysis")
+      ) {
+        attempt.completedToolAnalyses.add(toolCallId);
+      }
+      return;
+    }
     if (
       attempt.authorized
       && attempt.terminalToolCallId === toolCallId
@@ -374,13 +406,18 @@ export async function runInterviewAgent(
         "终结提案开始授权后不得继续追加 publicAnalysis。",
       );
     }
-    const languageValidation = validateConfiguredLanguage({
+    const contentValidation = validatePublicAnalysisContent({
       language: context.language,
       text: progress.fullText,
       allowedTerms: context.allowedTerms,
     });
-    if (!languageValidation.ok) {
-      throw new AttemptFailure("PUBLIC_ANALYSIS_INVALID", languageValidation.message);
+    if (!contentValidation.ok) {
+      throw new AttemptFailure(
+        contentValidation.code === "SENSITIVE_CONTENT"
+          ? "REASONING_SENSITIVE_CONTENT"
+          : "PUBLIC_ANALYSIS_INVALID",
+        contentValidation.message,
+      );
     }
     const reasoningValidation = validatePublicReasoningDelta(
       progress.delta,
@@ -390,6 +427,14 @@ export async function runInterviewAgent(
       throw new AttemptFailure(reasoningValidation.code, reasoningValidation.message);
     }
     attempt.observedToolAnalyses.set(toolCallId, progress.fullText);
+    if (
+      inputText === undefined
+      || hasCompleteJsonStringField(inputText, "publicAnalysis")
+    ) {
+      attempt.completedToolAnalyses.add(toolCallId);
+    } else {
+      attempt.completedToolAnalyses.delete(toolCallId);
+    }
     attempt.observedReasoningText = reasoningValidation.text;
     await startReasoningIfNeeded(attempt);
     const safePrefix = attempt.reasoningTail.acceptValidated(reasoningValidation.text);
@@ -399,6 +444,10 @@ export async function runInterviewAgent(
   async function handleTerminalProgress(attempt: AttemptState, partialInput: unknown) {
     const progress = readTurnProposalProgress(partialInput);
     if (progress.status === "accumulating") return;
+    if (
+      !attempt.terminalToolCallId
+      || !attempt.completedToolAnalyses.has(attempt.terminalToolCallId)
+    ) return;
     if (progress.status === "protocol_violation") {
       throw new AttemptFailure(
         "RESPONSE_BEFORE_AUTHORIZATION",
@@ -594,10 +643,18 @@ export async function runInterviewAgent(
         throw new AttemptFailure("TOOL_CALL_REQUIRED", "模型必须调用当前可用工具。");
       }
 
-      await handleToolPublicAnalysis(selectedAttempt, step.callId, step.args);
+      await handleToolPublicAnalysis(
+        selectedAttempt,
+        step.callId,
+        step.toolName,
+        step.args,
+      );
       const { businessInput: checkpointBusinessInput } = stripCompletePublicAnalysis(
         step.args,
       );
+      if (isTerminalTool(step.toolName)) {
+        await handleTerminalProgress(selectedAttempt, checkpointBusinessInput);
+      }
       const pendingBusinessToolCall = {
         ...step,
         args: checkpointBusinessInput,
@@ -688,7 +745,7 @@ export async function runInterviewAgent(
     if (!definition || !publicLabel) {
       throw new AttemptFailure("UNKNOWN_TOOL", "模型调用了未授权只读工具。");
     }
-    await handleToolPublicAnalysis(attempt, step.callId, step.args);
+    await handleToolPublicAnalysis(attempt, step.callId, step.toolName, step.args);
     const { businessInput } = stripCompletePublicAnalysis(step.args);
     const parsedBusinessInput = definition.inputSchema.parse(businessInput);
     await finishReasoning(attempt);
@@ -767,7 +824,7 @@ export async function runInterviewAgent(
         "终结提案没有经过完整的增量授权与回复流。",
       );
     }
-    await handleToolPublicAnalysis(attempt, step.callId, step.args);
+    await handleToolPublicAnalysis(attempt, step.callId, step.toolName, step.args);
     const { businessInput } = stripCompletePublicAnalysis(step.args);
     const finalProposal = interviewTurnProposalSchema.parse(businessInput);
     const { responseText, ...finalPrefix } = finalProposal;
@@ -1068,6 +1125,33 @@ function stripPublicAnalysisFromPartial(input: unknown): unknown {
   const businessInput = { ...input as Record<string, unknown> };
   delete businessInput.publicAnalysis;
   return businessInput;
+}
+
+function hasCompleteJsonStringField(inputText: string, fieldName: string): boolean {
+  const key = JSON.stringify(fieldName);
+  const keyIndex = inputText.indexOf(key);
+  if (keyIndex < 0) return false;
+  let cursor = keyIndex + key.length;
+  while (/\s/u.test(inputText[cursor] ?? "")) cursor += 1;
+  if (inputText[cursor] !== ":") return false;
+  cursor += 1;
+  while (/\s/u.test(inputText[cursor] ?? "")) cursor += 1;
+  if (inputText[cursor] !== '"') return false;
+  cursor += 1;
+  let escaped = false;
+  for (; cursor < inputText.length; cursor += 1) {
+    const character = inputText[cursor];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') return true;
+  }
+  return false;
 }
 
 function stripCompletePublicAnalysis(input: unknown) {

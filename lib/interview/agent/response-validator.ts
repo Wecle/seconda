@@ -73,6 +73,11 @@ const responseProtocolPatterns = [
   /```(?:json|sql)?\s{0,8}\{?\s{0,8}"?(?:assessment|decision)"?/iu,
 ];
 
+const publicAnalysisProtocolPatterns = [
+  ...responseProtocolPatterns,
+  /\b(?:publicAnalysis|responseText|assessment|coverageChanges|decision|proposalHash|submit_interview_turn)\b/iu,
+];
+
 const responseSensitivePatterns = [
   /[A-Za-z0-9][A-Za-z0-9._%+-]{29,}[A-Za-z0-9]/u,
   /[A-Za-z0-9._%+-]{1,30}@/u,
@@ -128,6 +133,23 @@ export function validateConfiguredLanguage(input: {
     return invalid("LANGUAGE_MISMATCH", "回复语言与面试配置不一致。");
   }
   return { ok: true };
+}
+
+export function validatePublicAnalysisContent(input: {
+  language: ResponseLanguage;
+  text: string;
+  allowedTerms: readonly string[];
+}): ResponseValidationResult {
+  if (publicAnalysisProtocolPatterns.some((pattern) => pattern.test(input.text))) {
+    return invalid("PROTOCOL_CONTROL", "公开分析不得包含内部协议控制内容。");
+  }
+  if (responseSensitivePatterns.some((pattern) => pattern.test(input.text))) {
+    return invalid("SENSITIVE_CONTENT", "公开分析不得包含敏感或内部信息。");
+  }
+  if (containsFormalScore(input.text)) {
+    return invalid("FORMAL_SCORE", "公开分析不得包含正式评分。");
+  }
+  return validateConfiguredLanguage(input);
 }
 
 function validateResponse(input: {
