@@ -888,6 +888,7 @@ export async function runInterviewAgent(
       return lastFailureAccounting?.kind === "provider" ? "provider_failed" : null;
     }
 
+    const recoveredRepairCode = readRecoverableRepairCode(messages);
     const identity = { attemptId, logicalMessageId: recoveredLogicalMessageId };
     if (hasResponse) {
       await appendPublicEvent("response_discarded", {
@@ -909,7 +910,7 @@ export async function runInterviewAgent(
     }
     if (lastFailureAccounting?.kind !== "provider") {
       ensureRepairInstruction(Object.assign(new Error("Worker recovered an interrupted attempt"), {
-        code: "WORKER_RECOVERY",
+        code: recoveredRepairCode ?? "WORKER_RECOVERY",
       }));
     }
     await appendPublicEvent("phase_changed", {
@@ -1157,13 +1158,38 @@ function repairInstruction(error: unknown) {
 
 const coverageStatusRepairRule =
   "followUpNeeded=false 时使用 sufficient，true 时使用 partial；分类达到第 3 题时使用 exhausted，未达到时不得提前 exhausted。";
+const coverageStatusOnlyRepairRule =
+  "仅修正冲突状态，不得改变 assessment、decision、responseText 或其他 coverageChanges。";
 
 function coverageRepairGuidance(detail?: CoverageConflictDetail) {
   if (!detail) {
-    return `修正 coverageChanges 状态。${coverageStatusRepairRule}`;
+    return `${coverageStatusOnlyRepairRule}修正 coverageChanges 状态。${coverageStatusRepairRule}`;
   }
   const expected = detail.expectedStatuses.join(" 或 ");
-  return `coverageChanges 中分类 ${detail.category}、主题“${detail.topic}”的状态应为 ${expected}，不能为 ${detail.receivedStatus}。${coverageStatusRepairRule}`;
+  const topic = JSON.stringify(detail.topic);
+  return `${coverageStatusOnlyRepairRule}coverageChanges 中分类 ${detail.category}、主题 ${topic} 的状态应为 ${expected}，不能为 ${detail.receivedStatus}。${coverageStatusRepairRule}`;
+}
+
+type RecoverableRepairCode = "CONTRADICTORY_COVERAGE_CHANGE";
+
+const recoverableRepairCodes = new Set<RecoverableRepairCode>([
+  "CONTRADICTORY_COVERAGE_CHANGE",
+]);
+const repairMessageCodePattern = /^上一 attempt 已丢弃（([A-Z][A-Z0-9_]*)）。/u;
+
+function readRecoverableRepairCode(
+  runtimeMessages: readonly AgentRuntimeMessage[],
+): RecoverableRepairCode | null {
+  for (let index = runtimeMessages.length - 1; index >= 0; index -= 1) {
+    const message = runtimeMessages[index];
+    if (message.role !== "system") continue;
+    const code = repairMessageCodePattern.exec(message.content)?.[1];
+    if (!code) continue;
+    return recoverableRepairCodes.has(code as RecoverableRepairCode)
+      ? code as RecoverableRepairCode
+      : null;
+  }
+  return null;
 }
 
 function repairGuidance(code: string, error?: unknown) {
