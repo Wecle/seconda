@@ -57,6 +57,7 @@ export async function GET() {
       const versions = (versionsByResumeId.get(resume.id) ?? []).map((v) => ({
         id: v.id,
         versionNumber: v.versionNumber,
+        sourceType: v.sourceType,
         originalFilename: v.originalFilename,
         originalFileUrl: v.storedPath,
         parseStatus: v.parseStatus,

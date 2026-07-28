@@ -61,6 +61,7 @@ export async function POST(request: NextRequest) {
       id: versionId,
       resumeId,
       versionNumber: 1,
+      sourceType: "uploaded",
       originalFilename: file.name,
       storedPath: blob.url,
       mimeType: file.type,
