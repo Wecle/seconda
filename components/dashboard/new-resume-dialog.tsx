@@ -63,11 +63,11 @@ export function NewResumeDialog({
 }: NewResumeDialogProps) {
   const { t } = useTranslation();
   const contentClassName = cn(
-    "overflow-hidden p-0 [interpolate-size:allow-keywords]",
+    "overflow-hidden p-0",
     "transition-[width,max-width,height] duration-300 ease-out motion-reduce:transition-none",
     mode === "generate"
       ? "h-[90vh] sm:max-w-5xl"
-      : "h-auto sm:max-w-md",
+      : "h-[min(29.0625rem,calc(100vh-2rem))] sm:max-w-md",
   );
 
   return (
@@ -84,7 +84,7 @@ export function NewResumeDialog({
         <Tabs
           value={mode}
           onValueChange={(value) => onModeChange(value as NewResumeMode)}
-          className="min-h-0 gap-0"
+          className="h-full min-h-0 gap-0"
         >
           <div className="shrink-0 border-b px-6 pt-6">
             <DialogHeader className="pr-8">
@@ -106,7 +106,7 @@ export function NewResumeDialog({
           <TabsContent
             value="upload"
             forceMount
-            className="p-6 data-[state=inactive]:hidden"
+            className="min-h-0 flex-1 overflow-y-auto p-6 data-[state=inactive]:hidden"
           >
             <UploadResumeForm
               uploadTitle={uploadTitle}
@@ -129,11 +129,7 @@ export function NewResumeDialog({
           <TabsContent
             value="generate"
             forceMount
-            className={cn(
-              "min-h-0 flex-1 data-[state=inactive]:hidden",
-              "transition-opacity duration-150 data-[state=active]:delay-150 data-[state=active]:opacity-100 motion-reduce:transition-none motion-reduce:data-[state=active]:delay-0",
-              mode === "generate" ? "opacity-100" : "opacity-0",
-            )}
+            className="min-h-0 flex-1 flex-col data-[state=active]:flex data-[state=inactive]:hidden"
           >
             <GeneratedResumeForm
               draft={generatedDraft}

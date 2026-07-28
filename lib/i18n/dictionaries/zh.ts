@@ -136,6 +136,8 @@ export const zh = {
       coreSkillsPlaceholder: "例如：React, TypeScript, 用户研究, 数据分析",
       coreSkillsHelper: "使用逗号、中文逗号或换行分隔，最多 50 项。",
       coreSkillsRequired: "请至少填写一项核心技能。",
+      coreSkillsTooMany: "核心技能最多填写 50 项。",
+      coreSkillTooLong: "每项核心技能最多 100 个字符。",
       education: "教育背景",
       educationPlaceholder:
         "例如：清华大学 计算机科学与技术 本科 2018–2022；英语六级",
