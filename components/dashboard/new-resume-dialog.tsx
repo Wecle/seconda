@@ -129,7 +129,12 @@ export function NewResumeDialog({
           <TabsContent
             value="generate"
             forceMount
-            className="min-h-0 flex-1 flex-col data-[state=active]:flex data-[state=inactive]:hidden"
+            className={cn(
+              "min-h-0 flex-1 flex-col data-[state=active]:flex data-[state=inactive]:hidden",
+              "data-[state=active]:animate-in data-[state=active]:fade-in-0",
+              "data-[state=active]:delay-150 data-[state=active]:duration-150 data-[state=active]:fill-mode-both",
+              "motion-reduce:data-[state=active]:animate-none motion-reduce:data-[state=active]:delay-0",
+            )}
           >
             <GeneratedResumeForm
               draft={generatedDraft}
