@@ -276,6 +276,8 @@ export const zh = {
     highlightRelatedContent: "已根据当前题目高亮可能相关的简历内容。",
     parsedResumeUnavailable: "当前面试未找到解析简历快照。",
     originalResumeUnavailable: "当前面试未找到原始简历文件。",
+    generatedNoOriginal:
+      "此简历由 AI 根据你提供的信息生成，没有原始文件。",
     aiInterviewer: "AI 面试官",
     askingNow: "正在提问...",
     tip: "提示",

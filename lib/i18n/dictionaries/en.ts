@@ -288,6 +288,8 @@ export const en = {
       "Potentially relevant resume content is highlighted for this question.",
     parsedResumeUnavailable: "Parsed resume snapshot is unavailable.",
     originalResumeUnavailable: "Original resume file is unavailable.",
+    generatedNoOriginal:
+      "This resume was generated from information you provided and has no original file.",
     aiInterviewer: "AI Interviewer",
     askingNow: "Asking now...",
     tip: "Tip",

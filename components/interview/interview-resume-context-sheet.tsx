@@ -9,14 +9,19 @@ import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
 import {
   Sheet,
   SheetContent,
-  SheetDescription,
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useTranslation } from "@/lib/i18n/context";
-import type { ParsedResume } from "@/lib/resume/types";
+import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
 
 const ResumePdfPreview = dynamic(
   () =>
@@ -364,7 +369,8 @@ type ResumeTabValue = "parsed" | "original";
 
 export interface InterviewResumeSnapshot {
   id: string;
-  originalFilename: string;
+  sourceType: ResumeSourceType;
+  originalFilename: string | null;
   originalFileUrl: string | null;
   parseStatus: string;
   parsedData: ParsedResume | null;
@@ -385,12 +391,20 @@ export function InterviewResumeContextSheet({
 }: InterviewResumeContextSheetProps) {
   const { t } = useTranslation();
   const hasParsedSnapshot = Boolean(snapshot?.parsedData);
-  const hasOriginalSnapshot = Boolean(snapshot?.originalFileUrl);
+  const isGenerated = snapshot?.sourceType === "generated";
+  const hasOriginalSnapshot = Boolean(
+    !isGenerated && snapshot?.originalFileUrl && snapshot.originalFilename,
+  );
   const parsedSnapshot = snapshot?.parsedData ?? null;
   const [activeTab, setActiveTab] = useState<ResumeTabValue>("parsed");
-  const resolvedTab: ResumeTabValue = hasParsedSnapshot
-    ? activeTab
-    : "original";
+  const resolvedTab: ResumeTabValue =
+    activeTab === "original"
+      ? hasOriginalSnapshot
+        ? "original"
+        : "parsed"
+      : hasParsedSnapshot
+        ? "parsed"
+        : "original";
 
   const keywords = useMemo(
     () =>
@@ -420,9 +434,33 @@ export function InterviewResumeContextSheet({
               <TabsTrigger value="parsed" disabled={!hasParsedSnapshot}>
                 {t.interview.parsedResume}
               </TabsTrigger>
-              <TabsTrigger value="original" disabled={!hasOriginalSnapshot}>
-                {t.interview.originalResume}
-              </TabsTrigger>
+              {isGenerated ? (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span
+                        tabIndex={0}
+                        className="inline-flex"
+                        aria-label={t.interview.generatedNoOriginal}
+                      >
+                        <TabsTrigger value="original" disabled>
+                          {t.interview.originalResume}
+                        </TabsTrigger>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">
+                      {t.interview.generatedNoOriginal}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              ) : (
+                <TabsTrigger
+                  value="original"
+                  disabled={!hasOriginalSnapshot}
+                >
+                  {t.interview.originalResume}
+                </TabsTrigger>
+              )}
             </TabsList>
           </div>
 
@@ -454,7 +492,7 @@ export function InterviewResumeContextSheet({
           <TabsContent value="original" className="mt-0 flex min-h-0 flex-1">
             <ScrollArea className="min-h-0 flex-1">
               <div className="mx-auto w-full max-w-[980px] px-5 py-5">
-                {snapshot?.originalFileUrl ? (
+                {snapshot?.originalFileUrl && snapshot.originalFilename ? (
                   <ResumePdfPreview
                     key={snapshot.originalFileUrl}
                     fileUrl={snapshot.originalFileUrl}

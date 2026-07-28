@@ -14,7 +14,109 @@ import {
   resumeVersions,
   users,
 } from "@/lib/db/schema";
-import { deleteResumePreservingSnapshots } from "./resume-snapshot";
+import { serializeParsedResume } from "@/lib/resume/canonical-text";
+import {
+  deleteResumePreservingSnapshots,
+} from "./resume-snapshot";
+
+test("generated resumes create attachment-free snapshots that outlive their source", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+  const db = drizzle(client, { schema });
+  const { createDrizzleAgentInterviewStore } = await import("./agent/drizzle-store");
+  const userId = randomUUID();
+  const resumeId = randomUUID();
+  const versionId = randomUUID();
+  let interviewId: string | null = null;
+  const parsedResume = {
+    name: "Generated Candidate",
+    title: "Frontend Engineer",
+    summary: "",
+    skills: ["React", "TypeScript"],
+    experience: [],
+    education: [],
+    projects: [],
+  };
+  const extractedText = serializeParsedResume(parsedResume);
+
+  try {
+    await db.insert(users).values({ id: userId, email: `${userId}@example.test` });
+    await db.insert(resumes).values({
+      id: resumeId,
+      userId,
+      title: "Frontend Engineer",
+      currentVersionId: versionId,
+    });
+    await db.insert(resumeVersions).values({
+      id: versionId,
+      resumeId,
+      versionNumber: 1,
+      sourceType: "generated",
+      originalFilename: null,
+      storedPath: null,
+      mimeType: null,
+      fileSize: null,
+      extractedText,
+      parsedJson: parsedResume,
+      parseStatus: "parsed",
+    });
+
+    const store = createDrizzleAgentInterviewStore(db);
+    const created = await store.createInterview({
+      ownerUserId: userId,
+      idempotencyKey: randomUUID(),
+      resumeVersionId: versionId,
+      config: {
+        configVersion: 2,
+        language: "zh",
+        persona: "standard",
+        preference: "",
+        preferenceTags: [],
+      },
+    });
+    interviewId = created.interviewId;
+
+    const [snapshot] = await db.select().from(interviewResumeSnapshots)
+      .where(eq(interviewResumeSnapshots.interviewId, interviewId));
+    assert.equal(snapshot.sourceType, "generated");
+    assert.equal(snapshot.originalFilename, null);
+    assert.equal(snapshot.storedPath, null);
+    assert.equal(snapshot.mimeType, null);
+    assert.equal(snapshot.fileSize, null);
+    assert.equal(snapshot.extractedText, extractedText);
+    assert.ok(snapshot.extractedText.length > 0);
+    assert.deepEqual(snapshot.parsedJson, parsedResume);
+
+    assert.deepEqual(
+      await deleteResumePreservingSnapshots(db, {
+        resumeId,
+        ownerUserId: userId,
+      }),
+      [],
+    );
+
+    const [historicalInterview] = await db.select().from(interviews)
+      .where(eq(interviews.id, interviewId));
+    const [historicalSnapshot] = await db.select().from(interviewResumeSnapshots)
+      .where(eq(interviewResumeSnapshots.interviewId, interviewId));
+    assert.ok(historicalInterview);
+    assert.equal(historicalInterview.resumeVersionId, null);
+    assert.ok(historicalSnapshot);
+    assert.deepEqual(historicalSnapshot.parsedJson, parsedResume);
+    assert.equal(historicalSnapshot.extractedText, extractedText);
+  } finally {
+    try {
+      if (interviewId) {
+        await db.delete(interviews).where(eq(interviews.id, interviewId));
+      }
+      await db.delete(resumes).where(eq(resumes.id, resumeId));
+      await db.delete(users).where(eq(users.id, userId));
+    } finally {
+      await client.end();
+    }
+  }
+});
 
 test("source edits and deletions preserve snapshot-backed interview history", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",

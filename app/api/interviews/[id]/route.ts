@@ -139,6 +139,7 @@ export async function GET(
             id: resumeSnapshot.id,
             title: resumeSnapshot.resumeTitle,
             versionNumber: resumeSnapshot.versionNumber,
+            sourceType: resumeSnapshot.sourceType,
             originalFilename: resumeSnapshot.originalFilename,
             originalFileUrl: resumeSnapshot.storedPath,
             parseStatus: resumeSnapshot.parseStatus,
