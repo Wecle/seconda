@@ -29,37 +29,86 @@ summary 只能重述已提供的事实。
 projects 必须保持用户事实中的顺序，不得合并或补充项目。
 输出文字必须使用请求 locale 指定的语言。`;
 
-const chineseProjectAction = "(?:主导|开发|研发|构建|搭建|设计|实现|创建|制作|负责|参与|维护|贡献|发布|完成)";
-const englishProjectAction = "(?:built|developed|created|designed|implemented|led|maintained|authored|shipped|launched|worked\\s+on|contributed(?:\\s+[^.\\n]{0,24}\\s+to)?|fixed|added)";
+const projectActionPattern = [
+  "(?:主导)?(?:开发|研发|构建|搭建|设计|实现|创建|制作|维护|贡献|发布|完成|编写)",
+  "参与(?:开发|维护|贡献|构建|实现)",
+  "使用",
+  "采用",
+  "\\b(?:built|developed|created|designed|implemented|maintained|authored|shipped|launched|coded|programmed|fixed|added|contributed|worked\\s+on|led\\s+(?:development|implementation|design|delivery|maintenance))\\b",
+].join("|");
+const githubContributionActionPattern = [
+  "(?:主导|参与)?(?:开发|研发|构建|实现|创建|维护|贡献|编写|修复|提交)",
+  "\\b(?:built|developed|created|implemented|maintained|authored|coded|programmed|fixed|added|contributed|worked\\s+on)\\b",
+].join("|");
 const githubRepositoryURL = /https?:\/\/(?:www\.)?github\.com\/[a-z0-9](?:[a-z0-9-]{0,38})\/[a-z0-9._-]+(?:[/?#][^\s]*)?/iu;
 
-export function hasAffirmativeProjectEvidence(additionalInfo: string): boolean {
-  const text = additionalInfo.trim();
-  if (!text) return false;
+type TextSpan = { start: number; end: number };
 
+function findSpans(text: string, pattern: string): TextSpan[] {
+  return [...text.matchAll(new RegExp(pattern, "giu"))].map((match) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
+}
+
+function hasLocalPair(left: TextSpan[], right: TextSpan[], maximumGap = 120): boolean {
+  return left.some((leftSpan) => right.some((rightSpan) => {
+    const gap = Math.max(leftSpan.start, rightSpan.start)
+      - Math.min(leftSpan.end, rightSpan.end);
+    return gap <= maximumGap;
+  }));
+}
+
+function hasAffirmativeProjectClause(clause: string): boolean {
   const hasNegativeContext =
-    /(?:无|没有|暂无|从未有过|未参与过|未做过).{0,8}(?:项目|作品)/u.test(text)
-    || /\b(?:no|without)\s+(?:[a-z-]+\s+){0,3}(?:projects?|portfolio|repositories?)\b/iu.test(text);
-  if (hasNegativeContext) return false;
+    /(?:无|没有|暂无|从未|未曾|未参与|未做过)[^。；;\n]{0,16}(?:项目|作品|仓库)/u.test(clause)
+    || /(?:项目|作品|仓库)[^。；;\n]{0,12}(?:暂无|没有|无|none|n\/a)/iu.test(clause)
+    || /\b(?:no|without|never)\b[^.;\n]{0,40}\b(?:projects?|portfolio|repositor(?:y|ies))\b/iu.test(clause);
+  const hasProjectManagementContext =
+    /项目\s*(?:管理|经理|主管)|\bPMP\b/iu.test(clause)
+    || /\bproject\s+(?:manager|management)\b/iu.test(clause);
+  if (hasNegativeContext || hasProjectManagementContext) return false;
 
-  const hasChineseAction = new RegExp(chineseProjectAction, "u").test(text);
-  const hasEnglishAction = new RegExp(`\\b${englishProjectAction}\\b`, "iu").test(text);
-  if (githubRepositoryURL.test(text)) {
-    return hasChineseAction || hasEnglishAction;
+  const actionSpans = findSpans(clause, projectActionPattern);
+  if (actionSpans.length === 0) return false;
+
+  const githubSpans = [...clause.matchAll(new RegExp(githubRepositoryURL.source, "giu"))]
+    .map((match) => ({ start: match.index, end: match.index + match[0].length }));
+  const githubActionSpans = findSpans(clause, githubContributionActionPattern);
+  if (hasLocalPair(githubActionSpans, githubSpans, 60)) return true;
+
+  const artifactSpans = [
+    ...findSpans(
+      clause,
+      "(?:真实|个人|开源|课程|公司|团队)?(?:项目|作品)\\s*[:：]\\s*(?!暂无|没有|无(?:[，,。；;\\s]|$))(?:[a-z0-9_.+-]{2,}|[\\p{Script=Han}]{2,})",
+    ),
+    ...findSpans(
+      clause,
+      "\\b(?:project|repository)\\s*:\\s*[a-z0-9][a-z0-9._+-]{1,}",
+    ),
+    ...findSpans(
+      clause,
+      "\\b[a-z0-9][a-z0-9._+-]{2,}\\s+(?:project|repository|application|app|service|website|platform|tool)\\b",
+    ),
+  ];
+  const genericChineseNames = new Set(["真实", "个人", "开源", "课程", "公司", "团队", "管理"]);
+  for (const match of clause.matchAll(
+    /([a-z0-9_.+-]{2,}|[\p{Script=Han}]{2,})\s*(?:项目|作品)/giu,
+  )) {
+    if (!genericChineseNames.has(match[1].toLowerCase())) {
+      artifactSpans.push({ start: match.index, end: match.index + match[0].length });
+    }
   }
 
-  const hasNamedChineseProject =
-    /(?:真实|个人|开源|课程|公司|团队)(?:项目|作品)\s*[:：]\s*[^\s，,。.;；]{2,}/u.test(text);
-  const hasChineseProjectAction = new RegExp(
-    `${chineseProjectAction}[^。；;\\n]{0,80}(?:项目|作品)`,
-    "u",
-  ).test(text);
-  const hasEnglishProjectAction = new RegExp(
-    `\\b${englishProjectAction}\\b[^.\\n]{0,120}\\b(?:projects?|portfolio|repositor(?:y|ies))\\b`,
-    "iu",
-  ).test(text);
+  return hasLocalPair(actionSpans, artifactSpans);
+}
 
-  return hasNamedChineseProject || hasChineseProjectAction || hasEnglishProjectAction;
+export function hasAffirmativeProjectEvidence(additionalInfo: string): boolean {
+  return additionalInfo
+    .split(/[。！？；;\n\r]+|[.!?]+(?=\s|$)/u)
+    .map((clause) => clause.trim())
+    .filter(Boolean)
+    .some(hasAffirmativeProjectClause);
 }
 
 function stringifyUntrustedJSON(value: unknown): string {
