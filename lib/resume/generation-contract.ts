@@ -14,7 +14,7 @@ export function normalizeSkills(raw: string): string[] {
   const skills: string[] = [];
   for (const part of raw.split(/[,，\n]/)) {
     const skill = part.trim();
-    const key = skill.toLocaleLowerCase();
+    const key = skill.toLowerCase();
     if (!skill || seen.has(key)) continue;
     seen.add(key);
     skills.push(skill);
@@ -40,6 +40,6 @@ export const generatedResumeRequestSchema = z.object({
   education: z.string().trim().max(3_000).default(""),
   workExperience: z.string().trim().max(5_000).default(""),
   additionalInfo: z.string().trim().max(5_000).default(""),
-});
+}).strict();
 
 export type GeneratedResumeInput = z.output<typeof generatedResumeRequestSchema>;

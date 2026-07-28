@@ -1,5 +1,7 @@
 import type { ParsedResume } from "./types";
 
+const contactFieldOrder = ["email", "phone", "location", "linkedin", "website"] as const;
+
 export function serializeParsedResume(parsed: ParsedResume): string {
   const sections: string[] = [];
   const identity = [parsed.name, parsed.title].filter(Boolean).join("\n");
@@ -7,10 +9,10 @@ export function serializeParsedResume(parsed: ParsedResume): string {
   if (parsed.summary) sections.push(`Summary\n${parsed.summary}`);
 
   const contact = parsed.contact
-    ? Object.entries(parsed.contact)
-        .filter((entry): entry is [string, string] =>
-          typeof entry[1] === "string" && entry[1].length > 0)
-        .map(([key, value]) => `${key}: ${value}`)
+    ? contactFieldOrder.flatMap((key) => {
+        const value = parsed.contact?.[key];
+        return value ? [`${key}: ${value}`] : [];
+      })
     : [];
   if (contact.length > 0) sections.push(`Contact\n${contact.join("\n")}`);
   if (parsed.skills.length > 0) sections.push(`Skills\n${parsed.skills.join(", ")}`);
