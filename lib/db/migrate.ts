@@ -162,28 +162,43 @@ async function migrate() {
         )
     )
   `;
-  await sql`DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots`;
-  await sql`ALTER TABLE interview_resume_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT`;
-  await sql`UPDATE interview_resume_snapshots SET source_type = 'uploaded' WHERE source_type IS NULL`;
-  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET DEFAULT 'uploaded'`;
-  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET NOT NULL`;
-  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN original_filename DROP NOT NULL`;
-  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN stored_path DROP NOT NULL`;
-  await sql`ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_source_type_check`;
-  await sql`
-    ALTER TABLE interview_resume_snapshots
-    ADD CONSTRAINT interview_resume_snapshots_source_type_check
-    CHECK (source_type IN ('uploaded', 'generated'))
-  `;
-  await sql`ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_generated_attachment_check`;
-  await sql`
-    ALTER TABLE interview_resume_snapshots
-    ADD CONSTRAINT interview_resume_snapshots_generated_attachment_check
-    CHECK (
-      source_type <> 'generated'
-      OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
-    )
-  `;
+  await sql.begin(async (transaction) => {
+    await transaction.unsafe("DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT");
+    await transaction.unsafe("UPDATE interview_resume_snapshots SET source_type = 'uploaded' WHERE source_type IS NULL");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET DEFAULT 'uploaded'");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET NOT NULL");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots ALTER COLUMN original_filename DROP NOT NULL");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots ALTER COLUMN stored_path DROP NOT NULL");
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_source_type_check");
+    await transaction.unsafe(`
+      ALTER TABLE interview_resume_snapshots
+      ADD CONSTRAINT interview_resume_snapshots_source_type_check
+      CHECK (source_type IN ('uploaded', 'generated'))
+    `);
+    await transaction.unsafe("ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_generated_attachment_check");
+    await transaction.unsafe(`
+      ALTER TABLE interview_resume_snapshots
+      ADD CONSTRAINT interview_resume_snapshots_generated_attachment_check
+      CHECK (
+        source_type <> 'generated'
+        OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
+      )
+    `);
+    await transaction.unsafe(`
+      CREATE OR REPLACE FUNCTION reject_interview_resume_snapshot_update()
+      RETURNS trigger AS $$
+      BEGIN
+        RAISE EXCEPTION 'Interview resume snapshots are immutable';
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await transaction.unsafe(`
+      CREATE TRIGGER interview_resume_snapshots_immutable
+      BEFORE UPDATE ON interview_resume_snapshots
+      FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update()
+    `);
+  });
   await sql`
     INSERT INTO interview_resume_snapshots (
       interview_id,
@@ -271,21 +286,6 @@ async function migrate() {
         ON DELETE SET NULL;
     END $$
   `;
-  await sql`
-    CREATE OR REPLACE FUNCTION reject_interview_resume_snapshot_update()
-    RETURNS trigger AS $$
-    BEGIN
-      RAISE EXCEPTION 'Interview resume snapshots are immutable';
-    END;
-    $$ LANGUAGE plpgsql
-  `;
-  await sql`DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots`;
-  await sql`
-    CREATE TRIGGER interview_resume_snapshots_immutable
-    BEFORE UPDATE ON interview_resume_snapshots
-    FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update()
-  `;
-
   await sql`
     CREATE TABLE IF NOT EXISTS interview_questions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
