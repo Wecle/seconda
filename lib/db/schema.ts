@@ -57,6 +57,8 @@ export const resumeVersions = pgTable("resume_versions", {
   parseError: text("parse_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
+  uniqueIndex("idx_resume_versions_resume_number")
+    .on(table.resumeId, table.versionNumber),
   check("resume_versions_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
   check(
     "resume_versions_generated_attachment_check",

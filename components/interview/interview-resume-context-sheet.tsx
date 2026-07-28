@@ -441,6 +441,8 @@ export function InterviewResumeContextSheet({
                       <span
                         tabIndex={0}
                         className="inline-flex"
+                        role="button"
+                        aria-disabled="true"
                         aria-label={t.interview.generatedNoOriginal}
                       >
                         <TabsTrigger value="original" disabled>

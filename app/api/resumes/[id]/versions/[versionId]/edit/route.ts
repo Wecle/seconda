@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { and, eq, desc } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { parsedResumeSchema } from "@/lib/resume/types";
-import { serializeParsedResume } from "@/lib/resume/canonical-text";
+import {
+  editResumeVersion,
+  ResumeEditError,
+} from "@/lib/resume/edit-resume-version";
 
 export async function PATCH(
   request: NextRequest,
@@ -18,32 +19,6 @@ export async function PATCH(
 
     const { id, versionId } = await params;
 
-    const [resume] = await db
-      .select({ id: resumes.id })
-      .from(resumes)
-      .where(and(eq(resumes.id, id), eq(resumes.userId, userId)));
-
-    if (!resume) {
-      return NextResponse.json({ error: "Resume not found" }, { status: 404 });
-    }
-
-    const [sourceVersion] = await db
-      .select()
-      .from(resumeVersions)
-      .where(
-        and(
-          eq(resumeVersions.id, versionId),
-          eq(resumeVersions.resumeId, id)
-        )
-      );
-
-    if (!sourceVersion) {
-      return NextResponse.json(
-        { error: "Version not found" },
-        { status: 404 }
-      );
-    }
-
     const body = await request.json();
     const parsed = parsedResumeSchema.safeParse(body.parsedJson);
     if (!parsed.success) {
@@ -53,53 +28,27 @@ export async function PATCH(
       );
     }
 
-    const [latestVersion] = await db
-      .select({ versionNumber: resumeVersions.versionNumber })
-      .from(resumeVersions)
-      .where(eq(resumeVersions.resumeId, id))
-      .orderBy(desc(resumeVersions.versionNumber))
-      .limit(1);
-
-    const nextVersionNumber = (latestVersion?.versionNumber ?? 0) + 1;
-
-    const [newVersion] = await db
-      .insert(resumeVersions)
-      .values({
-        resumeId: id,
-        versionNumber: nextVersionNumber,
-        sourceType: sourceVersion.sourceType,
-        originalFilename:
-          sourceVersion.sourceType === "generated"
-            ? null
-            : sourceVersion.originalFilename,
-        storedPath:
-          sourceVersion.sourceType === "generated"
-            ? null
-            : sourceVersion.storedPath,
-        mimeType:
-          sourceVersion.sourceType === "generated"
-            ? null
-            : sourceVersion.mimeType,
-        fileSize:
-          sourceVersion.sourceType === "generated"
-            ? null
-            : sourceVersion.fileSize,
-        extractedText:
-          sourceVersion.sourceType === "generated"
-            ? serializeParsedResume(parsed.data)
-            : sourceVersion.extractedText,
-        parsedJson: parsed.data,
-        parseStatus: "parsed",
-      })
-      .returning();
-
-    await db
-      .update(resumes)
-      .set({ currentVersionId: newVersion.id, updatedAt: new Date() })
-      .where(eq(resumes.id, id));
+    const newVersion = await editResumeVersion(db, {
+      ownerUserId: userId,
+      resumeId: id,
+      sourceVersionId: versionId,
+      parsed: parsed.data,
+    });
 
     return NextResponse.json(newVersion);
   } catch (error) {
+    if (error instanceof ResumeEditError) {
+      if (error.code === "resume_not_found") {
+        return NextResponse.json({ error: "Resume not found" }, { status: 404 });
+      }
+      if (error.code === "version_not_found") {
+        return NextResponse.json({ error: "Version not found" }, { status: 404 });
+      }
+      return NextResponse.json(
+        { error: "Uploaded resume attachment is unavailable" },
+        { status: 409 },
+      );
+    }
     console.error("Error saving edited resume version:", error);
     return NextResponse.json(
       { error: "Failed to save edited resume version" },

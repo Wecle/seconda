@@ -76,6 +76,7 @@ async function migrate() {
       parse_status TEXT NOT NULL DEFAULT 'uploaded',
       parse_error TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (resume_id, version_number),
       CONSTRAINT resume_versions_source_type_check
         CHECK (source_type IN ('uploaded', 'generated')),
       CONSTRAINT resume_versions_generated_attachment_check
@@ -106,6 +107,46 @@ async function migrate() {
       OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
     )
   `;
+  await sql.begin(async (transaction) => {
+    await transaction.unsafe(
+      "LOCK TABLE resume_versions IN SHARE ROW EXCLUSIVE MODE",
+    );
+    await transaction.unsafe(`
+      WITH ranked_versions AS (
+        SELECT
+          id,
+          resume_id,
+          version_number,
+          created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY resume_id, version_number
+            ORDER BY created_at, id
+          ) AS duplicate_rank,
+          MAX(version_number) OVER (PARTITION BY resume_id) AS max_version_number
+        FROM resume_versions
+      ),
+      duplicate_versions AS (
+        SELECT
+          id,
+          max_version_number,
+          ROW_NUMBER() OVER (
+            PARTITION BY resume_id
+            ORDER BY version_number, created_at, id
+          ) AS duplicate_offset
+        FROM ranked_versions
+        WHERE duplicate_rank > 1
+      )
+      UPDATE resume_versions AS version
+      SET version_number =
+        duplicate_versions.max_version_number + duplicate_versions.duplicate_offset
+      FROM duplicate_versions
+      WHERE version.id = duplicate_versions.id
+    `);
+    await transaction.unsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_versions_resume_number
+      ON resume_versions(resume_id, version_number)
+    `);
+  });
 
   await sql`
     CREATE TABLE IF NOT EXISTS interviews (
