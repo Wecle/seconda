@@ -142,6 +142,8 @@ export const en = {
       coreSkillsPlaceholder: "e.g. React, TypeScript, User Research, Data Analysis",
       coreSkillsHelper: "Separate skills with commas or new lines, up to 50 items.",
       coreSkillsRequired: "Add at least one core skill.",
+      coreSkillsTooMany: "Add no more than 50 core skills.",
+      coreSkillTooLong: "Each core skill must be 100 characters or fewer.",
       education: "Education",
       educationPlaceholder:
         "e.g. BSc Computer Science, Example University, 2018–2022; relevant certifications",

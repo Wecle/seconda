@@ -61,8 +61,16 @@ export function GeneratedResumeForm({
   const { t } = useTranslation();
   const skills = normalizeSkills(draft.coreSkills);
   const targetRoleMissing = draft.targetRole.trim().length === 0;
-  const coreSkillsMissing = skills.length === 0;
-  const cannotGenerate = targetRoleMissing || coreSkillsMissing || generating;
+  const coreSkillsValidationMessage =
+    skills.length === 0
+      ? t.dashboard.generator.coreSkillsRequired
+      : skills.length > 50
+        ? t.dashboard.generator.coreSkillsTooMany
+        : skills.some((skill) => skill.length > 100)
+          ? t.dashboard.generator.coreSkillTooLong
+          : null;
+  const cannotGenerate =
+    targetRoleMissing || coreSkillsValidationMessage !== null || generating;
 
   const updateField = <Key extends keyof GeneratedResumeDraft>(
     field: Key,
@@ -138,7 +146,11 @@ export function GeneratedResumeForm({
               aria-invalid={targetRoleMissing}
               aria-describedby="generated-target-role-help"
             />
-            <div className="flex flex-wrap gap-2" aria-label={t.dashboard.generator.roleSuggestionsLabel}>
+            <div
+              role="group"
+              className="flex flex-wrap gap-2"
+              aria-label={t.dashboard.generator.roleSuggestionsLabel}
+            >
               {t.dashboard.generator.roleSuggestions.map((suggestion) => (
                 <Button
                   key={suggestion}
@@ -170,7 +182,7 @@ export function GeneratedResumeForm({
               required
               icon={<Code2 className="size-4" />}
             />
-            <Input
+            <Textarea
               id="generated-core-skills"
               value={draft.coreSkills}
               onChange={(event) => updateField("coreSkills", event.target.value)}
@@ -178,10 +190,15 @@ export function GeneratedResumeForm({
               maxLength={1_000}
               disabled={generating}
               required
-              aria-invalid={coreSkillsMissing}
+              aria-invalid={coreSkillsValidationMessage !== null}
               aria-describedby="generated-core-skills-help"
+              className="min-h-20 max-h-28 resize-y"
             />
-            <div className="flex flex-wrap gap-2" aria-label={t.dashboard.generator.skillSuggestionsLabel}>
+            <div
+              role="group"
+              className="flex flex-wrap gap-2"
+              aria-label={t.dashboard.generator.skillSuggestionsLabel}
+            >
               {t.dashboard.generator.skillSuggestions.map((suggestion) => (
                 <Button
                   key={suggestion}
@@ -198,11 +215,14 @@ export function GeneratedResumeForm({
             </div>
             <p
               id="generated-core-skills-help"
-              className={coreSkillsMissing ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+              className={
+                coreSkillsValidationMessage
+                  ? "text-xs text-destructive"
+                  : "text-xs text-muted-foreground"
+              }
             >
-              {coreSkillsMissing
-                ? t.dashboard.generator.coreSkillsRequired
-                : t.dashboard.generator.coreSkillsHelper}
+              {coreSkillsValidationMessage ??
+                t.dashboard.generator.coreSkillsHelper}
             </p>
           </div>
 
