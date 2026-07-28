@@ -163,6 +163,8 @@ export function ResumePreviewPane({
                     <span
                       tabIndex={0}
                       className="inline-flex"
+                      role="button"
+                      aria-disabled="true"
                       aria-label={t.dashboard.generatedNoOriginal}
                     >
                       <Button
