@@ -1,4 +1,4 @@
-import type { ParsedResume } from "@/lib/resume/types";
+import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
 import type { StoredInterviewConfig } from "@/lib/interview/settings";
 
 export interface VersionInterview {
@@ -18,8 +18,9 @@ export interface VersionInterview {
 export interface ResumeVersion {
   id: string;
   versionNumber: number;
-  originalFilename: string;
-  originalFileUrl?: string | null;
+  sourceType: ResumeSourceType;
+  originalFilename: string | null;
+  originalFileUrl: string | null;
   parseStatus: string;
   parseError?: string | null;
   parsedData: ParsedResume | null;
