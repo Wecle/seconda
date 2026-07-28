@@ -1,5 +1,6 @@
 export type AITask =
   | "resume.parse"
+  | "resume.generate"
   | "interview.agent"
   | "context.compact"
   | "question.generate"
@@ -30,6 +31,7 @@ const supportedProviders = new Set<ModelProvider>(["deepseek", "openai", "zhipu"
 
 const taskTiers: Record<AITask, AIModelTier> = {
   "resume.parse": "fast",
+  "resume.generate": "fast",
   "interview.agent": "fast",
   "context.compact": "quality",
   "question.generate": "fast",
