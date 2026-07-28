@@ -182,6 +182,13 @@ test("requires affirmative project evidence instead of a project noun", () => {
     "Built financial models. GitHub: https://github.com/ada/compiler",
     "负责财务管理，GitHub: https://github.com/ada/compiler",
     "使用 Excel 进行财务管理，GitHub: https://github.com/ada/compiler",
+    "计划开发 Seconda 项目，使用 React",
+    "准备开发个人项目 Seconda",
+    "Plan to build a compiler project using TypeScript",
+    "Planning to develop Project: Compiler",
+    "I intend to build a compiler project",
+    "I want to develop a compiler project",
+    "I will build a compiler project",
   ];
   const positiveCases = [
     "Built a real compiler project using TypeScript",
@@ -193,6 +200,10 @@ test("requires affirmative project evidence instead of a project noun", () => {
     "Contributed parser fixes to https://github.com/ada/compiler",
     "参与开发 GitHub 仓库 https://github.com/ada/compiler，负责解析模块",
     "No prior projects; built a compiler project using TypeScript",
+    "开发项目管理平台 Seconda，使用 React",
+    "Built a project management application called PMTool",
+    "没有商业项目经验，但开发个人项目 Seconda",
+    "No commercial project experience, but built a personal project called Seconda",
   ];
 
   for (const value of negativeCases) {

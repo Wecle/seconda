@@ -64,10 +64,10 @@ function hasAffirmativeProjectClause(clause: string): boolean {
     /(?:无|没有|暂无|从未|未曾|未参与|未做过)[^。；;\n]{0,16}(?:项目|作品|仓库)/u.test(clause)
     || /(?:项目|作品|仓库)[^。；;\n]{0,12}(?:暂无|没有|无|none|n\/a)/iu.test(clause)
     || /\b(?:no|without|never)\b[^.;\n]{0,40}\b(?:projects?|portfolio|repositor(?:y|ies))\b/iu.test(clause);
-  const hasProjectManagementContext =
-    /项目\s*(?:管理|经理|主管)|\bPMP\b/iu.test(clause)
-    || /\bproject\s+(?:manager|management)\b/iu.test(clause);
-  if (hasNegativeContext || hasProjectManagementContext) return false;
+  const hasFutureIntent =
+    /(?:计划|准备|打算|希望|将要)[^。；;\n]{0,24}(?:开发|研发|构建|搭建|设计|实现|创建|制作|维护|贡献|发布|完成|编写)/u.test(clause)
+    || /\b(?:(?:plan(?:ning)?|intend|want|hope)\s+to|will)\s+(?:build|develop|create|design|implement|maintain|contribute|launch)\b/iu.test(clause);
+  if (hasNegativeContext || hasFutureIntent) return false;
 
   const actionSpans = findSpans(clause, projectActionPattern);
   if (actionSpans.length === 0) return false;
@@ -84,18 +84,46 @@ function hasAffirmativeProjectClause(clause: string): boolean {
     ),
     ...findSpans(
       clause,
+      "(?:真实|个人|开源|课程|公司|团队)(?:项目|作品)\\s+(?!暂无|没有|无(?:[，,。；;\\s]|$))(?:[a-z0-9_.+-]{2,}|[\\p{Script=Han}]{2,})",
+    ),
+    ...findSpans(
+      clause,
       "\\b(?:project|repository)\\s*:\\s*[a-z0-9][a-z0-9._+-]{1,}",
     ),
     ...findSpans(
       clause,
-      "\\b[a-z0-9][a-z0-9._+-]{2,}\\s+(?:project|repository|application|app|service|website|platform|tool)\\b",
+      "\\b(?:personal\\s+)?(?:project|repository|application|app|service|website|platform|system|tool|product)\\s+(?:called|named)\\s+[a-z0-9][a-z0-9._+-]{1,}",
+    ),
+    ...findSpans(
+      clause,
+      "项目\\s*管理(?:平台|系统|应用|工具|产品)(?:\\s+[a-z][a-z0-9_.+-]{1,}|(?:名为|叫|[:：])\\s*(?:[a-z0-9_.+-]{2,}|[\\p{Script=Han}]{2,}))",
     ),
   ];
-  const genericChineseNames = new Set(["真实", "个人", "开源", "课程", "公司", "团队", "管理"]);
+  const genericEnglishNames = new Set([
+    "commercial",
+    "course",
+    "future",
+    "management",
+    "personal",
+    "planned",
+    "real",
+    "software",
+    "team",
+  ]);
   for (const match of clause.matchAll(
-    /([a-z0-9_.+-]{2,}|[\p{Script=Han}]{2,})\s*(?:项目|作品)/giu,
+    /\b([a-z0-9][a-z0-9._+-]{2,})\s+(?:project|repository|application|app|service|website|platform|system|tool|product)\b/giu,
   )) {
-    if (!genericChineseNames.has(match[1].toLowerCase())) {
+    if (!genericEnglishNames.has(match[1].toLowerCase())) {
+      artifactSpans.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+
+  const genericChineseName =
+    /真实|个人|开源|课程|公司|团队|管理|开发|研发|构建|搭建|设计|实现|创建|制作|维护|贡献|发布|完成|编写/u;
+  for (const match of clause.matchAll(
+    /([a-z0-9_.+-]{2,}|[\p{Script=Han}]{2,})\s*(?:项目|作品|平台|系统|应用|工具|产品)/giu,
+  )) {
+    if (!genericChineseName.test(match[1])) {
       artifactSpans.push({ start: match.index, end: match.index + match[0].length });
     }
   }
@@ -105,7 +133,7 @@ function hasAffirmativeProjectClause(clause: string): boolean {
 
 export function hasAffirmativeProjectEvidence(additionalInfo: string): boolean {
   return additionalInfo
-    .split(/[。！？；;\n\r]+|[.!?]+(?=\s|$)/u)
+    .split(/[。！？；;\n\r]+|[.!?]+(?=\s|$)|但是|但|\b(?:but|however)\b/iu)
     .map((clause) => clause.trim())
     .filter(Boolean)
     .some(hasAffirmativeProjectClause);
