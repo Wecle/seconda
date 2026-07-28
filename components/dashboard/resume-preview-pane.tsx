@@ -79,6 +79,11 @@ export function ResumePreviewPane({
   onSaveEdit,
 }: ResumePreviewPaneProps) {
   const { t } = useTranslation();
+  const originalFileUrl = selectedVersion.originalFileUrl;
+  const originalFilename = selectedVersion.originalFilename;
+  const canRenderOriginal = Boolean(
+    hasOriginalPreview && originalFileUrl && originalFilename,
+  );
   return (
     <>
       <header className="flex items-center justify-between border-b bg-card px-6 py-3">
@@ -162,7 +167,7 @@ export function ResumePreviewPane({
             />
           ) : activePreviewMode === "parsed" && parsed ? (
             <ParsedResumePreview parsed={parsed} />
-          ) : hasOriginalPreview ? (
+          ) : canRenderOriginal && originalFileUrl && originalFilename ? (
             <div className="w-full max-w-[1000px] space-y-4">
               {selectedVersion.parseStatus === "failed" && (
                 <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-4">
@@ -208,9 +213,9 @@ export function ResumePreviewPane({
                 )}
 
               <ResumePdfPreview
-                key={selectedVersion.originalFileUrl}
-                fileUrl={selectedVersion.originalFileUrl!}
-                filename={selectedVersion.originalFilename}
+                key={originalFileUrl}
+                fileUrl={originalFileUrl}
+                filename={originalFilename}
               />
             </div>
           ) : (

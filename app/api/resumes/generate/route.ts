@@ -4,7 +4,7 @@ import { getCurrentUserId } from "@/lib/auth/session";
 import { db } from "@/lib/db";
 import { serializeParsedResume } from "@/lib/resume/canonical-text";
 import { generateResumeWithAI } from "@/lib/resume/generate-resume";
-import { generatedResumeRequestSchema } from "@/lib/resume/generation-contract";
+import { parseGeneratedResumeRequestBody } from "@/lib/resume/generated-resume-request";
 import {
   findGeneratedResumeByKey,
   persistGeneratedResume,
@@ -17,10 +17,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const parsed = generatedResumeRequestSchema.safeParse(await request.json());
+    const parsed = await parseGeneratedResumeRequestBody(request);
     if (!parsed.success) {
       return NextResponse.json(
-        { error: "Invalid request body", details: parsed.error.flatten() },
+        {
+          error: "Invalid request body",
+          ...(parsed.details ? { details: parsed.details } : {}),
+        },
         { status: 400 },
       );
     }
