@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
 import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
+import { planResumeReparse } from "@/lib/resume/reparse-policy";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
@@ -27,6 +28,7 @@ export async function POST(
       .select({
         id: resumeVersions.id,
         resumeId: resumeVersions.resumeId,
+        sourceType: resumeVersions.sourceType,
         storedPath: resumeVersions.storedPath,
         extractedText: resumeVersions.extractedText,
         parseStatus: resumeVersions.parseStatus,
@@ -48,6 +50,14 @@ export async function POST(
       );
     }
 
+    const reparsePlan = planResumeReparse(version);
+    if (reparsePlan.kind === "unsupported_source") {
+      return NextResponse.json(
+        { error: "AI-generated resume versions cannot be re-parsed" },
+        { status: 400 },
+      );
+    }
+
     if (version.parseStatus !== "failed") {
       return NextResponse.json(
         { error: "Only failed resume versions can be re-parsed" },
@@ -55,29 +65,30 @@ export async function POST(
       );
     }
 
-    let extractedText = version.extractedText?.trim() ?? "";
+    if (reparsePlan.kind === "missing_file") {
+      return NextResponse.json(
+        { error: "Resume version has no original file" },
+        { status: 400 },
+      );
+    }
 
-    if (extractedText.length >= 50) {
+    let extractedText = reparsePlan.kind === "parse_text"
+      ? reparsePlan.extractedText
+      : "";
+
+    if (reparsePlan.kind === "parse_text") {
       await db
         .update(resumeVersions)
         .set({ parseStatus: "parsing", parseError: null })
         .where(eq(resumeVersions.id, versionId));
     } else {
-      const storedPath = version.storedPath;
-      if (!storedPath) {
-        return NextResponse.json(
-          { error: "Resume version has no original file" },
-          { status: 400 },
-        );
-      }
-
       await db
         .update(resumeVersions)
         .set({ parseStatus: "extracting", parseError: null })
         .where(eq(resumeVersions.id, versionId));
 
       try {
-        const response = await fetch(storedPath);
+        const response = await fetch(reparsePlan.storedPath);
         if (!response.ok) {
           throw new Error(`Failed to fetch original file (${response.status})`);
         }
