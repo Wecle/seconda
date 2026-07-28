@@ -820,7 +820,7 @@ export default function ReportPage() {
               <AccordionItem
                 key={q.id}
                 value={q.id}
-                className="border rounded-xl bg-card shadow-sm overflow-hidden"
+                className="group border rounded-xl bg-card shadow-sm overflow-hidden"
               >
                 <AccordionTrigger className="px-6 py-5 hover:no-underline">
                   <div className="flex flex-col gap-2 text-left w-full">
@@ -843,7 +843,7 @@ export default function ReportPage() {
                       {q.question}
                     </p>
                     {q.answerText && (
-                      <p className="text-sm text-muted-foreground line-clamp-1">
+                      <p className="text-sm text-muted-foreground line-clamp-1 group-data-[state=open]:hidden">
                         {q.answerText}
                       </p>
                     )}
