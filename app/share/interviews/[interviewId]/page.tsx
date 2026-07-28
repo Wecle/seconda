@@ -332,7 +332,7 @@ export default function SharedInterviewReportPage() {
               <AccordionItem
                 key={question.id}
                 value={question.id}
-                className="border rounded-xl bg-card shadow-sm overflow-hidden"
+                className="group border rounded-xl bg-card shadow-sm overflow-hidden"
               >
                 <AccordionTrigger className="px-6 py-5 hover:no-underline">
                   <div className="flex flex-col gap-2 text-left w-full">
@@ -355,7 +355,7 @@ export default function SharedInterviewReportPage() {
                       {question.question}
                     </p>
                     {question.answerText && (
-                      <p className="text-sm text-muted-foreground line-clamp-1">
+                      <p className="text-sm text-muted-foreground line-clamp-1 group-data-[state=open]:hidden">
                         {question.answerText}
                       </p>
                     )}
