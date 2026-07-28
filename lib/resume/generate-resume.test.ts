@@ -3,7 +3,7 @@ import test from "node:test";
 import type { GeneratedResumeInput } from "./generation-contract";
 import {
   generateResumeWithAI,
-  hasExplicitProjectMarker,
+  hasAffirmativeProjectEvidence,
   type ResumeStructuredGenerator,
 } from "./generate-resume";
 import type { ParsedResume } from "./types";
@@ -141,12 +141,6 @@ test("clears fabricated projects when additional information only contains conta
 
   assert.deepEqual(result.projects, []);
   assert.equal(result.contact?.email, "ada@example.com");
-  assert.equal(hasExplicitProjectMarker("持有云计算证书，英语流利"), false);
-  assert.equal(hasExplicitProjectMarker("Built a real compiler project"), true);
-  assert.equal(hasExplicitProjectMarker("作品：个人设计系统"), true);
-  assert.equal(hasExplicitProjectMarker("Portfolio at example.com"), true);
-  assert.equal(hasExplicitProjectMarker("Repository: ada/compiler"), true);
-  assert.equal(hasExplicitProjectMarker("GitHub: ada/compiler"), true);
 });
 
 test("preserves model projects only when additional information explicitly marks a project", async () => {
@@ -169,6 +163,42 @@ test("preserves model projects only when additional information explicitly marks
   }, { generate });
 
   assert.equal(result.projects?.[0]?.name, "Compiler");
+});
+
+test("requires affirmative project evidence instead of a project noun", () => {
+  const negativeCases = [
+    "无项目经验",
+    "没有项目经验",
+    "项目管理专业，持有 PMP 认证",
+    "No projects",
+    "Project Manager",
+    "Project management certificate",
+    "project",
+    "Portfolio: https://example.com/ada",
+    "https://github.com/ada/compiler",
+  ];
+  const positiveCases = [
+    "Built a real compiler project using TypeScript",
+    "主导开发 Seconda 项目，使用 Next.js",
+    "个人项目：Seconda，采用 React",
+    "Contributed parser fixes to https://github.com/ada/compiler",
+    "参与开发 GitHub 仓库 https://github.com/ada/compiler，负责解析模块",
+  ];
+
+  for (const value of negativeCases) {
+    assert.equal(
+      hasAffirmativeProjectEvidence(value),
+      false,
+      `expected no project evidence in: ${value}`,
+    );
+  }
+  for (const value of positiveCases) {
+    assert.equal(
+      hasAffirmativeProjectEvidence(value),
+      true,
+      `expected affirmative project evidence in: ${value}`,
+    );
+  }
 });
 
 test("escapes JSON markup so user data cannot close the untrusted-data wrapper", async () => {
