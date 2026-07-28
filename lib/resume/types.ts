@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export type ResumeSourceType = "uploaded" | "generated";
+
 export const parsedResumeSchema = z.object({
   name: z.string().describe("Full name of the candidate"),
   title: z.string().describe("Professional title or current role"),

@@ -59,6 +59,7 @@ export function createDrizzleAgentInterviewStore(
           ownerUserId: resumes.userId,
           resumeTitle: resumes.title,
           versionNumber: resumeVersions.versionNumber,
+          sourceType: resumeVersions.sourceType,
           originalFilename: resumeVersions.originalFilename,
           storedPath: resumeVersions.storedPath,
           mimeType: resumeVersions.mimeType,

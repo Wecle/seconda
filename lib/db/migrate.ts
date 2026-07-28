@@ -38,6 +38,7 @@ async function migrate() {
       user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       current_version_id UUID,
+      creation_idempotency_key TEXT,
       interview_settings JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -53,21 +54,56 @@ async function migrate() {
     ALTER TABLE resumes
     ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE
   `;
+  await sql`ALTER TABLE resumes ADD COLUMN IF NOT EXISTS creation_idempotency_key TEXT`;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_creation_owner_key
+    ON resumes(user_id, creation_idempotency_key)
+    WHERE user_id IS NOT NULL AND creation_idempotency_key IS NOT NULL
+  `;
 
   await sql`
     CREATE TABLE IF NOT EXISTS resume_versions (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       resume_id UUID NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
       version_number INTEGER NOT NULL,
-      original_filename TEXT NOT NULL,
-      stored_path TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'uploaded',
+      original_filename TEXT,
+      stored_path TEXT,
       mime_type TEXT,
       file_size INTEGER,
       extracted_text TEXT,
       parsed_json JSONB,
       parse_status TEXT NOT NULL DEFAULT 'uploaded',
       parse_error TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT resume_versions_source_type_check
+        CHECK (source_type IN ('uploaded', 'generated')),
+      CONSTRAINT resume_versions_generated_attachment_check
+        CHECK (
+          source_type <> 'generated'
+          OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
+        )
+    )
+  `;
+  await sql`ALTER TABLE resume_versions ADD COLUMN IF NOT EXISTS source_type TEXT`;
+  await sql`UPDATE resume_versions SET source_type = 'uploaded' WHERE source_type IS NULL`;
+  await sql`ALTER TABLE resume_versions ALTER COLUMN source_type SET DEFAULT 'uploaded'`;
+  await sql`ALTER TABLE resume_versions ALTER COLUMN source_type SET NOT NULL`;
+  await sql`ALTER TABLE resume_versions ALTER COLUMN original_filename DROP NOT NULL`;
+  await sql`ALTER TABLE resume_versions ALTER COLUMN stored_path DROP NOT NULL`;
+  await sql`ALTER TABLE resume_versions DROP CONSTRAINT IF EXISTS resume_versions_source_type_check`;
+  await sql`
+    ALTER TABLE resume_versions
+    ADD CONSTRAINT resume_versions_source_type_check
+    CHECK (source_type IN ('uploaded', 'generated'))
+  `;
+  await sql`ALTER TABLE resume_versions DROP CONSTRAINT IF EXISTS resume_versions_generated_attachment_check`;
+  await sql`
+    ALTER TABLE resume_versions
+    ADD CONSTRAINT resume_versions_generated_attachment_check
+    CHECK (
+      source_type <> 'generated'
+      OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
     )
   `;
 
@@ -108,14 +144,44 @@ async function migrate() {
       owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
       resume_title TEXT NOT NULL,
       version_number INTEGER NOT NULL,
-      original_filename TEXT NOT NULL,
-      stored_path TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'uploaded',
+      original_filename TEXT,
+      stored_path TEXT,
       mime_type TEXT,
       file_size INTEGER,
       extracted_text TEXT,
       parsed_json JSONB,
       parse_status TEXT NOT NULL,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT interview_resume_snapshots_source_type_check
+        CHECK (source_type IN ('uploaded', 'generated')),
+      CONSTRAINT interview_resume_snapshots_generated_attachment_check
+        CHECK (
+          source_type <> 'generated'
+          OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
+        )
+    )
+  `;
+  await sql`DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots`;
+  await sql`ALTER TABLE interview_resume_snapshots ADD COLUMN IF NOT EXISTS source_type TEXT`;
+  await sql`UPDATE interview_resume_snapshots SET source_type = 'uploaded' WHERE source_type IS NULL`;
+  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET DEFAULT 'uploaded'`;
+  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN source_type SET NOT NULL`;
+  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN original_filename DROP NOT NULL`;
+  await sql`ALTER TABLE interview_resume_snapshots ALTER COLUMN stored_path DROP NOT NULL`;
+  await sql`ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_source_type_check`;
+  await sql`
+    ALTER TABLE interview_resume_snapshots
+    ADD CONSTRAINT interview_resume_snapshots_source_type_check
+    CHECK (source_type IN ('uploaded', 'generated'))
+  `;
+  await sql`ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_generated_attachment_check`;
+  await sql`
+    ALTER TABLE interview_resume_snapshots
+    ADD CONSTRAINT interview_resume_snapshots_generated_attachment_check
+    CHECK (
+      source_type <> 'generated'
+      OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
     )
   `;
   await sql`
@@ -124,6 +190,7 @@ async function migrate() {
       owner_user_id,
       resume_title,
       version_number,
+      source_type,
       original_filename,
       stored_path,
       mime_type,
@@ -138,6 +205,7 @@ async function migrate() {
       resumes.user_id,
       resumes.title,
       resume_versions.version_number,
+      resume_versions.source_type,
       resume_versions.original_filename,
       resume_versions.stored_path,
       resume_versions.mime_type,

@@ -63,13 +63,21 @@ export async function POST(
         .set({ parseStatus: "parsing", parseError: null })
         .where(eq(resumeVersions.id, versionId));
     } else {
+      const storedPath = version.storedPath;
+      if (!storedPath) {
+        return NextResponse.json(
+          { error: "Resume version has no original file" },
+          { status: 400 },
+        );
+      }
+
       await db
         .update(resumeVersions)
         .set({ parseStatus: "extracting", parseError: null })
         .where(eq(resumeVersions.id, versionId));
 
       try {
-        const response = await fetch(version.storedPath);
+        const response = await fetch(storedPath);
         if (!response.ok) {
           throw new Error(`Failed to fetch original file (${response.status})`);
         }

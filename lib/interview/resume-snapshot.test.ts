@@ -8,6 +8,7 @@ test("copies all interview resume fields and detaches structured data from later
     ownerUserId: "user",
     resumeTitle: "Frontend CV",
     versionNumber: 3,
+    sourceType: "uploaded",
     originalFilename: "resume.pdf",
     storedPath: "https://blob.example/resume.pdf",
     mimeType: "application/pdf",
@@ -23,10 +24,30 @@ test("copies all interview resume fields and detaches structured data from later
   assert.equal(snapshot.storedPath, "https://blob.example/resume.pdf");
 });
 
+test("copies a generated resume snapshot without attachment metadata", () => {
+  const snapshot = createResumeSnapshotPayload({
+    ownerUserId: "user",
+    resumeTitle: "Frontend Engineer",
+    versionNumber: 1,
+    sourceType: "generated",
+    originalFilename: null,
+    storedPath: null,
+    mimeType: null,
+    fileSize: null,
+    extractedText: "Frontend Engineer\n\nSkills\nReact, TypeScript",
+    parsedJson: { name: "", title: "Frontend Engineer", skills: ["React", "TypeScript"] },
+    parseStatus: "parsed",
+  });
+
+  assert.equal(snapshot.sourceType, "generated");
+  assert.equal(snapshot.originalFilename, null);
+  assert.equal(snapshot.storedPath, null);
+});
+
 test("retains snapshot-referenced attachments when a source resume is deleted", () => {
   assert.deepEqual(
     selectDeletableResumeAttachments(
-      ["kept.pdf", "unused.pdf", "unused.pdf"],
+      [null, "kept.pdf", "unused.pdf", "unused.pdf"],
       ["kept.pdf"],
     ),
     ["unused.pdf"],
