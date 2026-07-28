@@ -169,20 +169,30 @@ test("requires affirmative project evidence instead of a project noun", () => {
   const negativeCases = [
     "无项目经验",
     "没有项目经验",
+    "个人项目：暂无",
     "项目管理专业，持有 PMP 认证",
+    "负责项目管理/PMP",
     "No projects",
     "Project Manager",
     "Project management certificate",
+    "Led project management certification initiatives",
     "project",
     "Portfolio: https://example.com/ada",
     "https://github.com/ada/compiler",
+    "Built financial models. GitHub: https://github.com/ada/compiler",
+    "负责财务管理，GitHub: https://github.com/ada/compiler",
+    "使用 Excel 进行财务管理，GitHub: https://github.com/ada/compiler",
   ];
   const positiveCases = [
     "Built a real compiler project using TypeScript",
     "主导开发 Seconda 项目，使用 Next.js",
     "个人项目：Seconda，采用 React",
+    "项目：Seconda，使用 React 开发",
+    "Seconda 项目，使用 React 开发",
+    "Project: Compiler, built with TypeScript",
     "Contributed parser fixes to https://github.com/ada/compiler",
     "参与开发 GitHub 仓库 https://github.com/ada/compiler，负责解析模块",
+    "No prior projects; built a compiler project using TypeScript",
   ];
 
   for (const value of negativeCases) {
