@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { parsedResumeSchema } from "@/lib/resume/types";
+import { serializeParsedResume } from "@/lib/resume/canonical-text";
 
 export async function PATCH(
   request: NextRequest,
@@ -66,11 +67,27 @@ export async function PATCH(
       .values({
         resumeId: id,
         versionNumber: nextVersionNumber,
-        originalFilename: sourceVersion.originalFilename,
-        storedPath: sourceVersion.storedPath,
-        mimeType: sourceVersion.mimeType,
-        fileSize: sourceVersion.fileSize,
-        extractedText: sourceVersion.extractedText,
+        sourceType: sourceVersion.sourceType,
+        originalFilename:
+          sourceVersion.sourceType === "generated"
+            ? null
+            : sourceVersion.originalFilename,
+        storedPath:
+          sourceVersion.sourceType === "generated"
+            ? null
+            : sourceVersion.storedPath,
+        mimeType:
+          sourceVersion.sourceType === "generated"
+            ? null
+            : sourceVersion.mimeType,
+        fileSize:
+          sourceVersion.sourceType === "generated"
+            ? null
+            : sourceVersion.fileSize,
+        extractedText:
+          sourceVersion.sourceType === "generated"
+            ? serializeParsedResume(parsed.data)
+            : sourceVersion.extractedText,
         parsedJson: parsed.data,
         parseStatus: "parsed",
       })

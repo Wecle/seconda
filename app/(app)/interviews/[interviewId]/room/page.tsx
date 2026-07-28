@@ -10,7 +10,7 @@ import { InterviewAnswerPanel } from "@/components/interview/interview-answer-pa
 import { InterviewResumeContextSheet } from "@/components/interview/interview-resume-context-sheet";
 import { InterviewCompletionView } from "@/components/interview/interview-completion-view";
 import { AgentInterviewRoom } from "@/components/interview/agent-interview-room";
-import type { ParsedResume } from "@/lib/resume/types";
+import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
 import {
   Bot,
   FileText,
@@ -39,7 +39,8 @@ interface InterviewData {
 interface ResumeSnapshotData {
   id: string;
   versionNumber: number;
-  originalFilename: string;
+  sourceType: ResumeSourceType;
+  originalFilename: string | null;
   originalFileUrl: string | null;
   parseStatus: string;
   parsedData: ParsedResume | null;

@@ -15,7 +15,7 @@ import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/room-state";
 import { latestRunSnapshotSequence } from "@/lib/interview/agent/client-stream";
 import type { CommittedArtifact } from "@/lib/interview/agent/contracts";
-import type { ParsedResume } from "@/lib/resume/types";
+import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
 import { clearPendingAnswer, loadPendingAnswer, savePendingAnswer, type PendingAnswer } from "@/lib/interview/agent/pending-answer";
 import {
   useAgentRunStream,
@@ -25,7 +25,15 @@ import {
 
 type AgentMessage = { id: string; runId?: string | null; sequence: number; role: string; kind: string; content: string };
 type AgentRun = AgentRunStreamStatus;
-type ResumeSnapshot = { id: string; versionNumber: number; originalFilename: string; originalFileUrl: string | null; parseStatus: string; parsedData: ParsedResume | null };
+type ResumeSnapshot = {
+  id: string;
+  versionNumber: number;
+  sourceType: ResumeSourceType;
+  originalFilename: string | null;
+  originalFileUrl: string | null;
+  parseStatus: string;
+  parsedData: ParsedResume | null;
+};
 
 const markdownPlugins = [remarkGfm];
 const noInitialArtifacts: CommittedArtifact[] = [];

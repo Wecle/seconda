@@ -9,6 +9,7 @@ import {
   Loader2,
   Pencil,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import type { ParsedResume } from "@/lib/resume/types";
@@ -18,6 +19,12 @@ import { ParsedResumeEditor } from "@/components/resume/parsed-resume-editor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { ResumeVersion } from "@/components/dashboard/types";
 
 const ResumePdfPreview = dynamic(
@@ -81,8 +88,9 @@ export function ResumePreviewPane({
   const { t } = useTranslation();
   const originalFileUrl = selectedVersion.originalFileUrl;
   const originalFilename = selectedVersion.originalFilename;
+  const isGenerated = selectedVersion.sourceType === "generated";
   const canRenderOriginal = Boolean(
-    hasOriginalPreview && originalFileUrl && originalFilename,
+    !isGenerated && hasOriginalPreview && originalFileUrl && originalFilename,
   );
   return (
     <>
@@ -102,6 +110,12 @@ export function ResumePreviewPane({
             >
               <CheckCircle className="size-3" />
               {t.dashboard.parsedSuccessfully}
+            </Badge>
+          )}
+          {isGenerated && (
+            <Badge variant="outline" className="gap-1">
+              <Sparkles className="size-3" />
+              {t.dashboard.aiGeneratedBadge}
             </Badge>
           )}
           {selectedVersion.parseStatus === "failed" && (
@@ -142,16 +156,45 @@ export function ResumePreviewPane({
             >
               {t.dashboard.parsed}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={activePreviewMode === "original" ? "secondary" : "ghost"}
-              className="h-7 px-2 text-xs"
-              onClick={() => onPreviewModeChange("original")}
-              disabled={!hasOriginalPreview || editing}
-            >
-              {t.dashboard.original}
-            </Button>
+            {isGenerated ? (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      tabIndex={0}
+                      className="inline-flex"
+                      aria-label={t.dashboard.generatedNoOriginal}
+                    >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        disabled
+                      >
+                        {t.dashboard.original}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    {t.dashboard.generatedNoOriginal}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant={
+                  activePreviewMode === "original" ? "secondary" : "ghost"
+                }
+                className="h-7 px-2 text-xs"
+                onClick={() => onPreviewModeChange("original")}
+                disabled={!hasOriginalPreview || editing}
+              >
+                {t.dashboard.original}
+              </Button>
+            )}
           </div>
         </div>
       </header>
