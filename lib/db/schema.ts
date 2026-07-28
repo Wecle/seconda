@@ -1,5 +1,7 @@
-import { pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique, uniqueIndex } from "drizzle-orm/pg-core";
 import type { StoredInterviewConfig } from "@/lib/interview/settings";
+import type { ResumeSourceType } from "@/lib/resume/types";
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -28,10 +30,15 @@ export const resumes = pgTable("resumes", {
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   currentVersionId: uuid("current_version_id"),
+  creationIdempotencyKey: text("creation_idempotency_key"),
   interviewSettings: jsonb("interview_settings").$type<StoredInterviewConfig>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("idx_resumes_creation_owner_key")
+    .on(table.userId, table.creationIdempotencyKey)
+    .where(sql`${table.userId} IS NOT NULL AND ${table.creationIdempotencyKey} IS NOT NULL`),
+]);
 
 export const resumeVersions = pgTable("resume_versions", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -39,8 +46,9 @@ export const resumeVersions = pgTable("resume_versions", {
     .notNull()
     .references(() => resumes.id, { onDelete: "cascade" }),
   versionNumber: integer("version_number").notNull(),
-  originalFilename: text("original_filename").notNull(),
-  storedPath: text("stored_path").notNull(),
+  sourceType: text("source_type").$type<ResumeSourceType>().notNull().default("uploaded"),
+  originalFilename: text("original_filename"),
+  storedPath: text("stored_path"),
   mimeType: text("mime_type"),
   fileSize: integer("file_size"),
   extractedText: text("extracted_text"),
@@ -48,7 +56,13 @@ export const resumeVersions = pgTable("resume_versions", {
   parseStatus: text("parse_status").notNull().default("uploaded"),
   parseError: text("parse_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check("resume_versions_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
+  check(
+    "resume_versions_generated_attachment_check",
+    sql`${table.sourceType} <> 'generated' OR (${table.originalFilename} IS NULL AND ${table.storedPath} IS NULL AND ${table.mimeType} IS NULL AND ${table.fileSize} IS NULL)`,
+  ),
+]);
 
 export const interviews = pgTable("interviews", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -91,15 +105,22 @@ export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
   ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
   resumeTitle: text("resume_title").notNull(),
   versionNumber: integer("version_number").notNull(),
-  originalFilename: text("original_filename").notNull(),
-  storedPath: text("stored_path").notNull(),
+  sourceType: text("source_type").$type<ResumeSourceType>().notNull().default("uploaded"),
+  originalFilename: text("original_filename"),
+  storedPath: text("stored_path"),
   mimeType: text("mime_type"),
   fileSize: integer("file_size"),
   extractedText: text("extracted_text"),
   parsedJson: jsonb("parsed_json"),
   parseStatus: text("parse_status").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  check("interview_resume_snapshots_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
+  check(
+    "interview_resume_snapshots_generated_attachment_check",
+    sql`${table.sourceType} <> 'generated' OR (${table.originalFilename} IS NULL AND ${table.storedPath} IS NULL AND ${table.mimeType} IS NULL AND ${table.fileSize} IS NULL)`,
+  ),
+]);
 
 export const interviewAgentRuns = pgTable("interview_agent_runs", {
   id: uuid("id").primaryKey().defaultRandom(),

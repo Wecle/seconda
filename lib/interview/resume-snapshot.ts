@@ -1,9 +1,16 @@
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { interviewResumeSnapshots, resumes, resumeVersions } from "@/lib/db/schema";
+import type { ResumeSourceType } from "@/lib/resume/types";
+
+type ResumeDatabase = typeof import("@/lib/db").db;
+
 export type ResumeSnapshotSource = {
   ownerUserId: string | null;
   resumeTitle: string;
   versionNumber: number;
-  originalFilename: string;
-  storedPath: string;
+  sourceType: ResumeSourceType;
+  originalFilename: string | null;
+  storedPath: string | null;
   mimeType: string | null;
   fileSize: number | null;
   extractedText: string | null;
@@ -20,9 +27,15 @@ export function createResumeSnapshotPayload(source: ResumeSnapshotSource) {
   };
 }
 
-export function selectDeletableResumeAttachments(versionPaths: string[], snapshotPaths: string[]) {
-  const protectedPaths = new Set(snapshotPaths);
-  return [...new Set(versionPaths)].filter((path) => path.length > 0 && !protectedPaths.has(path));
+export function selectDeletableResumeAttachments(
+  versionPaths: Array<string | null>,
+  snapshotPaths: Array<string | null>,
+) {
+  const protectedPaths = new Set(
+    snapshotPaths.filter((path): path is string => Boolean(path)),
+  );
+  return [...new Set(versionPaths.filter((path): path is string => Boolean(path)))]
+    .filter((path) => !protectedPaths.has(path));
 }
 
 export function deleteResumePreservingSnapshots(
@@ -38,10 +51,11 @@ export function deleteResumePreservingSnapshots(
       .from(resumeVersions)
       .where(eq(resumeVersions.resumeId, input.resumeId));
     const versionPaths = versions.map((version) => version.storedPath);
-    const protectedAttachments = versionPaths.length > 0
+    const attachmentPaths = versionPaths.filter((path): path is string => Boolean(path));
+    const protectedAttachments = attachmentPaths.length > 0
       ? await tx.select({ storedPath: interviewResumeSnapshots.storedPath })
         .from(interviewResumeSnapshots)
-        .where(inArray(interviewResumeSnapshots.storedPath, versionPaths))
+        .where(inArray(interviewResumeSnapshots.storedPath, attachmentPaths))
       : [];
     await tx.delete(resumes)
       .where(and(eq(resumes.id, input.resumeId), eq(resumes.userId, input.ownerUserId)));
@@ -51,7 +65,3 @@ export function deleteResumePreservingSnapshots(
     );
   });
 }
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { interviewResumeSnapshots, resumes, resumeVersions } from "@/lib/db/schema";
-
-type ResumeDatabase = typeof import("@/lib/db").db;
