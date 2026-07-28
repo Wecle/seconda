@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { FileUp, Loader2, Upload } from "lucide-react";
+import { FilePlus2, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n/context";
 import {
@@ -17,12 +17,25 @@ import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
 import type { Resume } from "@/components/dashboard/types";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
-import { UploadResumeDialog } from "@/components/dashboard/upload-resume-dialog";
+import {
+  NewResumeDialog,
+  type NewResumeMode,
+} from "@/components/dashboard/new-resume-dialog";
+import type { GeneratedResumeDraft } from "@/lib/resume/generation-contract";
 import type { ParsedResume } from "@/lib/resume/types";
+
+const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
+  name: "",
+  targetRole: "",
+  coreSkills: "",
+  education: "",
+  workExperience: "",
+  additionalInfo: "",
+};
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { t } = useTranslation();
+  const { locale, t } = useTranslation();
   const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
     null,
   );
@@ -36,8 +49,15 @@ export default function DashboardPage() {
     new Set(),
   );
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [newResumeMode, setNewResumeMode] =
+    useState<NewResumeMode>("upload");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [generatedDraft, setGeneratedDraft] = useState<GeneratedResumeDraft>(
+    EMPTY_GENERATED_DRAFT,
+  );
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
   const [deletingResumeId, setDeletingResumeId] = useState<string | null>(null);
   const [pendingDeleteResume, setPendingDeleteResume] = useState<{
     id: string;
@@ -67,6 +87,9 @@ export default function DashboardPage() {
   const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const interviewCreationRef = useRef<{ signature: string; key: string } | null>(null);
+  const resumeGenerationRef = useRef<{ signature: string; key: string } | null>(
+    null,
+  );
 
   const fetchResumes = useCallback(async () => {
     try {
@@ -126,6 +149,24 @@ export default function DashboardPage() {
     };
   }, []);
 
+  const resetNewResumeDialog = () => {
+    setNewResumeMode("upload");
+    setUploadTitle("");
+    setSelectedFile(null);
+    setDragOver(false);
+    setUploadError(null);
+    setGeneratedDraft(EMPTY_GENERATED_DRAFT);
+    setGenerateError(null);
+    resumeGenerationRef.current = null;
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const handleNewResumeOpenChange = (open: boolean) => {
+    if (!open && (uploading || generating)) return;
+    setUploadOpen(open);
+    if (!open) resetNewResumeDialog();
+  };
+
   const handleUpload = async () => {
     if (!selectedFile) return;
     setUploading(true);
@@ -158,8 +199,7 @@ export default function DashboardPage() {
       }
 
       setUploadOpen(false);
-      setSelectedFile(null);
-      setUploadTitle("");
+      resetNewResumeDialog();
       setSelectedResumeId(data.id);
       setSelectedVersionId(data.versionId);
       setExpandedFolders((prev) => new Set([...prev, data.id]));
@@ -168,6 +208,62 @@ export default function DashboardPage() {
       setUploadError("Upload failed. Please try again.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleGenerateResume = async () => {
+    if (generating) return;
+
+    const signature = JSON.stringify({
+      locale,
+      name: generatedDraft.name,
+      targetRole: generatedDraft.targetRole,
+      coreSkills: generatedDraft.coreSkills,
+      education: generatedDraft.education,
+      workExperience: generatedDraft.workExperience,
+      additionalInfo: generatedDraft.additionalInfo,
+    });
+    if (resumeGenerationRef.current?.signature !== signature) {
+      resumeGenerationRef.current = {
+        signature,
+        key: crypto.randomUUID(),
+      };
+    }
+
+    setGenerating(true);
+    setGenerateError(null);
+    try {
+      const response = await fetch("/api/resumes/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          idempotencyKey: resumeGenerationRef.current.key,
+          locale,
+          ...generatedDraft,
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as {
+        id?: string;
+        versionId?: string;
+      } | null;
+
+      if (!response.ok || !data?.id || !data.versionId) {
+        setGenerateError(t.dashboard.generator.requestFailed);
+        return;
+      }
+
+      resumeGenerationRef.current = null;
+      setUploadOpen(false);
+      setSelectedResumeId(data.id);
+      setSelectedVersionId(data.versionId);
+      setExpandedFolders((previous) => new Set([...previous, data.id!]));
+      setPreviewMode("parsed");
+      resetNewResumeDialog();
+      await fetchResumes();
+    } catch {
+      setGenerateError(t.dashboard.generator.requestFailed);
+    } finally {
+      setGenerating(false);
     }
   };
 
@@ -475,7 +571,7 @@ export default function DashboardPage() {
           ) : (
             <div className="flex flex-1 items-center justify-center">
               <div className="text-center space-y-4">
-                <FileUp className="mx-auto size-12 text-muted-foreground/30" />
+                <FilePlus2 className="mx-auto size-12 text-muted-foreground/30" />
                 <div>
                   <h2 className="text-lg font-semibold">
                     {t.dashboard.noResumeSelected}
@@ -485,7 +581,7 @@ export default function DashboardPage() {
                   </p>
                 </div>
                 <Button onClick={() => setUploadOpen(true)}>
-                  <Upload className="size-4" />
+                  <Plus className="size-4" />
                   {t.dashboard.uploadResume}
                 </Button>
               </div>
@@ -514,9 +610,11 @@ export default function DashboardPage() {
         onSave={handleSaveInterviewSettings}
       />
 
-      <UploadResumeDialog
+      <NewResumeDialog
         open={uploadOpen}
-        onOpenChange={setUploadOpen}
+        onOpenChange={handleNewResumeOpenChange}
+        mode={newResumeMode}
+        onModeChange={setNewResumeMode}
         uploadTitle={uploadTitle}
         onUploadTitleChange={setUploadTitle}
         dragOver={dragOver}
@@ -532,8 +630,15 @@ export default function DashboardPage() {
         onClearFile={() => setSelectedFile(null)}
         uploadError={uploadError}
         uploading={uploading}
-        onCancel={() => setUploadOpen(false)}
         onUpload={handleUpload}
+        generatedDraft={generatedDraft}
+        onGeneratedDraftChange={(draft) => {
+          setGeneratedDraft(draft);
+          setGenerateError(null);
+        }}
+        generating={generating}
+        generateError={generateError}
+        onGenerate={handleGenerateResume}
       />
 
       <DeleteResumeDialog

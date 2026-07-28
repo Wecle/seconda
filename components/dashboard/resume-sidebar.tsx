@@ -9,8 +9,8 @@ import {
   Folder,
   FolderOpen,
   Loader2,
+  Plus,
   Trash2,
-  Upload,
 } from "lucide-react";
 import { BrandIcon } from "@/components/brand/brand-icon";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
@@ -177,7 +177,7 @@ export function ResumeSidebar({
 
       <div className="p-3">
         <Button className="w-full" size="sm" onClick={onOpenUpload}>
-          <Upload className="size-4" />
+          <Plus className="size-4" />
           {t.dashboard.uploadNewResume}
         </Button>
       </div>
