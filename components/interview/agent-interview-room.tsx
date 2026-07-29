@@ -12,11 +12,11 @@ import { AgentLiveTurn } from "./agent-live-turn";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
 import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./interview-room-timeline";
 import { useCompletionPolling } from "./use-completion-polling";
-import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/room-state";
-import { latestRunSnapshotSequence } from "@/lib/interview/agent/client-stream";
-import type { CommittedArtifact } from "@/lib/interview/agent/contracts";
+import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/client/room-state";
+import { latestRunSnapshotSequence } from "@/lib/interview/agent/client/stream";
+import type { CommittedArtifact } from "@/lib/interview/agent/protocols/events";
 import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
-import { clearPendingAnswer, loadPendingAnswer, savePendingAnswer, type PendingAnswer } from "@/lib/interview/agent/pending-answer";
+import { clearPendingAnswer, loadPendingAnswer, savePendingAnswer, type PendingAnswer } from "@/lib/interview/agent/client/pending-answer";
 import {
   useAgentRunStream,
   type AgentRunStreamEvent,

@@ -4,9 +4,9 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { getPostgresAgentEventWakeHub } from "@/lib/interview/agent/postgres-wake-hub";
-import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
-import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/sse";
+import { getPostgresAgentEventWakeHub } from "@/lib/interview/agent/transport/postgres-wake-hub";
+import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/persistence/drizzle-repository";
+import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/transport/sse";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),

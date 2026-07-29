@@ -1,5 +1,5 @@
 import { CheckCircle2 } from "lucide-react";
-import type { CommittedArtifact } from "@/lib/interview/agent/contracts";
+import type { CommittedArtifact } from "@/lib/interview/agent/protocols/events";
 
 export function AgentArtifactCard({ artifact }: { artifact: CommittedArtifact }) {
   return <div className="max-w-[86%] rounded-xl border bg-muted/40 px-4 py-3 text-sm">

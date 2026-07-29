@@ -1,4 +1,8 @@
-import { and, desc, eq } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+} from "drizzle-orm";
 import {
   interviewAnswerAssessments,
   interviewContextSnapshots,
@@ -13,9 +17,12 @@ import {
   interviewPersonaValues,
 } from "@/lib/interview/settings";
 import { z } from "zod";
-import { questionCategorySchema } from "../contracts";
-import { indexResumeEvidence } from "./resume-evidence";
-import { buildPromptPipe, canonicalJson } from "./prompt-pipe";
+import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
+import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
+import {
+  buildPromptPipe,
+  canonicalJson,
+} from "./prompt-pipe";
 
 export const PROMPT_TEMPLATE_VERSION = "interview-agent-v2";
 

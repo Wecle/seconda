@@ -122,7 +122,7 @@ Agent 上下文采用 cache-stable Prompt Pipe。面试设置、简历概览与�
 
 `INTERVIEW_AGENT_CONTEXT_WINDOW` 默认 `128000`，`INTERVIEW_AGENT_OUTPUT_RESERVE` 默认 `8000`；运行时还固定保留 20% headroom。最近尾部最多保留 8 条消息。每个 Run 记录 prompt 模板版本、cache epoch、估算上下文 token，以及厂商实际返回的 input/output/cache-read/cache-write token。厂商未提供 cache 字段时保留为“不可用”语义，监控中不得按 0 命中计算；跨厂商或模型降级也不假设缓存可复用。
 
-Agent Skills 位于 `lib/interview/agent/skills.ts`。每个 Skill 必须声明稳定名称、版本、简短元数据、最多 4000 字符的指令和所需工具；启动时会拒绝重名 Skill 与不存在的工具。Opening Run 只加载简历证据和覆盖规划，Answer Run 再按需加载六维评估 Skill。模型只看到当前 Skill 所需工具的并集，完整工具注册表仍保留在服务端执行管线中；激活的 Skill 名称会进入 checkpoint，恢复后按 Run mode 确定性重载。
+Agent Skills 位于 `lib/interview/agent/skills/catalog.ts`。每个 Skill 必须声明稳定名称、版本、简短元数据、最多 4000 字符的指令和所需工具；启动时会拒绝重名 Skill 与不存在的工具。Opening Run 只加载简历证据和覆盖规划，Answer Run 再按需加载六维评估 Skill。模型只看到当前 Skill 所需工具的并集，完整工具注册表仍保留在服务端执行管线中；激活的 Skill 名称会进入 checkpoint，恢复后按 Run mode 确定性重载。Agent 的完整模块边界见 `lib/interview/agent/README.md`。
 
 Dashboard 默认创建最新 Agent 面试并使用可恢复 SSE 面试室。所有 active 会话统一使用最新 Runtime；历史完成会话仍按持久化数据读取，不存在版本或环境变量执行器回滚分支。
 

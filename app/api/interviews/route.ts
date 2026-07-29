@@ -4,11 +4,11 @@ import { resumes, resumeVersions } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
-import { createAgentInterviewRequestSchema } from "@/lib/interview/agent/api-contracts";
-import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
-import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
-import { createAgentInterview } from "@/lib/interview/agent/service";
-import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
+import { createAgentInterviewRequestSchema } from "@/lib/interview/agent/protocols/api";
+import { createProductionAgentDependencies } from "@/lib/interview/agent/application/composition";
+import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
+import { createAgentInterview } from "@/lib/interview/agent/application/interview-service";
+import { createAgentRunScheduler } from "@/lib/interview/agent/application/run-worker";
 
 export async function POST(request: NextRequest) {
   try {

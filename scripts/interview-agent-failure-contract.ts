@@ -1,7 +1,8 @@
+import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/persistence/memory-repository";
 import assert from "node:assert/strict";
-import { nextReconnectDelay } from "@/lib/interview/agent/client-stream";
-import type { AgentExitReason } from "@/lib/interview/agent/contracts";
-import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/repository";
+import { nextReconnectDelay } from "@/lib/interview/agent/client/stream";
+import type { AgentExitReason } from "@/lib/interview/agent/protocols/events";
+
 
 const failureReasons: AgentExitReason[] = [
   "max_turns",

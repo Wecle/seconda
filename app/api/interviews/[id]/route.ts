@@ -5,11 +5,11 @@ import { and, eq, asc, desc } from "drizzle-orm";
 import { getCurrentUserId } from "@/lib/auth/session";
 import type { ParsedResume } from "@/lib/resume/types";
 import { normalizeDeepDive } from "@/lib/interview/normalize";
-import type { AgentExitReason } from "@/lib/interview/agent/contracts";
-import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
-import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
+import type { AgentExitReason } from "@/lib/interview/agent/protocols/events";
+import { agentExitMessage } from "@/lib/interview/agent/protocols/exit-messages";
+import { getRecoveryDisposition } from "@/lib/interview/agent/application/recovery-policy";
 import { getCompletionRecoveryDisposition } from "@/lib/interview/completion/worker";
-import { serializePublicRoomEvents } from "@/lib/interview/agent/room-snapshot";
+import { serializePublicRoomEvents } from "@/lib/interview/agent/events/room-snapshot";
 
 export async function GET(
   _request: NextRequest,
@@ -99,10 +99,10 @@ export async function GET(
               recoveryDisposition: getRecoveryDisposition({
                 ...latestRuns[0],
                 status: latestRuns[0].status as "running" | "completed" | "failed",
-                phase: latestRuns[0].phase as import("@/lib/interview/agent/repository").AgentRunPhase,
+                phase: latestRuns[0].phase as import("@/lib/interview/agent/persistence/repository").AgentRunPhase,
                 exitReason: latestRuns[0].exitReason as AgentExitReason | null,
-                checkpoint: latestRuns[0].checkpoint as import("@/lib/interview/agent/contracts").AgentCheckpoint | null,
-                trigger: latestRuns[0].trigger as import("@/lib/interview/agent/repository").AgentRunTrigger | null,
+                checkpoint: latestRuns[0].checkpoint as import("@/lib/interview/agent/protocols/events").AgentCheckpoint | null,
+                trigger: latestRuns[0].trigger as import("@/lib/interview/agent/persistence/repository").AgentRunTrigger | null,
               }, new Date()),
             }
           : null,

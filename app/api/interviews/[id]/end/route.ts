@@ -4,9 +4,9 @@ import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
-import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
-import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
-import { endAgentInterview } from "@/lib/interview/agent/service";
+import { createProductionAgentDependencies } from "@/lib/interview/agent/application/composition";
+import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
+import { endAgentInterview } from "@/lib/interview/agent/application/interview-service";
 import { createProductionCompletionDependencies, scheduleInterviewCompletion } from "@/lib/interview/completion/composition";
 
 export async function POST(

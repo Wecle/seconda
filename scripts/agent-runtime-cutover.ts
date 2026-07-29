@@ -15,14 +15,14 @@ import {
   questionCategorySchema,
   responseDiscardedPayloadSchema,
   terminalRunPayloadSchema,
-} from "../lib/interview/agent/contracts";
-import { indexResumeEvidence } from "../lib/interview/agent/context/resume-evidence";
-import { agentExitMessage } from "../lib/interview/agent/exit-messages";
-import type { AgentRunTrigger } from "../lib/interview/agent/repository";
+} from "../lib/interview/agent/protocols/events";
+import { indexResumeEvidence } from "../lib/interview/agent/domain/resume-evidence";
+import { agentExitMessage } from "../lib/interview/agent/protocols/exit-messages";
+import type { AgentRunTrigger } from "../lib/interview/agent/persistence/repository";
 import {
   ANSWER_RUN_INSTRUCTION,
   buildOpeningInstruction,
-} from "../lib/interview/agent/service";
+} from "../lib/interview/agent/prompts/turn-instructions";
 
 type AgentDatabase = typeof import("../lib/db").db;
 
@@ -960,8 +960,8 @@ export async function main() {
   ] =
     await Promise.all([
       import("../lib/db"),
-      import("../lib/interview/agent/composition"),
-      import("../lib/interview/agent/worker"),
+      import("../lib/interview/agent/application/composition"),
+      import("../lib/interview/agent/application/run-worker"),
     ]);
   const deferredTasks = createDeferredTaskCollector();
   const dependencies = createProductionAgentDependencies({

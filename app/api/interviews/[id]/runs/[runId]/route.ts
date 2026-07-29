@@ -1,12 +1,13 @@
+import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/persistence/drizzle-repository";
 import { and, eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/repository";
-import { agentExitMessage } from "@/lib/interview/agent/exit-messages";
-import { getRecoveryDisposition } from "@/lib/interview/agent/worker";
+
+import { agentExitMessage } from "@/lib/interview/agent/protocols/exit-messages";
+import { getRecoveryDisposition } from "@/lib/interview/agent/application/recovery-policy";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),

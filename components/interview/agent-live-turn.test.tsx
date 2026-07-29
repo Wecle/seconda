@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AgentLiveTurn } from "./agent-live-turn";
-import type { LiveTurnState } from "@/lib/interview/agent/room-state";
+import type { LiveTurnState } from "@/lib/interview/agent/client/room-state";
 
 const baseTurn: LiveTurnState = {
   runId: "r1",

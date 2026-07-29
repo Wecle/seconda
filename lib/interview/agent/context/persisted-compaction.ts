@@ -1,4 +1,10 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  sql,
+} from "drizzle-orm";
 import { z } from "zod";
 import { generateStructured } from "@/lib/ai/generate-structured";
 import {
@@ -9,9 +15,13 @@ import {
   interviews,
 } from "@/lib/db/schema";
 import { estimateTokens } from "./budget";
-import { compactWithRecovery, shouldCompactContext, type CompactMessage } from "./compaction";
-import type { RunLeaseToken } from "../repository";
-import { agentRunFence } from "../fencing";
+import {
+  compactWithRecovery,
+  shouldCompactContext,
+  type CompactMessage,
+} from "./compaction";
+import type { RunLeaseToken } from "@/lib/interview/agent/persistence/repository";
+import { agentRunFence } from "@/lib/interview/agent/persistence/fencing";
 
 const compactSummarySchema = z.object({
   summary: z.string(),

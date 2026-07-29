@@ -24,7 +24,7 @@ test("generated resumes create attachment-free snapshots that outlive their sour
 }, async () => {
   const client = postgres(process.env.DATABASE_URL!, { prepare: false });
   const db = drizzle(client, { schema });
-  const { createDrizzleAgentInterviewStore } = await import("./agent/drizzle-store");
+  const { createDrizzleAgentInterviewStore } = await import("./agent/persistence/interview-store");
   const userId = randomUUID();
   const resumeId = randomUUID();
   const versionId = randomUUID();
@@ -123,7 +123,7 @@ test("source edits and deletions preserve snapshot-backed interview history", {
 }, async () => {
   const client = postgres(process.env.DATABASE_URL!, { prepare: false });
   const db = drizzle(client, { schema });
-  const { createDrizzleAgentInterviewStore } = await import("./agent/drizzle-store");
+  const { createDrizzleAgentInterviewStore } = await import("./agent/persistence/interview-store");
   const userId = randomUUID();
   const resumeId = randomUUID();
   const versionIds = [randomUUID(), randomUUID()];
@@ -214,7 +214,7 @@ test("concurrent interview creation and source deletion never removes a snapshot
 }, async () => {
   const client = postgres(process.env.DATABASE_URL!, { prepare: false });
   const db = drizzle(client, { schema });
-  const { createDrizzleAgentInterviewStore } = await import("./agent/drizzle-store");
+  const { createDrizzleAgentInterviewStore } = await import("./agent/persistence/interview-store");
   const userId = randomUUID();
   const resumeId = randomUUID();
   const versionId = randomUUID();

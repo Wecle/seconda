@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { parseAgentRunStreamEvent } from "@/lib/interview/agent/client-event";
-import { agentRunEventsPath, nextReconnectDelay } from "@/lib/interview/agent/client-stream";
-import { publicAgentEventTypes } from "@/lib/interview/agent/contracts";
+import { parseAgentRunStreamEvent } from "@/lib/interview/agent/client/event-parser";
+import { agentRunEventsPath, nextReconnectDelay } from "@/lib/interview/agent/client/stream";
+import { publicAgentEventTypes } from "@/lib/interview/agent/protocols/events";
 
-export type { AgentRunStreamEvent } from "@/lib/interview/agent/client-event";
-import type { AgentRunStreamEvent } from "@/lib/interview/agent/client-event";
+export type { AgentRunStreamEvent } from "@/lib/interview/agent/client/event-parser";
+import type { AgentRunStreamEvent } from "@/lib/interview/agent/client/event-parser";
 
 export type AgentRunStreamStatus = {
   id: string;

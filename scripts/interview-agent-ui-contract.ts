@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import type { AgentEventType } from "../lib/interview/agent/contracts";
-import { initialAgentRoomState, type PublicRoomEvent } from "../lib/interview/agent/room-state";
+import type { AgentEventType } from "../lib/interview/agent/protocols/events";
+import { initialAgentRoomState, type PublicRoomEvent } from "../lib/interview/agent/client/room-state";
 
 const runId = "ui-contract-run";
 const logicalMessageId = "ui-contract-message";

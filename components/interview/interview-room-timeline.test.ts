@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { RoomMessage } from "@/lib/interview/agent/room-state";
+import type { RoomMessage } from "@/lib/interview/agent/client/room-state";
 import { buildInterviewRoomTimeline } from "./interview-room-timeline";
 
 function message(id: string, role: "assistant" | "user", runId: string | null): RoomMessage {
