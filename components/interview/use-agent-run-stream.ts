@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { deliverAgentRunEvent } from "@/lib/interview/agent/client/event-delivery";
 import { parseAgentRunStreamEvent } from "@/lib/interview/agent/client/event-parser";
 import { agentRunEventsPath, nextReconnectDelay } from "@/lib/interview/agent/client/stream";
 import { publicAgentEventTypes } from "@/lib/interview/agent/protocols/events";
@@ -32,6 +33,8 @@ export function useAgentRunStream(options: {
   const [retryVersion, setRetryVersion] = useState(0);
   const cursorRef = useRef(afterSequence);
   const cursorRunRef = useRef<string | undefined>(run?.id);
+  const retryRunRef = useRef<string | null>(null);
+  const mountedRef = useRef(true);
   const callbacksRef = useRef({ onEvent, onTerminal });
   const resumeRunRef = useRef(resumeRun);
   const recoveryAttemptedRunRef = useRef<string | null>(null);
@@ -39,15 +42,24 @@ export function useAgentRunStream(options: {
   resumeRunRef.current = resumeRun;
   const runId = run?.id;
   const runStatus = run?.recoveryDisposition === "exhausted" ? "failed" : run?.status;
+  const terminalReplayRequested = retryVersion > 0 && retryRunRef.current === runId;
 
   const retry = useCallback(() => {
     cursorRef.current = Math.max(cursorRef.current, afterSequence);
+    retryRunRef.current = runId ?? null;
     setConnectionState("connecting");
     setRetryVersion((value) => value + 1);
-  }, [afterSequence]);
+  }, [afterSequence, runId]);
 
   useEffect(() => {
-    if (!runId || runStatus !== "running") return;
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!runId || (runStatus !== "running" && !terminalReplayRequested)) return;
     if (cursorRunRef.current !== runId) {
       cursorRunRef.current = runId;
       cursorRef.current = afterSequence;
@@ -72,12 +84,14 @@ export function useAgentRunStream(options: {
           const message = raw as MessageEvent;
           const event = parseAgentRunStreamEvent(type, message);
           if (!event || event.payload.runId !== runId) return;
+          if (disposed || cursorRunRef.current !== runId) return;
           cursorRef.current = Math.max(cursorRef.current, event.sequence);
-          void callbacksRef.current.onEvent(event);
-          if (type === "run_completed" || type === "run_failed") {
-            source?.close();
-            setConnectionState("terminal");
-          }
+          const terminal = type === "run_completed" || type === "run_failed";
+          if (terminal) source?.close();
+          void deliverAgentRunEvent(callbacksRef.current.onEvent, event).then((result) => {
+            if (!mountedRef.current || cursorRunRef.current !== runId || !terminal) return;
+            setConnectionState(result === "delivered" ? "terminal" : "manual_retry");
+          });
         });
       }
       source.onerror = async () => {
@@ -90,9 +104,11 @@ export function useAgentRunStream(options: {
           );
           if (!response.ok) throw new Error("Run status request failed");
           const status = await response.json() as AgentRunStreamStatus;
+          if (disposed || cursorRunRef.current !== runId) return;
           if (status.status !== "running") {
-            setConnectionState("terminal");
-            await callbacksRef.current.onTerminal(status);
+            const result = await deliverAgentRunEvent(callbacksRef.current.onTerminal, status);
+            if (!mountedRef.current || cursorRunRef.current !== runId) return;
+            setConnectionState(result === "delivered" ? "terminal" : "manual_retry");
             return;
           }
         } catch {
@@ -130,7 +146,7 @@ export function useAgentRunStream(options: {
       source?.close();
       if (reconnectTimer) clearTimeout(reconnectTimer);
     };
-  }, [afterSequence, interviewId, retryVersion, runId, runStatus]);
+  }, [afterSequence, interviewId, retryVersion, runId, runStatus, terminalReplayRequested]);
 
   return { connectionState, retry, lastSequence: cursorRef };
 }

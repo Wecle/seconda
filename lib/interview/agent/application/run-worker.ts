@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { startLeaseHeartbeat } from "@/lib/interview/agent/application/lease-heartbeat";
 import type { InterviewAgentRepository } from "@/lib/interview/agent/persistence/repository";
 import type {
   AgentRunExecutor,
@@ -35,24 +36,23 @@ export async function executeClaimedRun(options: {
 
   const controller = new AbortController();
   let leaseLost = false;
-  const interval = setInterval(async () => {
-    try {
-      const renewed = await options.repository.renewLease(
+  const heartbeat = startLeaseHeartbeat({
+    intervalMs: options.renewEveryMs ?? 10_000,
+    renew: () =>
+      options.repository.renewLease(
         options.runId,
         lease,
         new Date(),
         leaseMs,
-      );
-      if (!renewed) {
-        leaseLost = true;
-        controller.abort(new Error("Agent run lease was lost"));
-      }
-    } catch (error) {
+      ),
+    onLeaseLost(error) {
       leaseLost = true;
       controller.abort(error);
-    }
-  }, options.renewEveryMs ?? 10_000);
+    },
+  });
 
+  let executionFailed = false;
+  let executionError: unknown;
   try {
     await options.executor.run({
       interviewId: claimed.run.interviewId,
@@ -62,29 +62,41 @@ export async function executeClaimedRun(options: {
       signal: controller.signal,
       lease,
     });
-    return { status: leaseLost ? "lease_lost" as const : "completed" as const };
   } catch (error) {
+    executionFailed = true;
+    executionError = error;
+  }
+
+  await heartbeat.stop();
+  let status: "completed" | "lease_lost" | "failed";
+  try {
     const current = await options.repository.getRun(options.runId);
-    let committed = current?.status === "completed";
-    if (!leaseLost && current?.status === "running") {
-      committed = (await options.repository.listEvents(options.runId, 0))
+    let persistedStatus = current?.status;
+    if (executionFailed && !leaseLost && persistedStatus === "running") {
+      const committed = (await options.repository.listEvents(options.runId, 0))
         .some((event) => event.type === "message_committed");
       await options.repository.terminateRun(options.runId, {
         exitReason: committed
           ? "completed"
-          : isPromptTooLong(error) ? "prompt_too_long" : "aborted_streaming",
-        ...(committed ? {} : { error }),
+          : isPromptTooLong(executionError)
+            ? "prompt_too_long"
+            : "aborted_streaming",
+        ...(committed ? {} : { error: executionError }),
       }, lease);
+      persistedStatus = committed ? "completed" : "failed";
     }
-    return {
-      status: committed
-        ? "completed" as const
-        : leaseLost ? "lease_lost" as const : "failed" as const,
-    };
+
+    status = persistedStatus === "completed"
+      ? "completed"
+      : persistedStatus === "failed"
+        ? "failed"
+        : leaseLost
+          ? "lease_lost"
+          : executionFailed ? "failed" : "completed";
   } finally {
-    clearInterval(interval);
     await options.repository.releaseLease(options.runId, lease);
   }
+  return { status };
 }
 
 function isPromptTooLong(error: unknown) {

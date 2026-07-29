@@ -6,9 +6,11 @@ import {
   type TurnProposalPrefix,
 } from "@/lib/interview/agent/domain/turn-proposal";
 import {
+  assertMatchingCandidateAnswer,
   buildTerminalPayload,
   parseAuthorizedProposal,
 } from "@/lib/interview/agent/persistence/invariants";
+import { AgentRequestConflictError } from "@/lib/interview/agent/protocols/errors";
 
 function validProposalPrefix(): TurnProposalPrefix {
   return {
@@ -59,4 +61,17 @@ test("builds one validated terminal payload policy", () => {
     retryable: true,
     userMessage: "模型连接中断，请重试本轮回答。",
   });
+});
+
+test("accepts identical idempotent answer content", () => {
+  assert.doesNotThrow(() => {
+    assertMatchingCandidateAnswer("回答", "回答");
+  });
+});
+
+test("rejects a reused answer key with different content", () => {
+  assert.throws(
+    () => assertMatchingCandidateAnswer("旧回答", "新回答"),
+    AgentRequestConflictError,
+  );
 });

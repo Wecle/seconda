@@ -5,6 +5,7 @@ import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { candidateMessageRequestSchema } from "@/lib/interview/agent/protocols/api";
+import { agentErrorResponse } from "@/lib/interview/agent/protocols/errors";
 import { createProductionAgentDependencies } from "@/lib/interview/agent/application/composition";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
 import { submitCandidateMessage } from "@/lib/interview/agent/application/interview-service";
@@ -42,6 +43,13 @@ export async function POST(
     });
     return NextResponse.json(result, { status: 202 });
   } catch (error) {
+    const conflictResponse = agentErrorResponse(error);
+    if (conflictResponse) {
+      return NextResponse.json(
+        conflictResponse.body,
+        { status: conflictResponse.status },
+      );
+    }
     console.error("Error submitting Agent interview message:", sanitizeAIError(error));
     return NextResponse.json({ error: "Failed to submit message" }, { status: 500 });
   }
