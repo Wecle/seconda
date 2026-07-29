@@ -8,6 +8,9 @@ import {
 } from "./interview-round-groups";
 import {
   InterviewRoundNavigation,
+  RoundNavigationMark,
+  calculateRailMarkUpdates,
+  cancelScheduledFrame,
   magneticEnergy,
   navigationScrollBehavior,
   railFocusFeedback,
@@ -120,4 +123,66 @@ test("focus applies full feedback and blur resets it", () => {
     previewOpen: false,
     status: "inactive",
   });
+});
+
+test("exposes visible and non-visible viewport state without aria-current", () => {
+  const visibleHtml = renderToStaticMarkup(
+    <RoundNavigationMark
+      group={groups[0]}
+      visible
+      onNavigate={() => undefined}
+    />,
+  );
+  const nonVisibleHtml = renderToStaticMarkup(
+    <RoundNavigationMark
+      group={groups[1]}
+      visible={false}
+      onNavigate={() => undefined}
+    />,
+  );
+
+  assert.match(
+    visibleHtml,
+    /aria-label="当前视口内，查看并定位：为什么选择这个方案？"/,
+  );
+  assert.match(
+    nonVisibleHtml,
+    /aria-label="当前视口外，查看并定位：你会如何验证？"/,
+  );
+  assert.doesNotMatch(`${visibleHtml}${nonVisibleHtml}`, /aria-current/);
+});
+
+test("calculates every mark update from one pointer snapshot", () => {
+  assert.deepEqual(
+    calculateRailMarkUpdates([
+      {
+        top: 0,
+        height: 20,
+        left: 0,
+        width: 40,
+        focusActive: false,
+      },
+      {
+        top: 80,
+        height: 20,
+        left: 10,
+        width: 0,
+        focusActive: true,
+      },
+    ], { x: 20, y: 10 }),
+    [
+      { energy: 1, pointerPercentage: 50 },
+      { energy: 1, pointerPercentage: 50 },
+    ],
+  );
+});
+
+test("cancels only a scheduled animation frame and clears its id", () => {
+  const cancelled: number[] = [];
+  const cancel = (frameId: number) => cancelled.push(frameId);
+
+  assert.equal(cancelScheduledFrame(23, cancel), null);
+  assert.deepEqual(cancelled, [23]);
+  assert.equal(cancelScheduledFrame(null, cancel), null);
+  assert.deepEqual(cancelled, [23]);
 });

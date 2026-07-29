@@ -27,6 +27,19 @@ type RailMarkStyle = CSSProperties & {
   "--rail-pointer-x": string;
 };
 
+type RailPointer = {
+  x: number;
+  y: number;
+};
+
+type RailMarkGeometry = {
+  top: number;
+  height: number;
+  left: number;
+  width: number;
+  focusActive: boolean;
+};
+
 export function magneticEnergy(distance: number, radius: number) {
   if (radius <= 0 || distance >= radius) return 0;
   const normalized = 1 - Math.max(0, distance) / radius;
@@ -50,6 +63,37 @@ export function roundPreviewCopy(group: InterviewQuestionAnswerGroup) {
   };
 }
 
+export function calculateRailMarkUpdates(
+  geometries: readonly RailMarkGeometry[],
+  pointer: RailPointer,
+) {
+  return geometries.map((geometry) => {
+    const distance = Math.abs(
+      pointer.y - (geometry.top + geometry.height / 2),
+    );
+    const energy = Math.max(
+      magneticEnergy(distance, magneticRadius),
+      railFocusFeedback(geometry.focusActive).energy,
+    );
+    const pointerPercentage = geometry.width === 0
+      ? 50
+      : Math.min(
+        100,
+        Math.max(0, ((pointer.x - geometry.left) / geometry.width) * 100),
+      );
+
+    return { energy, pointerPercentage };
+  });
+}
+
+export function cancelScheduledFrame(
+  frameId: number | null,
+  cancelFrame: (frameId: number) => void,
+) {
+  if (frameId !== null) cancelFrame(frameId);
+  return null;
+}
+
 export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   groups,
   scrollRootRef,
@@ -60,9 +104,19 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   getMessageElement: (messageId: string) => HTMLElement | null;
 }) {
   const railRef = useRef<HTMLElement | null>(null);
+  const latestPointerRef = useRef<RailPointer | null>(null);
+  const pendingFrameRef = useRef<number | null>(null);
   const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+
+  useEffect(() => () => {
+    pendingFrameRef.current = cancelScheduledFrame(
+      pendingFrameRef.current,
+      cancelAnimationFrame,
+    );
+    latestPointerRef.current = null;
+  }, []);
 
   useEffect(() => {
     const root = scrollRootRef.current;
@@ -112,25 +166,55 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   };
 
   const handlePointerMove = (event: PointerEvent<HTMLElement>) => {
-    const marks = railRef.current?.querySelectorAll<HTMLElement>(
-      "[data-round-navigation-mark]",
-    );
-    marks?.forEach((mark) => {
-      const rect = mark.getBoundingClientRect();
-      const distance = Math.abs(event.clientY - (rect.top + rect.height / 2));
-      const energy = Math.max(
-        magneticEnergy(distance, magneticRadius),
-        railFocusFeedback(mark.dataset.focusFeedback === "active").energy,
+    latestPointerRef.current = { x: event.clientX, y: event.clientY };
+    if (pendingFrameRef.current !== null) return;
+
+    pendingFrameRef.current = requestAnimationFrame(() => {
+      pendingFrameRef.current = null;
+      const pointer = latestPointerRef.current;
+      if (!pointer) return;
+
+      const marks = railRef.current?.querySelectorAll<HTMLElement>(
+        "[data-round-navigation-mark]",
       );
-      const pointerPercentage = rect.width === 0
-        ? 50
-        : Math.min(
-          100,
-          Math.max(0, ((event.clientX - rect.left) / rect.width) * 100),
+      if (!marks) return;
+
+      const readings = Array.from(marks, (mark) => {
+        const rect = mark.getBoundingClientRect();
+        return {
+          mark,
+          geometry: {
+            top: rect.top,
+            height: rect.height,
+            left: rect.left,
+            width: rect.width,
+            focusActive: mark.dataset.focusFeedback === "active",
+          },
+        };
+      });
+      const updates = calculateRailMarkUpdates(
+        readings.map((reading) => reading.geometry),
+        pointer,
+      );
+
+      readings.forEach(({ mark }, index) => {
+        const update = updates[index];
+        mark.style.setProperty("--rail-energy", update.energy.toFixed(4));
+        mark.style.setProperty(
+          "--rail-pointer-x",
+          `${update.pointerPercentage}%`,
         );
-      mark.style.setProperty("--rail-energy", energy.toFixed(4));
-      mark.style.setProperty("--rail-pointer-x", `${pointerPercentage}%`);
+      });
     });
+  };
+
+  const handlePointerLeave = () => {
+    pendingFrameRef.current = cancelScheduledFrame(
+      pendingFrameRef.current,
+      cancelAnimationFrame,
+    );
+    latestPointerRef.current = null;
+    resetMarks();
   };
 
   const navigate = (group: InterviewQuestionAnswerGroup) => {
@@ -151,7 +235,7 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
       aria-label="面试问答导航"
       className="absolute -left-16 top-1/2 z-20 hidden -translate-y-1/2 flex-col py-2 xl:flex"
       onPointerMove={handlePointerMove}
-      onPointerLeave={resetMarks}
+      onPointerLeave={handlePointerLeave}
     >
       {groups.map((group) => (
         <RoundNavigationMark
@@ -165,7 +249,7 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   );
 });
 
-function RoundNavigationMark({
+export function RoundNavigationMark({
   group,
   visible,
   onNavigate,
@@ -196,7 +280,7 @@ function RoundNavigationMark({
           data-round-navigation-mark
           data-resting-width="equal"
           data-focus-feedback={focusFeedback.status}
-          aria-label={`查看并定位：${group.question.content.slice(0, 80)}`}
+          aria-label={`${visible ? "当前视口内" : "当前视口外"}，查看并定位：${group.question.content.slice(0, 80)}`}
           className="group/mark relative flex h-5 w-12 items-center"
           style={style}
           onClick={onNavigate}
