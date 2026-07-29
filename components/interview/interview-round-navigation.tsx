@@ -281,7 +281,7 @@ export function RoundNavigationMark({
           data-resting-width="equal"
           data-focus-feedback={focusFeedback.status}
           aria-label={`${visible ? "当前视口内" : "当前视口外"}，查看并定位：${group.question.content.slice(0, 80)}`}
-          className="group/mark relative flex h-6 w-12 items-center"
+          className="group/mark relative flex h-6 w-12 shrink-0 items-center"
           style={style}
           onClick={onNavigate}
           onFocus={(event) => {
