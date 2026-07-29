@@ -10,6 +10,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
 import { AgentLiveTurn } from "./agent-live-turn";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
+import { InterviewRoundNavigation } from "./interview-round-navigation";
+import { buildInterviewQuestionAnswerGroups } from "./interview-round-groups";
 import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./interview-room-timeline";
 import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/client/room-state";
@@ -44,12 +46,13 @@ const markdownPlugins = [remarkGfm];
 const noInitialArtifacts: CommittedArtifact[] = [];
 const noInitialEvents: PublicRoomEvent[] = [];
 
-const InterviewTranscript = memo(function InterviewTranscript({ timeline, turns, activeRunId, busy, onToggleThinking }: {
+const InterviewTranscript = memo(function InterviewTranscript({ timeline, turns, activeRunId, busy, onToggleThinking, registerMessageElement }: {
   timeline: readonly InterviewRoomTimelineGroup[];
   turns: Readonly<Record<string, RoomTurn>>;
   activeRunId: string | null;
   busy: boolean;
   onToggleThinking: (runId: string, expanded: boolean) => void;
+  registerMessageElement: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   return timeline.map((group) => <TimelineGroup
     key={group.key}
@@ -57,24 +60,34 @@ const InterviewTranscript = memo(function InterviewTranscript({ timeline, turns,
     turn={group.runId ? turns[group.runId] : undefined}
     active={Boolean(group.runId && busy && activeRunId === group.runId)}
     onToggleThinking={onToggleThinking}
+    registerMessageElement={registerMessageElement}
   />);
 });
 
-const TimelineGroup = memo(function TimelineGroup({ group, turn, active, onToggleThinking }: {
+const TimelineGroup = memo(function TimelineGroup({ group, turn, active, onToggleThinking, registerMessageElement }: {
   group: InterviewRoomTimelineGroup;
   turn?: RoomTurn;
   active: boolean;
   onToggleThinking: (runId: string, expanded: boolean) => void;
+  registerMessageElement: (messageId: string, element: HTMLDivElement | null) => void;
 }) {
   return <div className="space-y-3">
-    {group.beforeTurn.map((message) => <TranscriptMessage key={message.id} message={message} />)}
+    {group.beforeTurn.map((message) => <TranscriptMessage
+      key={message.id}
+      message={message}
+      registerMessageElement={registerMessageElement}
+    />)}
     {group.runId && turn ? <LiveTurnSlot
       runId={group.runId}
       turn={turn}
       active={active}
       onToggleThinking={onToggleThinking}
     /> : null}
-    {group.afterTurn.map((message) => <TranscriptMessage key={message.id} message={message} />)}
+    {group.afterTurn.map((message) => <TranscriptMessage
+      key={message.id}
+      message={message}
+      registerMessageElement={registerMessageElement}
+    />)}
   </div>;
 });
 
@@ -91,8 +104,15 @@ const LiveTurnSlot = memo(function LiveTurnSlot({ runId, turn, active, onToggleT
   return <AgentLiveTurn turn={turn} artifacts={turn.artifacts} active={active} onToggle={onToggle} />;
 });
 
-const TranscriptMessage = memo(function TranscriptMessage({ message }: { message: RoomMessage }) {
-  return <div className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}>
+const TranscriptMessage = memo(function TranscriptMessage({ message, registerMessageElement }: {
+  message: RoomMessage;
+  registerMessageElement: (messageId: string, element: HTMLDivElement | null) => void;
+}) {
+  return <div
+    ref={(element) => registerMessageElement(message.id, element)}
+    data-message-id={message.id}
+    className={message.role === "user" ? "ml-auto max-w-[80%]" : "max-w-[86%]"}
+  >
     <div className={`${message.role === "user" ? "rounded-2xl rounded-br-md bg-primary px-4 py-3 text-primary-foreground" : "rounded-2xl rounded-bl-md border bg-card px-5 py-4 shadow-sm"} ${message.status === "failed" ? "opacity-60 ring-1 ring-destructive" : ""}`}>
       <ReactMarkdown remarkPlugins={markdownPlugins}>{message.content}</ReactMarkdown>
     </div>
@@ -129,6 +149,19 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const [retryingCompletion, setRetryingCompletion] = useState(false);
   const completionRetryInFlightRef = useRef(false);
   const agentRoomRequestEpochRef = useRef({ current: 0 });
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const registerMessageElement = useCallback((
+    messageId: string,
+    element: HTMLDivElement | null,
+  ) => {
+    if (element) messageElementsRef.current.set(messageId, element);
+    else messageElementsRef.current.delete(messageId);
+  }, []);
+  const getMessageElement = useCallback(
+    (messageId: string) => messageElementsRef.current.get(messageId) ?? null,
+    [],
+  );
   const runRecoveryExhausted = run?.recoveryDisposition === "exhausted";
   const busy = submitting || (run?.status === "running" && !runRecoveryExhausted);
   const runId = run?.id;
@@ -395,6 +428,10 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
 
   const completed = ["completing", "scoring", "reporting", "completed", "failed"].includes(interviewStatus);
   const timeline = useMemo(() => buildInterviewRoomTimeline(room.messages), [room.messages]);
+  const questionAnswerGroups = useMemo(
+    () => buildInterviewQuestionAnswerGroups(room.messages),
+    [room.messages],
+  );
   const toggleThinking = useCallback((runId: string, expanded: boolean) => {
     dispatch({ type: "thinking_toggled", runId, expanded });
   }, []);
@@ -408,29 +445,40 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       </header>
 
       <main className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col">
-        <div className="flex-1 space-y-7 overflow-y-auto px-6 py-8">
-          <InterviewTranscript
-            timeline={timeline}
-            turns={room.turns}
-            activeRunId={activeRunId}
-            busy={busy}
-            onToggleThinking={toggleThinking}
+        <div className="relative min-h-0 flex-1">
+          <div
+            ref={transcriptScrollRef}
+            className="h-full space-y-7 overflow-y-auto px-6 py-8"
+          >
+            <InterviewTranscript
+              timeline={timeline}
+              turns={room.turns}
+              activeRunId={activeRunId}
+              busy={busy}
+              onToggleThinking={toggleThinking}
+              registerMessageElement={registerMessageElement}
+            />
+            {busy && activeRunId && !activeRunHasMessage && room.turns[activeRunId] ? <LiveTurnSlot
+              runId={activeRunId}
+              turn={room.turns[activeRunId]}
+              active
+              onToggleThinking={toggleThinking}
+            /> : null}
+            {busy && !run?.id && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
+            {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接暂时中断，但 Run 仍在服务器运行；正在重连，已接收的正式消息不会丢失。</p>}
+            {connectionState === "recovering" && <p className="text-sm text-amber-600">连接持续中断，正在执行一次受控 Run 恢复。</p>}
+            {connectionState === "manual_retry" && <div className="flex items-center gap-3"><p className="text-sm text-amber-600">连接已中断，但不会重新提交答案。</p><Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button></div>}
+            {submissionFailed && pendingAnswer && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案尚未确认送达。重试会沿用同一个提交标识，不会生成重复答案。</p><Button variant="outline" size="sm" disabled={submitting} onClick={() => void sendPendingAnswer(pendingAnswer)}>重试发送</Button></div>}
+            {run?.status === "failed" && run.recoveryDisposition === "schedule" && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案已接收，但 Agent 本轮失败。</p><Button variant="outline" size="sm" disabled={recoveringRun} onClick={() => void recoverFailedRun()}>{recoveringRun ? <Loader2 className="size-4 animate-spin" /> : null}恢复原 Run</Button></div>}
+            {run?.status === "failed" && run.recoveryDisposition === "cooldown" && <p className="text-sm text-amber-600">答案已保存，Agent Run 正在冷却，稍后可恢复。</p>}
+            {runRecoveryExhausted && <p className="text-sm text-destructive">答案已保存，但 Agent Run 恢复次数已用尽，请联系支持人员处理。</p>}
+            {error && <p className="text-sm text-destructive">{error}</p>}
+          </div>
+          <InterviewRoundNavigation
+            groups={questionAnswerGroups}
+            scrollRootRef={transcriptScrollRef}
+            getMessageElement={getMessageElement}
           />
-          {busy && activeRunId && !activeRunHasMessage && room.turns[activeRunId] ? <LiveTurnSlot
-            runId={activeRunId}
-            turn={room.turns[activeRunId]}
-            active
-            onToggleThinking={toggleThinking}
-          /> : null}
-          {busy && !run?.id && <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />面试官正在思考下一步...</div>}
-          {connectionState === "reconnecting" && <p className="text-sm text-amber-600">连接暂时中断，但 Run 仍在服务器运行；正在重连，已接收的正式消息不会丢失。</p>}
-          {connectionState === "recovering" && <p className="text-sm text-amber-600">连接持续中断，正在执行一次受控 Run 恢复。</p>}
-          {connectionState === "manual_retry" && <div className="flex items-center gap-3"><p className="text-sm text-amber-600">连接已中断，但不会重新提交答案。</p><Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button></div>}
-          {submissionFailed && pendingAnswer && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案尚未确认送达。重试会沿用同一个提交标识，不会生成重复答案。</p><Button variant="outline" size="sm" disabled={submitting} onClick={() => void sendPendingAnswer(pendingAnswer)}>重试发送</Button></div>}
-          {run?.status === "failed" && run.recoveryDisposition === "schedule" && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案已接收，但 Agent 本轮失败。</p><Button variant="outline" size="sm" disabled={recoveringRun} onClick={() => void recoverFailedRun()}>{recoveringRun ? <Loader2 className="size-4 animate-spin" /> : null}恢复原 Run</Button></div>}
-          {run?.status === "failed" && run.recoveryDisposition === "cooldown" && <p className="text-sm text-amber-600">答案已保存，Agent Run 正在冷却，稍后可恢复。</p>}
-          {runRecoveryExhausted && <p className="text-sm text-destructive">答案已保存，但 Agent Run 恢复次数已用尽，请联系支持人员处理。</p>}
-          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <div className="border-t bg-background p-5">

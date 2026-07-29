@@ -188,3 +188,15 @@ test("cancels only a scheduled animation frame and clears its id", () => {
   assert.equal(cancelScheduledFrame(null, cancel), null);
   assert.deepEqual(cancelled, [23]);
 });
+
+test("uses message ids as observer targets and question ids as stable navigation targets", () => {
+  const visible = new Set(["a1", "q2"]);
+  assert.deepEqual(
+    [...visibleGroupIds(groups, visible)],
+    ["question-answer:q1", "question-answer:q2"],
+  );
+  assert.deepEqual(
+    groups.map((group) => group.question.id),
+    ["q1", "q2"],
+  );
+});
