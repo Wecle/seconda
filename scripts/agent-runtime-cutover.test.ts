@@ -16,8 +16,8 @@ import {
   resumeVersions,
   users,
 } from "../lib/db/schema";
-import { createDrizzleAgentInterviewStore } from "../lib/interview/agent/drizzle-store";
-import { createDrizzleInterviewAgentRepository } from "../lib/interview/agent/repository";
+import { createDrizzleAgentInterviewStore } from "../lib/interview/agent/persistence/interview-store";
+import { createDrizzleInterviewAgentRepository } from "../lib/interview/agent/persistence/drizzle-repository";
 import {
   createDrizzleAgentRuntimeCutoverStore,
   reconcileAgentRuntimeCutover,

@@ -4,11 +4,11 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
+import { createProductionAgentDependencies } from "@/lib/interview/agent/application/composition";
 import {
   createAgentRunScheduler,
-  getRecoveryDisposition,
-} from "@/lib/interview/agent/worker";
+} from "@/lib/interview/agent/application/run-worker";
+import { getRecoveryDisposition } from "@/lib/interview/agent/application/recovery-policy";
 
 const paramsSchema = z.object({
   id: z.string().uuid(),

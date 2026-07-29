@@ -5,8 +5,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AgentArtifactCard } from "./agent-artifact-card";
 import { AgentThinkingPanel } from "./agent-thinking-panel";
-import type { CommittedArtifact } from "@/lib/interview/agent/contracts";
-import type { LiveTurnState } from "@/lib/interview/agent/room-state";
+import type { CommittedArtifact } from "@/lib/interview/agent/protocols/events";
+import type { LiveTurnState } from "@/lib/interview/agent/client/room-state";
 
 const markdownPlugins = [remarkGfm];
 const noArtifacts: readonly CommittedArtifact[] = [];

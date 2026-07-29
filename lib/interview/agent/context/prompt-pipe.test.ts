@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPromptPipe, canonicalJson, type PromptSegment } from "./prompt-pipe";
+import {
+  buildPromptPipe,
+  canonicalJson,
+  type PromptSegment,
+} from "./prompt-pipe";
 
 const stable: PromptSegment[] = [
   { id: "rules", version: "1", priority: 100, cacheScope: "global", trimPolicy: "never", content: "固定规则" },

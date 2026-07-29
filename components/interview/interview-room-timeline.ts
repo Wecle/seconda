@@ -1,4 +1,4 @@
-import type { RoomMessage } from "@/lib/interview/agent/room-state";
+import type { RoomMessage } from "@/lib/interview/agent/client/room-state";
 
 export type InterviewRoomTimelineGroup = {
   key: string;

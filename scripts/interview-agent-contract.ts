@@ -10,19 +10,19 @@ import {
   resumes,
   resumeVersions,
 } from "../lib/db/schema";
-import { createProductionAgentDependencies } from "../lib/interview/agent/composition";
-import { createDrizzleAgentInterviewStore } from "../lib/interview/agent/drizzle-store";
+import { createProductionAgentDependencies } from "../lib/interview/agent/application/composition";
+import { createDrizzleAgentInterviewStore } from "../lib/interview/agent/persistence/interview-store";
 import {
   createAgentInterview,
   endAgentInterview,
   submitCandidateMessage,
-} from "../lib/interview/agent/service";
-import { executeClaimedRun } from "../lib/interview/agent/worker";
+} from "../lib/interview/agent/application/interview-service";
+import { executeClaimedRun } from "../lib/interview/agent/application/run-worker";
 import {
   messageCommittedPayloadSchema,
   reasoningDeltaPayloadSchema,
   responseDeltaPayloadSchema,
-} from "../lib/interview/agent/contracts";
+} from "../lib/interview/agent/protocols/events";
 
 async function main() {
   const resumeVersionId = process.env.INTERVIEW_AGENT_TEST_RESUME_VERSION_ID?.trim();

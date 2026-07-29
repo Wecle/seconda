@@ -2,7 +2,7 @@
 
 import { useId } from "react";
 import { Brain, ChevronDown, Loader2, Search } from "lucide-react";
-import type { LiveTurnState, ReasoningEntry } from "@/lib/interview/agent/room-state";
+import type { LiveTurnState, ReasoningEntry } from "@/lib/interview/agent/client/room-state";
 import { cn } from "@/lib/utils";
 
 export function AgentThinkingPanel({ thinking, entries, active, onToggle }: {

@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { assembleAgentContext, collectAllowedTerms } from "./assembler";
-import { indexResumeEvidence } from "./resume-evidence";
+import {
+  assembleAgentContext,
+  collectAllowedTerms,
+} from "./assembler";
+import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
 
 const base = {
   language: "zh",

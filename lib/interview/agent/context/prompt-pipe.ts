@@ -1,4 +1,7 @@
-import { effectiveContextBudget, estimateTokens } from "./budget";
+import {
+  effectiveContextBudget,
+  estimateTokens,
+} from "./budget";
 
 export type PromptSegment = {
   id: string;

@@ -4,11 +4,11 @@ import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
-import { candidateMessageRequestSchema } from "@/lib/interview/agent/api-contracts";
-import { createProductionAgentDependencies } from "@/lib/interview/agent/composition";
-import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/drizzle-store";
-import { submitCandidateMessage } from "@/lib/interview/agent/service";
-import { createAgentRunScheduler } from "@/lib/interview/agent/worker";
+import { candidateMessageRequestSchema } from "@/lib/interview/agent/protocols/api";
+import { createProductionAgentDependencies } from "@/lib/interview/agent/application/composition";
+import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
+import { submitCandidateMessage } from "@/lib/interview/agent/application/interview-service";
+import { createAgentRunScheduler } from "@/lib/interview/agent/application/run-worker";
 
 export async function POST(
   request: NextRequest,
