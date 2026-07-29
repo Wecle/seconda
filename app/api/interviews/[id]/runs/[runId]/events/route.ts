@@ -1,3 +1,4 @@
+import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/persistence/drizzle-repository";
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
@@ -5,7 +6,7 @@ import { db } from "@/lib/db";
 import { interviewResumeSnapshots, interviews } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { getPostgresAgentEventWakeHub } from "@/lib/interview/agent/transport/postgres-wake-hub";
-import { createDrizzleInterviewAgentRepository } from "@/lib/interview/agent/persistence/drizzle-repository";
+
 import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/transport/sse";
 
 const paramsSchema = z.object({
@@ -56,7 +57,7 @@ export async function GET(
           ),
           fallbackMs: readPositiveInteger(
             process.env.INTERVIEW_AGENT_EVENT_FALLBACK_MS,
-            1_500,
+            5_000,
           ),
         })) {
           controller.enqueue(encoder.encode(encodeSseEvent(event)));

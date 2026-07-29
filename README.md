@@ -112,7 +112,7 @@ Agent Run、事件、消息和覆盖度会持久化到 PostgreSQL。消息提交
 
 部署最新代码并完成数据库迁移后，执行一次 `pnpm agent:cutover`。该命令会 fence 旧 Worker、收敛已经提交消息的 Run，并使用最新 Runtime 恢复未完成 Run；重复执行不会重复迁移。
 
-事件接口使用 SSE，并通过 `after` sequence 重放断线期间的持久化事件。业务空闲 10 秒会发送不落库的 heartbeat。模型流 25 秒没有 token 或工具进展会触发 provider idle timeout。瞬时错误采用 500ms 起始、2 倍增长、8 秒封顶的 full-jitter 退避，每个模型最多重试 2 次。
+事件接口使用 SSE，并通过 `after` sequence 重放断线期间的持久化事件。PostgreSQL 通知用于即时唤醒，`INTERVIEW_AGENT_EVENT_FALLBACK_MS` 控制漏通知时的低频查询，默认 `5000` 毫秒。业务空闲 10 秒会发送不落库的 heartbeat。模型流 25 秒没有 token 或工具进展会触发 provider idle timeout。瞬时错误采用 500ms 起始、2 倍增长、8 秒封顶的 full-jitter 退避，每个模型最多重试 2 次。
 
 Run 的成功与失败都会先持久化唯一终态事件。终态连接不会重连；仅网络异常最多自动重连 5 次，之后显示手动重试。`run_failed` 会撤销尚未提交的 provisional 内容，同时保留已提交消息。
 

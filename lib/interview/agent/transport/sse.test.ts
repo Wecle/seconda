@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { AgentStreamEvent } from "@/lib/interview/agent/protocols/events";
 import type { AgentEventWakeHub } from "@/lib/interview/agent/transport/postgres-wake-hub";
 import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/persistence/memory-repository";
-import { encodeSseEvent, resolveReplayCursor, streamAgentEvents } from "@/lib/interview/agent/transport/sse";
+import {
+  encodeSseEvent,
+  resolveReplayCursor,
+  streamAgentEvents,
+} from "@/lib/interview/agent/transport/sse";
 
 test("encodes persisted events with sequence ids", () => {
   assert.equal(encodeSseEvent({
@@ -16,6 +21,20 @@ test("encodes persisted events with sequence ids", () => {
 test("honors EventSource Last-Event-ID on automatic reconnect", () => {
   assert.equal(resolveReplayCursor(2, 7), 7);
   assert.equal(resolveReplayCursor(9, 4), 9);
+});
+
+test("uses the configurable 5-second production fallback interval", () => {
+  const source = readFileSync(
+    new URL(
+      "../../../../app/api/interviews/[id]/runs/[runId]/events/route.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /process\.env\.INTERVIEW_AGENT_EVENT_FALLBACK_MS,\s*5_000,/,
+  );
 });
 
 test("replays ordered events after a cursor and closes after terminal", async () => {

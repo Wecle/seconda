@@ -18,6 +18,7 @@ import {
 import { createResumeSnapshotPayload } from "@/lib/interview/resume-snapshot";
 import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
 import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
+import { assertMatchingCandidateAnswer } from "@/lib/interview/agent/persistence/invariants";
 import type { InterviewConfigV2 } from "@/lib/interview/settings";
 
 type AgentDatabase = typeof import("@/lib/db").db;
@@ -166,6 +167,7 @@ export function createDrizzleAgentInterviewStore(
           ))
           .limit(1);
         if (existing) {
+          assertMatchingCandidateAnswer(existing.content, input.content);
           if (!existing.runId) throw new Error("Accepted answer is missing its Agent run");
           return { ...existing, runId: existing.runId, created: false };
         }

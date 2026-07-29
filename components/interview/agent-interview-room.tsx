@@ -14,6 +14,11 @@ import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./i
 import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/client/room-state";
 import { latestRunSnapshotSequence } from "@/lib/interview/agent/client/stream";
+import {
+  applyAgentRoomRefresh,
+  beginAgentRoomRequest,
+  isLatestAgentRoomRequest,
+} from "@/lib/interview/agent/client/refresh-delivery";
 import type { CommittedArtifact } from "@/lib/interview/agent/protocols/events";
 import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
 import { clearPendingAnswer, loadPendingAnswer, savePendingAnswer, type PendingAnswer } from "@/lib/interview/agent/client/pending-answer";
@@ -123,6 +128,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const [error, setError] = useState<string | null>(null);
   const [retryingCompletion, setRetryingCompletion] = useState(false);
   const completionRetryInFlightRef = useRef(false);
+  const agentRoomRequestEpochRef = useRef({ current: 0 });
   const runRecoveryExhausted = run?.recoveryDisposition === "exhausted";
   const busy = submitting || (run?.status === "running" && !runRecoveryExhausted);
   const runId = run?.id;
@@ -132,16 +138,23 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   );
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
-    if (!response.ok) throw new Error("面试状态加载失败");
-    const data = await response.json();
-    dispatch({ type: "messages_refreshed", messages: data.agentState?.messages ?? [] });
-    setInterviewStatus(data.interview.status);
-    if (data.interview.status !== "failed") setCompletionRecoveryRequested(false);
-    setScoringProgress(data.agentState?.scoringProgress ?? null);
-    const latest = data.agentState?.latestRun ?? null;
-    setRun(latest);
-    return latest as AgentRun | null;
+    const requestEpoch = beginAgentRoomRequest(agentRoomRequestEpochRef.current);
+    const data = await applyAgentRoomRefresh(
+      async () => {
+        const response = await fetch(`/api/interviews/${interviewId}`, { cache: "no-store", signal });
+        if (!response.ok) throw new Error("面试状态加载失败");
+        return response.json();
+      },
+      (next) => {
+        dispatch({ type: "messages_refreshed", messages: next.agentState?.messages ?? [] });
+        setInterviewStatus(next.interview.status);
+        if (next.interview.status !== "failed") setCompletionRecoveryRequested(false);
+        setScoringProgress(next.agentState?.scoringProgress ?? null);
+        setRun(next.agentState?.latestRun ?? null);
+      },
+      () => isLatestAgentRoomRequest(agentRoomRequestEpochRef.current, requestEpoch),
+    );
+    return (data?.agentState?.latestRun ?? null) as AgentRun | null;
   }, [interviewId]);
 
   const completionPolling = useCompletionPolling({
@@ -149,6 +162,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     status: completionRecoveryRequested && interviewStatus === "failed" ? "recovering" : interviewStatus,
     refresh: (signal) => refresh(signal).then(() => undefined),
     resume: async (signal) => {
+      beginAgentRoomRequest(agentRoomRequestEpochRef.current);
       const response = await fetch(`/api/interviews/${interviewId}/completion/resume`, { method: "POST", signal });
       if (!response.ok) throw new Error("完成任务恢复失败");
       const result = await response.json() as { status?: string };
@@ -158,6 +172,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   });
 
   const resumeRunRequest = useCallback(async (runId: string, signal: AbortSignal) => {
+    beginAgentRoomRequest(agentRoomRequestEpochRef.current);
     const response = await fetch(`/api/interviews/${interviewId}/runs/${runId}/resume`, { method: "POST", signal });
     if (!response.ok) throw new Error("Agent Run 恢复失败");
     const result = await response.json() as { status?: string };
@@ -221,21 +236,38 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
       case "message_committed":
         dispatch({ type: "message_committed", sequence, runId: event.payload.runId, attemptId: event.payload.attemptId, logicalMessageId: event.payload.logicalMessageId, message: event.payload.message });
         return;
-      case "run_failed":
+      case "run_failed": {
         dispatch({ type: "run_failed", sequence, runId: event.payload.runId });
+        setRun((current) => current?.id === event.payload.runId ? {
+          ...current,
+          status: "failed",
+          exitReason: event.payload.exitReason,
+          userMessage: event.payload.userMessage,
+          lastEventSequence: Math.max(current.lastEventSequence, sequence),
+        } : current);
         setError(event.payload.userMessage);
         await refresh();
         return;
-      case "run_completed":
+      }
+      case "run_completed": {
         dispatch({ type: "run_completed", sequence, runId: event.payload.runId });
+        setRun((current) => current?.id === event.payload.runId ? {
+          ...current,
+          status: "completed",
+          exitReason: event.payload.exitReason,
+          userMessage: event.payload.userMessage,
+          lastEventSequence: Math.max(current.lastEventSequence, sequence),
+        } : current);
         await refresh();
         return;
+      }
       default:
         event satisfies never;
     }
   }, [refresh]);
 
   const handleTerminalRun = useCallback(async (terminal: AgentRunStreamStatus) => {
+    setRun(terminal);
     if (terminal.status === "failed") {
       dispatch({ type: "run_failed", runId: terminal.id });
       setError(terminal.userMessage ?? "答案已接收，但 Agent 本轮未完成。你可以恢复原 Run，无需重新提交答案。");
@@ -255,6 +287,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const sendPendingAnswer = useCallback(async (answer: PendingAnswer) => {
     if (submissionInFlightRef.current) return;
     submissionInFlightRef.current = true;
+    beginAgentRoomRequest(agentRoomRequestEpochRef.current);
     setSubmitting(true);
     setSubmissionFailed(false);
     setError(null);
@@ -346,6 +379,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const end = async () => {
     if (endingRef.current) return;
     endingRef.current = true;
+    beginAgentRoomRequest(agentRoomRequestEpochRef.current);
     setEnding(true);
     try {
       const response = await fetch(`/api/interviews/${interviewId}/end`, { method: "POST" });

@@ -43,9 +43,14 @@ test("renews the lease during long execution", async () => {
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
   await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
   let renewals = 0;
+  let markRenewed!: () => void;
+  const renewed = new Promise<void>((resolve) => {
+    markRenewed = resolve;
+  });
   const originalRenew = repository.renewLease.bind(repository);
   repository.renewLease = async (...args) => {
     renewals += 1;
+    markRenewed();
     return originalRenew(...args);
   };
   await executeClaimedRun({
@@ -53,16 +58,212 @@ test("renews the lease during long execution", async () => {
     owner: "worker",
     repository,
     leaseMs: 50,
-    renewEveryMs: 5,
+    renewEveryMs: 1,
     executor: {
       async run() {
-        await new Promise((resolve) => setTimeout(resolve, 16));
+        await renewed;
         await repository.completeRun(run.id, "completed");
         return { exitReason: "completed" };
       },
     },
   });
-  assert.ok(renewals >= 2);
+  assert.ok(renewals >= 1);
+});
+
+test("waits for an in-flight renewal before releasing the lease", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "renewal-shutdown",
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+  });
+  let markRenewalStarted!: () => void;
+  let releaseRenewal!: () => void;
+  const renewalStarted = new Promise<void>((resolve) => {
+    markRenewalStarted = resolve;
+  });
+  const renewalGate = new Promise<void>((resolve) => {
+    releaseRenewal = resolve;
+  });
+  const originalRenew = repository.renewLease.bind(repository);
+  repository.renewLease = async (...args) => {
+    markRenewalStarted();
+    await renewalGate;
+    return originalRenew(...args);
+  };
+  let released = false;
+  const originalRelease = repository.releaseLease.bind(repository);
+  repository.releaseLease = async (...args) => {
+    released = true;
+    return originalRelease(...args);
+  };
+
+  const execution = executeClaimedRun({
+    runId: run.id,
+    owner: "worker",
+    repository,
+    leaseMs: 50,
+    renewEveryMs: 1,
+    executor: {
+      async run() {
+        await renewalStarted;
+        return { exitReason: "completed" };
+      },
+    },
+  });
+
+  await renewalStarted;
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  try {
+    assert.equal(released, false);
+  } finally {
+    releaseRenewal();
+  }
+  await execution;
+  assert.equal(released, true);
+});
+
+test("reports lease_lost when an in-flight renewal fails after the executor returns", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "late-lease-lost",
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+  });
+  let markRenewalStarted!: () => void;
+  let releaseRenewal!: () => void;
+  const renewalStarted = new Promise<void>((resolve) => {
+    markRenewalStarted = resolve;
+  });
+  const renewalGate = new Promise<void>((resolve) => {
+    releaseRenewal = resolve;
+  });
+  repository.renewLease = async () => {
+    markRenewalStarted();
+    await renewalGate;
+    return false;
+  };
+
+  const execution = executeClaimedRun({
+    runId: run.id,
+    owner: "worker",
+    repository,
+    renewEveryMs: 1,
+    executor: {
+      async run() {
+        await renewalStarted;
+        return { exitReason: "completed" };
+      },
+    },
+  });
+
+  await renewalStarted;
+  releaseRenewal();
+  const result = await execution;
+
+  assert.equal(result.status, "lease_lost");
+  assert.equal((await repository.getRun(run.id))?.status, "running");
+  assert.equal((await repository.getRun(run.id))?.leaseOwner, null);
+});
+
+test("keeps a persisted completion when an overlapping renewal reports lease loss", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "completed-before-lease-lost",
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+  });
+  let markRenewalStarted!: () => void;
+  let releaseRenewal!: () => void;
+  let markCompletionPersisted!: () => void;
+  const renewalStarted = new Promise<void>((resolve) => {
+    markRenewalStarted = resolve;
+  });
+  const renewalGate = new Promise<void>((resolve) => {
+    releaseRenewal = resolve;
+  });
+  const completionPersisted = new Promise<void>((resolve) => {
+    markCompletionPersisted = resolve;
+  });
+  repository.renewLease = async () => {
+    markRenewalStarted();
+    await renewalGate;
+    return false;
+  };
+
+  const execution = executeClaimedRun({
+    runId: run.id,
+    owner: "worker",
+    repository,
+    renewEveryMs: 1,
+    executor: {
+      async run() {
+        await renewalStarted;
+        await repository.completeRun(run.id, "completed");
+        markCompletionPersisted();
+        return { exitReason: "completed" };
+      },
+    },
+  });
+
+  await completionPersisted;
+  releaseRenewal();
+  const result = await execution;
+
+  assert.equal(result.status, "completed");
+  assert.equal((await repository.getRun(run.id))?.status, "completed");
+});
+
+test("reports a lost lease once and leaves the run recoverable", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "lease-lost",
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+  });
+  let renewals = 0;
+  repository.renewLease = async () => {
+    renewals += 1;
+    return false;
+  };
+  let aborts = 0;
+
+  const result = await executeClaimedRun({
+    runId: run.id,
+    owner: "worker",
+    repository,
+    renewEveryMs: 1,
+    executor: {
+      async run(input) {
+        await new Promise<void>((resolve) => {
+          input.signal.addEventListener("abort", () => {
+            aborts += 1;
+            resolve();
+          });
+        });
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        throw input.signal.reason;
+      },
+    },
+  });
+
+  assert.equal(result.status, "lease_lost");
+  assert.equal(renewals, 1);
+  assert.equal(aborts, 1);
+  assert.equal((await repository.getRun(run.id))?.status, "running");
+  assert.equal((await repository.getRun(run.id))?.leaseOwner, null);
 });
 
 test("fails a running run that has no persisted trigger", async () => {

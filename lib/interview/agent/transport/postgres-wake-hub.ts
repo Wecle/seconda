@@ -23,9 +23,15 @@ type Waiter = {
   settle: (result: AgentEventWakeResult) => void;
 };
 
-export function createInMemoryAgentEventWakeHub(): AgentEventWakeHub & {
+export function createInMemoryAgentEventWakeHub(
+  options: { maxRememberedRuns?: number } = {},
+): AgentEventWakeHub & {
   publish(wake: AgentEventWake): void;
 } {
+  const maxRememberedRuns = options.maxRememberedRuns ?? 10_000;
+  if (!Number.isInteger(maxRememberedRuns) || maxRememberedRuns <= 0) {
+    throw new RangeError("maxRememberedRuns must be a positive integer");
+  }
   const latestSequences = new Map<string, number>();
   const waiters = new Map<string, Set<Waiter>>();
 
@@ -35,7 +41,13 @@ export function createInMemoryAgentEventWakeHub(): AgentEventWakeHub & {
         latestSequences.get(wake.runId) ?? 0,
         wake.latestSequence,
       );
+      if (latestSequences.has(wake.runId)) latestSequences.delete(wake.runId);
       latestSequences.set(wake.runId, latestSequence);
+      while (latestSequences.size > maxRememberedRuns) {
+        const oldest = latestSequences.keys().next().value;
+        if (oldest === undefined) break;
+        latestSequences.delete(oldest);
+      }
       for (const waiter of waiters.get(wake.runId) ?? []) {
         if (latestSequence > waiter.afterSequence) waiter.settle("notified");
       }

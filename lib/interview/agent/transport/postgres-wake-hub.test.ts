@@ -32,6 +32,57 @@ test("does not wake a waiter when the notification is not newer", async () => {
   );
 });
 
+test("evicts the oldest remembered run sequence at capacity", async () => {
+  const hub = createInMemoryAgentEventWakeHub({ maxRememberedRuns: 2 });
+  hub.publish({ runId: "run-a", latestSequence: 1 });
+  hub.publish({ runId: "run-b", latestSequence: 1 });
+  hub.publish({ runId: "run-c", latestSequence: 1 });
+  assert.equal(
+    await hub.waitForRun("run-a", 0, new AbortController().signal, 0),
+    "timeout",
+  );
+  assert.equal(
+    await hub.waitForRun("run-c", 0, new AbortController().signal, 0),
+    "notified",
+  );
+});
+
+test("refreshes insertion order and preserves active waiter wake-up", async () => {
+  const hub = createInMemoryAgentEventWakeHub({ maxRememberedRuns: 2 });
+  hub.publish({ runId: "run-a", latestSequence: 1 });
+  hub.publish({ runId: "run-b", latestSequence: 1 });
+  hub.publish({ runId: "run-a", latestSequence: 2 });
+  hub.publish({ runId: "run-c", latestSequence: 1 });
+  assert.equal(
+    await hub.waitForRun("run-a", 1, new AbortController().signal, 0),
+    "notified",
+  );
+  assert.equal(
+    await hub.waitForRun("run-b", 0, new AbortController().signal, 0),
+    "timeout",
+  );
+
+  const waiting = hub.waitForRun(
+    "run-active",
+    0,
+    new AbortController().signal,
+    1_000,
+  );
+  hub.publish({ runId: "run-d", latestSequence: 1 });
+  hub.publish({ runId: "run-e", latestSequence: 1 });
+  hub.publish({ runId: "run-active", latestSequence: 1 });
+  assert.equal(await waiting, "notified");
+});
+
+test("rejects invalid remembered-run capacities", () => {
+  for (const maxRememberedRuns of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () => createInMemoryAgentEventWakeHub({ maxRememberedRuns }),
+      /positive integer/i,
+    );
+  }
+});
+
 test("returns timeout and removes the abort listener", async () => {
   const hub = createInMemoryAgentEventWakeHub();
   const controller = new AbortController();

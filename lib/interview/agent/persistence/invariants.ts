@@ -4,6 +4,7 @@ import {
   type TurnProposalPrefix,
 } from "@/lib/interview/agent/domain/turn-proposal";
 import { agentExitMessage } from "@/lib/interview/agent/protocols/exit-messages";
+import { AgentRequestConflictError } from "@/lib/interview/agent/protocols/errors";
 import {
   terminalRunPayloadSchema,
   type AgentExitReason,
@@ -38,4 +39,15 @@ export function buildTerminalPayload(
     retryable: input.retryable ?? input.exitReason === "aborted_streaming",
     userMessage: input.userMessage ?? agentExitMessage(input.exitReason),
   });
+}
+
+export function assertMatchingCandidateAnswer(
+  existingContent: string,
+  requestedContent: string,
+): void {
+  if (existingContent !== requestedContent) {
+    throw new AgentRequestConflictError(
+      "Idempotency key was already used for a different answer",
+    );
+  }
 }
