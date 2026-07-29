@@ -63,6 +63,8 @@ test("renders one equal-width resting mark per question group without round numb
   assert.doesNotMatch(html, /第 1 轮|第 2 轮/);
   assert.equal((html.match(/data-resting-width="equal"/g) ?? []).length, 2);
   assert.equal((html.match(/data-focus-feedback="inactive"/g) ?? []).length, 2);
+  assert.equal((html.match(/relative flex h-6 w-12 items-center/g) ?? []).length, 2);
+  assert.equal((html.match(/h-0\.5 w-3 rounded-full/g) ?? []).length, 2);
   assert.match(html, /group-focus-visible\/mark:bg-foreground/);
   assert.match(html, /motion-reduce:translate-x-0/);
   assert.match(html, /motion-reduce:scale-x-100/);
