@@ -33,6 +33,23 @@ export function magneticEnergy(distance: number, radius: number) {
   return normalized * normalized * (3 - 2 * normalized);
 }
 
+export function navigationScrollBehavior(reduceMotion: boolean): ScrollBehavior {
+  return reduceMotion ? "auto" : "smooth";
+}
+
+export function railFocusFeedback(focused: boolean) {
+  return focused
+    ? { energy: 1, previewOpen: true, status: "active" as const }
+    : { energy: 0, previewOpen: false, status: "inactive" as const };
+}
+
+export function roundPreviewCopy(group: InterviewQuestionAnswerGroup) {
+  return {
+    question: group.question.content,
+    answer: group.answer?.content ?? "等待回答",
+  };
+}
+
 export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   groups,
   scrollRootRef,
@@ -43,7 +60,6 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
   getMessageElement: (messageId: string) => HTMLElement | null;
 }) {
   const railRef = useRef<HTMLElement | null>(null);
-  const visibleMessageIdsRef = useRef(new Set<string>());
   const [visibleIds, setVisibleIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -52,6 +68,7 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
     const root = scrollRootRef.current;
     if (!root || groups.length === 0) return;
 
+    const visibleMessageIds = new Set<string>();
     const elements: HTMLElement[] = [];
     for (const group of groups) {
       const question = getMessageElement(group.question.id);
@@ -66,16 +83,16 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
       for (const entry of entries) {
         const messageId = (entry.target as HTMLElement).dataset.messageId;
         if (!messageId) continue;
-        if (entry.isIntersecting) visibleMessageIdsRef.current.add(messageId);
-        else visibleMessageIdsRef.current.delete(messageId);
+        if (entry.isIntersecting) visibleMessageIds.add(messageId);
+        else visibleMessageIds.delete(messageId);
       }
-      setVisibleIds(visibleGroupIds(groups, visibleMessageIdsRef.current));
+      setVisibleIds(visibleGroupIds(groups, visibleMessageIds));
     }, { root, threshold: 0 });
 
     for (const element of elements) observer.observe(element);
     return () => {
       observer.disconnect();
-      visibleMessageIdsRef.current.clear();
+      visibleMessageIds.clear();
     };
   }, [getMessageElement, groups, scrollRootRef]);
 
@@ -86,7 +103,10 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
       "[data-round-navigation-mark]",
     );
     marks?.forEach((mark) => {
-      mark.style.setProperty("--rail-energy", "0");
+      const feedback = railFocusFeedback(
+        mark.dataset.focusFeedback === "active",
+      );
+      mark.style.setProperty("--rail-energy", String(feedback.energy));
       mark.style.setProperty("--rail-pointer-x", "50%");
     });
   };
@@ -98,7 +118,10 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
     marks?.forEach((mark) => {
       const rect = mark.getBoundingClientRect();
       const distance = Math.abs(event.clientY - (rect.top + rect.height / 2));
-      const energy = magneticEnergy(distance, magneticRadius);
+      const energy = Math.max(
+        magneticEnergy(distance, magneticRadius),
+        railFocusFeedback(mark.dataset.focusFeedback === "active").energy,
+      );
       const pointerPercentage = rect.width === 0
         ? 50
         : Math.min(
@@ -117,7 +140,7 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
       "(prefers-reduced-motion: reduce)",
     ).matches;
     element.scrollIntoView({
-      behavior: reduceMotion ? "auto" : "smooth",
+      behavior: navigationScrollBehavior(reduceMotion),
       block: "center",
     });
   };
@@ -151,25 +174,52 @@ function RoundNavigationMark({
   visible: boolean;
   onNavigate: () => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [hoverOpen, setHoverOpen] = useState(false);
+  const [focusOpen, setFocusOpen] = useState(false);
+  const focusFeedback = railFocusFeedback(focusOpen);
+  const preview = roundPreviewCopy(group);
   const style: RailMarkStyle = {
-    "--rail-energy": 0,
+    "--rail-energy": focusFeedback.energy,
     "--rail-pointer-x": "50%",
   };
 
   return (
-    <HoverCard open={open} onOpenChange={setOpen} openDelay={120} closeDelay={80}>
+    <HoverCard
+      open={hoverOpen || focusOpen}
+      onOpenChange={setHoverOpen}
+      openDelay={120}
+      closeDelay={80}
+    >
       <HoverCardTrigger asChild>
         <button
           type="button"
           data-round-navigation-mark
           data-resting-width="equal"
+          data-focus-feedback={focusFeedback.status}
           aria-label={`查看并定位：${group.question.content.slice(0, 80)}`}
           className="group/mark relative flex h-5 w-12 items-center"
           style={style}
           onClick={onNavigate}
-          onFocus={() => setOpen(true)}
-          onBlur={() => setOpen(false)}
+          onFocus={(event) => {
+            const feedback = railFocusFeedback(true);
+            setFocusOpen(feedback.previewOpen);
+            event.currentTarget.dataset.focusFeedback = feedback.status;
+            event.currentTarget.style.setProperty(
+              "--rail-energy",
+              String(feedback.energy),
+            );
+            event.currentTarget.style.setProperty("--rail-pointer-x", "50%");
+          }}
+          onBlur={(event) => {
+            const feedback = railFocusFeedback(false);
+            setFocusOpen(feedback.previewOpen);
+            event.currentTarget.dataset.focusFeedback = feedback.status;
+            event.currentTarget.style.setProperty(
+              "--rail-energy",
+              String(feedback.energy),
+            );
+            event.currentTarget.style.setProperty("--rail-pointer-x", "50%");
+          }}
         >
           <span
             aria-hidden="true"
@@ -178,7 +228,8 @@ function RoundNavigationMark({
               "translate-x-[calc(var(--rail-energy)*0.25rem)]",
               "origin-left scale-x-[calc(1_+_var(--rail-energy)*1.75)]",
               visible ? "bg-foreground/70" : "bg-muted-foreground/35",
-              "motion-reduce:translate-x-0 motion-reduce:scale-x-100",
+              "group-focus-visible/mark:bg-foreground group-focus-visible/mark:ring-2 group-focus-visible/mark:ring-ring/35",
+              "motion-reduce:translate-x-0 motion-reduce:scale-x-100 motion-reduce:transition-none",
             )}
           >
             <span
@@ -201,12 +252,12 @@ function RoundNavigationMark({
       >
         <div>
           <p className="mb-1 text-xs font-medium text-muted-foreground">面试官</p>
-          <p className="line-clamp-3 text-sm leading-6">{group.question.content}</p>
+          <p className="line-clamp-3 text-sm leading-6">{preview.question}</p>
         </div>
         <div>
           <p className="mb-1 text-xs font-medium text-muted-foreground">你的回答</p>
           <p className="line-clamp-4 text-sm leading-6 text-muted-foreground">
-            {group.answer?.content ?? "等待回答"}
+            {preview.answer}
           </p>
         </div>
       </HoverCardContent>

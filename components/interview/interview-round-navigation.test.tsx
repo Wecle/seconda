@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { InterviewQuestionAnswerGroup } from "./interview-round-groups";
+import {
+  visibleGroupIds,
+  type InterviewQuestionAnswerGroup,
+} from "./interview-round-groups";
 import {
   InterviewRoundNavigation,
   magneticEnergy,
+  navigationScrollBehavior,
+  railFocusFeedback,
+  roundPreviewCopy,
 } from "./interview-round-navigation";
 
 const groups: InterviewQuestionAnswerGroup[] = [
@@ -53,6 +59,11 @@ test("renders one equal-width resting mark per question group without round numb
   assert.match(html, /查看并定位：你会如何验证/);
   assert.doesNotMatch(html, /第 1 轮|第 2 轮/);
   assert.equal((html.match(/data-resting-width="equal"/g) ?? []).length, 2);
+  assert.equal((html.match(/data-focus-feedback="inactive"/g) ?? []).length, 2);
+  assert.match(html, /group-focus-visible\/mark:bg-foreground/);
+  assert.match(html, /motion-reduce:translate-x-0/);
+  assert.match(html, /motion-reduce:scale-x-100/);
+  assert.match(html, /motion-reduce:transition-none/);
 });
 
 test("does not render an empty rail", () => {
@@ -73,4 +84,40 @@ test("uses restrained smooth falloff inside a forty pixel radius", () => {
   assert.equal(magneticEnergy(0, 40), 1);
   assert.ok(magneticEnergy(10, 40) > magneticEnergy(20, 40));
   assert.ok(magneticEnergy(20, 40) > magneticEnergy(30, 40));
+});
+
+test("derives every simultaneously visible question group", () => {
+  assert.deepEqual(
+    [...visibleGroupIds(groups, new Set(["a1", "q2"]))],
+    ["question-answer:q1", "question-answer:q2"],
+  );
+});
+
+test("builds preview copy for answered and waiting groups", () => {
+  assert.deepEqual(roundPreviewCopy(groups[0]), {
+    question: "为什么选择这个方案？",
+    answer: "因为它能保持一致性。",
+  });
+  assert.deepEqual(roundPreviewCopy(groups[1]), {
+    question: "你会如何验证？",
+    answer: "等待回答",
+  });
+});
+
+test("chooses click scrolling behavior from reduced-motion preference", () => {
+  assert.equal(navigationScrollBehavior(false), "smooth");
+  assert.equal(navigationScrollBehavior(true), "auto");
+});
+
+test("focus applies full feedback and blur resets it", () => {
+  assert.deepEqual(railFocusFeedback(true), {
+    energy: 1,
+    previewOpen: true,
+    status: "active",
+  });
+  assert.deepEqual(railFocusFeedback(false), {
+    energy: 0,
+    previewOpen: false,
+    status: "inactive",
+  });
 });
