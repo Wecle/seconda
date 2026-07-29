@@ -83,6 +83,32 @@ test("does not render an empty rail", () => {
   assert.equal(html, "");
 });
 
+test("bounds the desktop rail to the transcript viewport with independent overflow", () => {
+  const twentyGroups = Array.from({ length: 20 }, (_, index) => ({
+    ...groups[1],
+    id: `question-answer:q${index + 1}`,
+    question: {
+      ...groups[1].question,
+      id: `q${index + 1}`,
+    },
+  }));
+  const html = renderToStaticMarkup(
+    <InterviewRoundNavigation
+      groups={twentyGroups}
+      scrollRootRef={createRef<HTMLDivElement>()}
+      getMessageElement={() => null}
+    />,
+  );
+
+  assert.equal((html.match(/data-round-navigation-mark/g) ?? []).length, 20);
+  assert.match(html, /absolute -left-16 top-1\/2/);
+  assert.match(html, /max-h-\[calc\(100%-1rem\)\]/);
+  assert.match(html, /-translate-y-1\/2/);
+  assert.match(html, /overflow-y-auto/);
+  assert.match(html, /hidden/);
+  assert.match(html, /xl:flex/);
+});
+
 test("uses restrained smooth falloff inside a forty pixel radius", () => {
   assert.equal(magneticEnergy(40, 40), 0);
   assert.equal(magneticEnergy(60, 40), 0);

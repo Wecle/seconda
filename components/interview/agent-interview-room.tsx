@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { InterviewResumeContextSheet } from "./interview-resume-context-sheet";
 import { AgentLiveTurn } from "./agent-live-turn";
 import { InterviewCompletionProgress, type ScoringProgress } from "./interview-completion-progress";
+import { createInterviewMessageElementRegistry } from "./interview-message-element-registry";
 import { InterviewRoundNavigation } from "./interview-round-navigation";
 import { buildInterviewQuestionAnswerGroups } from "./interview-round-groups";
 import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./interview-room-timeline";
@@ -150,17 +151,19 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const completionRetryInFlightRef = useRef(false);
   const agentRoomRequestEpochRef = useRef({ current: 0 });
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
-  const messageElementsRef = useRef(new Map<string, HTMLDivElement>());
+  const [messageElements] = useState(
+    () => createInterviewMessageElementRegistry<HTMLDivElement>(),
+  );
   const registerMessageElement = useCallback((
     messageId: string,
     element: HTMLDivElement | null,
   ) => {
-    if (element) messageElementsRef.current.set(messageId, element);
-    else messageElementsRef.current.delete(messageId);
-  }, []);
+    if (element) messageElements.register(messageId, element);
+    else messageElements.unregister(messageId);
+  }, [messageElements]);
   const getMessageElement = useCallback(
-    (messageId: string) => messageElementsRef.current.get(messageId) ?? null,
-    [],
+    (messageId: string) => messageElements.get(messageId),
+    [messageElements],
   );
   const runRecoveryExhausted = run?.recoveryDisposition === "exhausted";
   const busy = submitting || (run?.status === "running" && !runRecoveryExhausted);

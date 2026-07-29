@@ -233,7 +233,7 @@ export const InterviewRoundNavigation = memo(function InterviewRoundNavigation({
     <nav
       ref={railRef}
       aria-label="面试问答导航"
-      className="absolute -left-16 top-1/2 z-20 hidden -translate-y-1/2 flex-col py-2 xl:flex"
+      className="absolute -left-16 top-1/2 z-20 hidden max-h-[calc(100%-1rem)] -translate-y-1/2 flex-col overflow-y-auto py-2 xl:flex"
       onPointerMove={handlePointerMove}
       onPointerLeave={handlePointerLeave}
     >
