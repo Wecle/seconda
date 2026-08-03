@@ -149,6 +149,17 @@ pnpm dev
 
 打开 [http://localhost:3000](http://localhost:3000)
 
+## 运维观测
+
+首次使用或部署新版本后先执行迁移，再查看最近 24 小时的完整 AI 运营报告：
+
+```bash
+pnpm db:migrate
+pnpm ops:ai
+```
+
+预算模式、模型价格、单项查询、JSON 输出和故障处理见 [AI 可观测性与资源预算操作指南](docs/operations/ai-observability.md)。
+
 ## 目录结构
 
 ```text
