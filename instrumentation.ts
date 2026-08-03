@@ -1,4 +1,6 @@
 import { loadModelPolicy } from "@/lib/ai/model-policy";
+import { loadAIResourcePolicy } from "@/lib/ai/telemetry/budget";
+import { parseModelPricing } from "@/lib/ai/telemetry/pricing";
 
 type Environment = Record<string, string | undefined>;
 
@@ -12,4 +14,6 @@ export function register(env: Environment = process.env) {
   }
 
   loadModelPolicy(env);
+  loadAIResourcePolicy(env);
+  parseModelPricing(env.AI_MODEL_PRICING_JSON);
 }
