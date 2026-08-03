@@ -5,6 +5,13 @@ import { z } from "zod";
 import { createStructuredGenerator } from "./generate-structured";
 import { loadModelPolicy } from "./model-policy";
 import { createProviderModel, createProviderOutput } from "./provider-registry";
+import type {
+  AIAttemptHandle,
+  AITaskHandle,
+  AITelemetryLifecycle,
+} from "./telemetry/lifecycle";
+import { createAITelemetryLifecycle } from "./telemetry/lifecycle";
+import type { AITelemetryRepository } from "./telemetry/repository";
 
 const policy = loadModelPolicy({
   AI_MODEL_FAST: "deepseek/fast",
@@ -15,6 +22,7 @@ const policy = loadModelPolicy({
     "deepseek/fast,deepseek/fast-backup,zhipu/quality,zhipu/quality-backup",
 });
 const schema = z.object({ value: z.string() });
+const usage = { inputTokens: 1, outputTokens: 1 };
 
 async function collect<T>(stream: AsyncIterable<T>) {
   const values: T[] = [];
@@ -37,6 +45,324 @@ function sseResponse(...events: string[]) {
   });
 }
 
+function telemetryRecorder() {
+  const events = {
+    tasks: [] as Array<{ task: string; context: unknown }>,
+    attempts: [] as Array<{ attemptNumber: number; model: string }>,
+    completedAttempts: [] as Array<{ usage: unknown; firstTokenMs: number | null; durationMs: number }>,
+    failedAttempts: [] as Array<{ usage: unknown; firstTokenMs: number | null; durationMs: number }>,
+    completedTasks: 0,
+    failedTasks: 0,
+  };
+  const lifecycle: AITelemetryLifecycle = {
+    async startTask(input) {
+      events.tasks.push(input);
+      return {
+        id: `task-${events.tasks.length}`,
+        ...input,
+        budgetMode: "observe",
+        tokenLimit: null,
+        noOp: false,
+      } satisfies AITaskHandle;
+    },
+    async beforeAttempt(input) {
+      events.attempts.push({ attemptNumber: input.attemptNumber, model: input.model });
+      return {
+        id: `attempt-${events.attempts.length}`,
+        taskRunId: input.task.id,
+        attemptNumber: input.attemptNumber,
+        provider: input.model.split("/")[0] as AIAttemptHandle["provider"],
+        model: input.model,
+        credentialTier: input.credentialTier,
+        startedAtMs: 0,
+        price: null,
+        noOp: false,
+      };
+    },
+    async completeAttempt(input) {
+      events.completedAttempts.push(input);
+    },
+    async failAttempt(input) {
+      events.failedAttempts.push(input);
+    },
+    async completeTask() {
+      events.completedTasks += 1;
+    },
+    async failTask() {
+      events.failedTasks += 1;
+    },
+  };
+  return { lifecycle, events };
+}
+
+test("records one content-free telemetry task and one successful attempt", async () => {
+  const telemetry = telemetryRecorder();
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: telemetry.lifecycle,
+    createOperationKey: (task) => `${task}:fixture-id`,
+    now: (() => {
+      let value = 10;
+      return () => value += 5;
+    })(),
+    invoke: async () => ({
+      output: { value: "generated secret" },
+      usage: { inputTokens: 7, outputTokens: 3 },
+    }),
+  });
+  const result = await generator.generateStructured({
+    task: "resume.parse",
+    schema,
+    system: "private system",
+    prompt: "private prompt",
+  });
+  assert.deepEqual(result, { value: "generated secret" });
+  assert.deepEqual(telemetry.events.attempts, [
+    { attemptNumber: 1, model: "deepseek/fast" },
+  ]);
+  assert.deepEqual(telemetry.events.completedAttempts[0].usage, {
+    inputTokens: 7,
+    outputTokens: 3,
+    cachedInputTokens: null,
+    cacheWriteTokens: null,
+  });
+  assert.equal(telemetry.events.completedTasks, 1);
+  assert.equal(telemetry.events.failedTasks, 0);
+  const serializedContext = JSON.stringify(telemetry.events.tasks);
+  assert.doesNotMatch(serializedContext, /private prompt|private system|generated secret/);
+  assert.match(serializedContext, /resume\.parse:fixture-id/);
+});
+
+test("forwards only caller-provided durable correlation identifiers", async () => {
+  const telemetry = telemetryRecorder();
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: telemetry.lifecycle,
+    invoke: async () => ({ output: { value: "secret output" }, usage }),
+  });
+  await generator.generateStructured({
+    task: "answer.score",
+    schema,
+    system: "secret system",
+    prompt: "secret answer",
+    telemetry: {
+      operationKey: "answer.score:job-1:question-1",
+      interviewId: "interview-1",
+      questionId: "question-1",
+      completionJobId: "job-1",
+      budgetScope: "completion:job-1",
+    },
+  });
+  assert.deepEqual(telemetry.events.tasks[0], {
+    task: "answer.score",
+    context: {
+      operationKey: "answer.score:job-1:question-1",
+      interviewId: "interview-1",
+      questionId: "question-1",
+      completionJobId: "job-1",
+      budgetScope: "completion:job-1",
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(telemetry.events.tasks[0]), /secret/);
+});
+
+test("records transient retries and failed provider Usage exactly once", async () => {
+  const telemetry = telemetryRecorder();
+  let calls = 0;
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: telemetry.lifecycle,
+    sleep: async () => {},
+    classifyError: () => "transient",
+    invoke: async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("transient"), {
+          usage: { inputTokens: 11, outputTokens: 2, cachedInputTokens: 4 },
+        });
+      }
+      return { output: { value: "ok" }, usage };
+    },
+  });
+  assert.deepEqual(await generator.generateStructured({
+    task: "resume.parse", schema, system: "system", prompt: "prompt",
+  }), { value: "ok" });
+  assert.deepEqual(telemetry.events.attempts.map(({ attemptNumber }) => attemptNumber), [1, 2]);
+  assert.deepEqual(telemetry.events.failedAttempts[0].usage, {
+    inputTokens: 11,
+    outputTokens: 2,
+    cachedInputTokens: 4,
+    cacheWriteTokens: null,
+  });
+  assert.equal(telemetry.events.completedAttempts.length, 1);
+});
+
+test("records fallback and schema repair as distinct attempts", async () => {
+  const fallbackTelemetry = telemetryRecorder();
+  const fallback = createStructuredGenerator({
+    policy,
+    telemetry: fallbackTelemetry.lifecycle,
+    classifyError: () => "fallback",
+    invoke: async ({ model }) => model === "deepseek/fast"
+      ? Promise.reject(Object.assign(new Error("fallback"), { usage }))
+      : Promise.resolve({ output: { value: "ok" }, usage }),
+  });
+  await fallback.generateStructured({
+    task: "resume.parse", schema, system: "system", prompt: "prompt",
+  });
+  assert.deepEqual(fallbackTelemetry.events.attempts, [
+    { attemptNumber: 1, model: "deepseek/fast" },
+    { attemptNumber: 2, model: "deepseek/fast-backup" },
+  ]);
+
+  const repairTelemetry = telemetryRecorder();
+  let calls = 0;
+  const repair = createStructuredGenerator({
+    policy,
+    telemetry: repairTelemetry.lifecycle,
+    classifyError: () => "repair",
+    invoke: async () => ({
+      output: calls++ === 0 ? { value: 42 } : { value: "fixed" },
+      usage,
+    }),
+  });
+  await repair.generateStructured({
+    task: "resume.parse", schema, system: "system", prompt: "prompt",
+  });
+  assert.deepEqual(repairTelemetry.events.attempts.map(({ attemptNumber }) => attemptNumber), [1, 2]);
+  assert.equal(repairTelemetry.events.failedAttempts.length, 1);
+  assert.equal(repairTelemetry.events.completedAttempts.length, 1);
+});
+
+test("observe-mode telemetry persistence failure does not change structured output", async (t) => {
+  t.mock.method(console, "error", () => {});
+  const repository: AITelemetryRepository = {
+    async startOrResumeTask(input) {
+      return { id: "task", budgetMode: input.budgetMode, tokenLimit: input.tokenLimit };
+    },
+    async startAttempt(input) {
+      return {
+        id: "attempt",
+        taskRunId: input.taskRunId,
+        attemptNumber: input.requestedAttemptNumber,
+        rejected: false,
+        wouldExceed: false,
+      };
+    },
+    async completeAttempt() {
+      throw new Error("telemetry unavailable");
+    },
+    async failAttempt() {},
+    async completeTask() {},
+    async failTask() {},
+  };
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: createAITelemetryLifecycle({
+      repository,
+      policy: { mode: "observe", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    }),
+    invoke: async () => ({ output: { value: "ok" }, usage }),
+  });
+  assert.deepEqual(await generator.generateStructured({
+    task: "resume.parse", schema, system: "system", prompt: "prompt",
+  }), { value: "ok" });
+});
+
+test("stream telemetry records first partial latency and final Usage", async () => {
+  const telemetry = telemetryRecorder();
+  let clock = 0;
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: telemetry.lifecycle,
+    now: () => {
+      clock += 5;
+      return clock;
+    },
+    invoke: async () => ({ output: { value: "unused" }, usage }),
+    stream: () => ({
+      partialOutputStream: (async function* () { yield { value: "partial" }; })(),
+      output: Promise.resolve({ value: "complete" }),
+      usage: Promise.resolve({ inputTokens: 9, outputTokens: 4 }),
+    }),
+  });
+  const result = generator.streamStructured({
+    task: "question.generate",
+    schema,
+    system: "system",
+    prompt: "prompt",
+    isUsablePartial: () => true,
+  });
+  assert.deepEqual(await collect(result.partialOutputStream), [{ value: "partial" }]);
+  assert.deepEqual(await result.output, { value: "complete" });
+  assert.equal(telemetry.events.completedAttempts.length, 1);
+  assert.ok((telemetry.events.completedAttempts[0].firstTokenMs ?? 0) > 0);
+  assert.deepEqual(telemetry.events.completedAttempts[0].usage, {
+    inputTokens: 9,
+    outputTokens: 4,
+    cachedInputTokens: null,
+    cacheWriteTokens: null,
+  });
+  assert.equal(telemetry.events.completedTasks, 1);
+});
+
+test("closing a structured stream after one partial fails its attempt, task, and output once", async () => {
+  const telemetry = telemetryRecorder();
+  let usageResolutions = 0;
+  let providerSignal: AbortSignal | undefined;
+  const providerUsage: PromiseLike<unknown> = {
+    then(resolve) {
+      usageResolutions += 1;
+      return Promise.resolve(resolve!({ inputTokens: 5, outputTokens: 1 }));
+    },
+  };
+  const generator = createStructuredGenerator({
+    policy,
+    telemetry: telemetry.lifecycle,
+    invoke: async () => ({ output: { value: "unused" }, usage }),
+    stream: (input) => {
+      providerSignal = input.abortSignal;
+      return {
+        partialOutputStream: (async function* () {
+          yield { value: "first" };
+          await new Promise<void>((_resolve, reject) => {
+            input.abortSignal.addEventListener("abort", () => reject(input.abortSignal.reason), {
+              once: true,
+            });
+          });
+        })(),
+        output: new Promise((_resolve, reject) => {
+          input.abortSignal.addEventListener("abort", () => reject(input.abortSignal.reason), {
+            once: true,
+          });
+        }),
+        usage: providerUsage,
+      };
+    },
+  });
+  const result = generator.streamStructured({
+    task: "question.generate",
+    schema,
+    system: "system",
+    prompt: "prompt",
+    isUsablePartial: () => true,
+  });
+  const iterator = result.partialOutputStream[Symbol.asyncIterator]();
+  assert.deepEqual(await iterator.next(), { done: false, value: { value: "first" } });
+  const outputRejection = assert.rejects(
+    result.output,
+    (error) => (error as { code?: unknown }).code === "AI_STRUCTURED_STREAM_CANCELLED",
+  );
+  await iterator.return?.();
+  await outputRejection;
+  assert.equal(providerSignal?.aborted, true);
+  assert.equal(usageResolutions, 1);
+  assert.equal(telemetry.events.failedAttempts.length, 1);
+  assert.equal(telemetry.events.failedTasks, 1);
+  assert.equal(telemetry.events.completedAttempts.length, 0);
+  assert.equal(telemetry.events.completedTasks, 0);
+});
+
 test("uses fast candidates in policy order, tier keys, and disabled SDK retries", async () => {
   const calls: Array<{ model: string; apiKey: string | undefined; maxRetries: number }> = [];
   const generator = createStructuredGenerator({
@@ -45,7 +371,7 @@ test("uses fast candidates in policy order, tier keys, and disabled SDK retries"
     invoke: async (input) => {
       calls.push({ model: input.model, apiKey: input.apiKey, maxRetries: input.maxRetries });
       if (input.model === "deepseek/fast") throw new Error("missing");
-      return { value: "ok" };
+      return { output: { value: "ok" }, usage };
     },
     classifyError: () => "fallback",
   });
@@ -65,7 +391,7 @@ test("uses only quality candidates for scoring", async () => {
     policy,
     invoke: async (input) => {
       calls.push(input.model);
-      return { value: "ok" };
+      return { output: { value: "ok" }, usage };
     },
   });
   await generator.generateStructured({ task: "answer.score", schema, system: "system", prompt: "prompt" });
@@ -87,7 +413,7 @@ test("repairs malformed output without trusting it as system instructions", asyn
           finishReason: "stop",
         });
       }
-      return { value: "fixed" };
+      return { output: { value: "fixed" }, usage };
     },
   });
   assert.deepEqual(
@@ -101,7 +427,7 @@ test("repairs malformed output without trusting it as system instructions", asyn
 });
 
 test("always validates final non-streaming adapter output locally", async () => {
-  const generator = createStructuredGenerator({ policy, invoke: async () => ({ value: 42 }) });
+  const generator = createStructuredGenerator({ policy, invoke: async () => ({ output: { value: 42 }, usage }) });
   await assert.rejects(
     generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt" }),
     z.ZodError,
@@ -111,7 +437,7 @@ test("always validates final non-streaming adapter output locally", async () => 
 test("combines caller abort with the shared deadline", async () => {
   const controller = new AbortController();
   controller.abort();
-  const generator = createStructuredGenerator({ policy, invoke: async () => ({ value: "never" }) });
+  const generator = createStructuredGenerator({ policy, invoke: async () => ({ output: { value: "never" }, usage }) });
   await assert.rejects(
     generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt", abortSignal: controller.signal }),
   );
@@ -122,15 +448,15 @@ test("falls back before the first usable streamed partial", async () => {
   const signals: AbortSignal[] = [];
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     classifyError: () => "fallback",
     stream: (input) => {
       calls.push(input.model);
       signals.push(input.abortSignal);
       if (calls.length === 1) {
-        return { partialOutputStream: (async function* () { throw transientError(); })(), output: Promise.reject(transientError()) };
+        return { partialOutputStream: (async function* () { throw transientError(); })(), output: Promise.reject(transientError()), usage };
       }
-      return { partialOutputStream: (async function* () { yield { value: "ok" }; })(), output: Promise.resolve({ value: "ok" }) };
+      return { partialOutputStream: (async function* () { yield { value: "ok" }; })(), output: Promise.resolve({ value: "ok" }), usage };
     },
   });
   const result = generator.streamStructured({
@@ -147,7 +473,7 @@ test("does not replay after a real AI SDK OpenAI-compatible SSE error event with
   const providerErrors: Error[] = [];
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     sleep: async () => {},
     stream: (input) => {
       calls += 1;
@@ -197,7 +523,7 @@ test("retries after real AI SDK pre-output 429 and 5xx stream failures", async (
     const capturedErrors: Error[] = [];
     const generator = createStructuredGenerator({
       policy,
-      invoke: async () => ({ value: "unused" }),
+      invoke: async () => ({ output: { value: "unused" }, usage }),
       sleep: async () => {},
       stream: (input) => {
         calls += 1;
@@ -228,6 +554,7 @@ test("retries after real AI SDK pre-output 429 and 5xx stream failures", async (
         return {
           partialOutputStream: (async function* () {})(),
           output: Promise.resolve({ value: "recovered" }),
+          usage,
         };
       },
     });
@@ -250,7 +577,7 @@ test("retries a statusless retryable provider error captured before stream outpu
   let calls = 0;
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     sleep: async () => {},
     stream: (input) => {
       calls += 1;
@@ -263,11 +590,13 @@ test("retries a statusless retryable provider error captured before stream outpu
         return {
           partialOutputStream: (async function* () { throw new NoObjectGeneratedError({ response: {} as never, usage: {} as never, finishReason: "error" }); })(),
           output: Promise.reject(new NoObjectGeneratedError({ response: {} as never, usage: {} as never, finishReason: "error" })),
+          usage,
         };
       }
       return {
         partialOutputStream: (async function* () {})(),
         output: Promise.resolve({ value: "recovered" }),
+        usage,
       };
     },
   });
@@ -288,7 +617,7 @@ test("does not retry after the shared streaming deadline expires", async () => {
   const generator = createStructuredGenerator({
     policy,
     timeoutMs: 5,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     stream: (input) => {
       calls += 1;
       const pending = new Promise<never>((_resolve, reject) => {
@@ -297,6 +626,7 @@ test("does not retry after the shared streaming deadline expires", async () => {
       return {
         partialOutputStream: (async function* () { await pending; })(),
         output: pending,
+        usage,
       };
     },
   });
@@ -320,13 +650,14 @@ test("does not fall back after a usable streamed partial", async () => {
   const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     classifyError: () => "fallback",
     stream: (input) => {
       calls.push(input.model);
       return {
         partialOutputStream: (async function* () { yield { value: "visible" }; throw transientError(); })(),
         output: Promise.reject(transientError()),
+        usage,
       };
     },
   });
@@ -341,8 +672,8 @@ test("does not fall back after a usable streamed partial", async () => {
 test("commits a valid final object that had no partial output", async () => {
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
-    stream: () => ({ partialOutputStream: (async function* () {})(), output: Promise.resolve({ value: "complete" }) }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
+    stream: () => ({ partialOutputStream: (async function* () {})(), output: Promise.resolve({ value: "complete" }), usage }),
   });
   const result = generator.streamStructured({
     task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
@@ -356,12 +687,13 @@ test("repairs an invalid final object before commitment", async () => {
   let calls = 0;
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     stream: () => {
       calls += 1;
       return {
         partialOutputStream: (async function* () {})(),
         output: Promise.resolve(calls === 1 ? { value: "" } : { value: "fixed" }),
+        usage,
       };
     },
     classifyError: () => "repair",
@@ -380,13 +712,14 @@ test("does not fall back after caller cancellation", async () => {
   const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
-    invoke: async () => ({ value: "unused" }),
+    invoke: async () => ({ output: { value: "unused" }, usage }),
     classifyError: () => "fallback",
     stream: (input) => {
       calls.push(input.model);
       return {
         partialOutputStream: (async function* () { controller.abort(); throw new DOMException("aborted", "AbortError"); })(),
         output: Promise.reject(new DOMException("aborted", "AbortError")),
+        usage,
       };
     },
   });

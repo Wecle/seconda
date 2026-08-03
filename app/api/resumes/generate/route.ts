@@ -37,6 +37,9 @@ export async function POST(request: NextRequest) {
 
     const generated = await generateResumeWithAI(parsed.data, {
       abortSignal: request.signal,
+      telemetry: {
+        operationKey: `resume.generate:${parsed.data.idempotencyKey}`,
+      },
     });
     const result = await persistGeneratedResume(db, {
       ownerUserId: userId,

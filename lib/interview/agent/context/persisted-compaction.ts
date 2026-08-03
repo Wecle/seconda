@@ -100,6 +100,13 @@ export async function compactInterviewContextIfNeeded(
         system: "你是面试上下文压缩器。保留事实、候选人回答证据、未解决追问和简历证据 ID，不得编造。",
         prompt: JSON.stringify({ previousSummary: latest?.summary ?? "", messages: items, coverage }),
         abortSignal: input.signal,
+        telemetry: {
+          operationKey: `context.compact:${input.runId}:${(latest?.cacheEpoch ?? 0) + 1}`,
+          interviewId: input.interviewId,
+          agentRunId: input.runId,
+          budgetScope: `agent_run:${input.runId}`,
+          promptTemplateVersion: "context.compact:v1",
+        },
       }),
     });
     const throughMessageSequence = messageRows.at(-1)?.sequence ?? 0;

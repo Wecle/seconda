@@ -51,3 +51,33 @@ test("does not retain streamed legacy next-question generation", async () => {
   assert.match(body, /legacyInterviewReadOnlyResponse/);
   assert.doesNotMatch(body, /streamStructured|question\.generate|generatedQuestionSchema/);
 });
+
+test("composed structured tasks use deterministic business correlation keys", async () => {
+  const [upload, reparse, generate, followup, coach, compaction] = await Promise.all([
+    readFile(`${root}/app/api/resumes/upload/route.ts`, "utf8"),
+    readFile(`${root}/app/api/resumes/[id]/versions/[versionId]/reparse/route.ts`, "utf8"),
+    readFile(`${root}/app/api/resumes/generate/route.ts`, "utf8"),
+    readFile(`${root}/app/api/interviews/[id]/questions/[questionId]/deep-dive/followup/route.ts`, "utf8"),
+    readFile(`${root}/app/api/interviews/[id]/questions/[questionId]/deep-dive/coach/route.ts`, "utf8"),
+    readFile(`${root}/lib/interview/agent/context/persisted-compaction.ts`, "utf8"),
+  ]);
+  assert.match(upload, /operationKey: `resume\.parse:\$\{versionId\}`/);
+  assert.match(reparse, /operationKey: `resume\.parse:\$\{versionId\}`/);
+  assert.match(generate, /operationKey: `resume\.generate:\$\{parsed\.data\.idempotencyKey\}`/);
+  assert.match(followup, /operationKey: `question\.follow-up:\$\{session\.id\}:start`/);
+  assert.match(followup, /operationKey: `question\.follow-up:\$\{session\.id\}:\$\{userMsg\.id\}`/);
+  assert.match(coach, /operationKey: `coach\.generate:\$\{session\.id\}:start`/);
+  assert.match(coach, /operationKey: `coach\.evaluate:\$\{session\.id\}:\$\{userMsg\.id\}`/);
+  const sessionId = "session-id";
+  const firstUserMessageId = "message-id-1";
+  const secondUserMessageId = "message-id-2";
+  assert.notEqual(
+    `question.follow-up:${sessionId}:${firstUserMessageId}`,
+    `question.follow-up:${sessionId}:${secondUserMessageId}`,
+  );
+  assert.notEqual(
+    `coach.evaluate:${sessionId}:${firstUserMessageId}`,
+    `coach.evaluate:${sessionId}:${secondUserMessageId}`,
+  );
+  assert.match(compaction, /operationKey: `context\.compact:\$\{input\.runId\}:\$\{/);
+});

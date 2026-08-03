@@ -102,6 +102,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         originalAnswer: question.answerText || "",
         feedback: { strengths, improvements },
         language: interview.language,
+        telemetry: {
+          operationKey: `coach.generate:${session.id}:start`,
+          interviewId: id,
+          questionId,
+        },
       });
 
       const [newMsg] = await db
@@ -133,7 +138,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           content: body.answerText,
         })
         .returning();
-
       const [latestAssistant] = await db
         .select()
         .from(deepDiveMessages)
@@ -154,6 +158,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         practiceQuestion,
         answer: body.answerText,
         language: interview.language,
+        telemetry: {
+          operationKey: `coach.evaluate:${session.id}:${userMsg.id}`,
+          interviewId: id,
+          questionId,
+        },
       });
 
       const [assistantMsg] = await db

@@ -1,4 +1,5 @@
 import { generateStructured } from "@/lib/ai/generate-structured";
+import type { AITaskTelemetryContext } from "@/lib/ai/telemetry/types";
 import {
   generatedQuestionsSchema,
   scoreResultSchema,
@@ -24,6 +25,7 @@ export async function generateInterviewQuestions(params: {
   persona: string;
   count: number;
   history?: { question: string; answer: string }[];
+  telemetry?: AITaskTelemetryContext;
 }): Promise<GeneratedQuestion[]> {
   const truncatedText = params.resumeText.slice(0, 8000);
   const resumeDataStr = JSON.stringify(params.resumeData).slice(0, 8000);
@@ -54,6 +56,7 @@ ${truncatedText}
     schema: generatedQuestionsSchema,
     system: "你是专业的AI面试官。根据候选人的简历背景生成面试问题。问题必须与简历中的经验和技能相关。根据面试类型（行为/技术/混合）和难度级别生成合适的问题。每个问题需附带一条实用的回答建议。不得虚构简历中不存在的信息。",
     prompt,
+    telemetry: params.telemetry,
   });
 
   return output.questions;
@@ -68,6 +71,7 @@ export async function scoreInterviewAnswer(params: {
   language: string;
   resumeContext: string;
   signal?: AbortSignal;
+  telemetry?: AITaskTelemetryContext;
 }): Promise<ScoreResult> {
   const prompt = `面试问题：${params.question}
 候选人回答：${params.answer}
@@ -84,6 +88,7 @@ export async function scoreInterviewAnswer(params: {
     system: "你是专业的面试评估专家。请根据以下六个维度对候选人的回答进行评分（0-10分）：理解力(Understanding)、表达力(Expression)、逻辑性(Logic)、深度(Depth)、真实性(Authenticity)、反思力(Reflection)。同时提供优点、改进建议和深度分析。评分必须客观公正，基于回答内容本身。",
     prompt,
     abortSignal: params.signal,
+    telemetry: params.telemetry,
   });
 
   return {
@@ -112,6 +117,7 @@ export async function generateInterviewReport(params: {
   language: string;
   resumeSummary: string;
   signal?: AbortSignal;
+  telemetry?: AITaskTelemetryContext;
 }): Promise<InterviewReport> {
   const questionsDetail = params.questions
     .map(
@@ -139,6 +145,7 @@ ${questionsDetail}
     system: "你是专业的面试教练。请基于候选人的所有面试回答和已计算评分，生成报告叙事内容：2至3项核心优势、1至2项关键改进领域、总结和可执行的下一步建议。不得自行生成或修改总分与六维均值。",
     prompt,
     abortSignal: params.signal,
+    telemetry: params.telemetry,
   });
 
   return {
@@ -154,6 +161,7 @@ export async function generateFollowUp(params: {
   improvements: string[];
   history: { role: "assistant" | "user"; content: string }[];
   language: string;
+  telemetry?: AITaskTelemetryContext;
 }): Promise<FollowUpRound> {
   let prompt = `原始面试问题：${params.question}
 候选人原始回答：${params.originalAnswer}
@@ -176,6 +184,7 @@ ${params.improvements.map((imp, i) => `${i + 1}. ${imp}`).join("\n")}`;
     schema: followUpRoundSchema,
     system: "你正在通过追问验证候选人的真实理解深度。",
     prompt,
+    telemetry: params.telemetry,
   });
 
 }
@@ -185,6 +194,7 @@ export async function generateCoachContent(params: {
   originalAnswer: string;
   feedback: { strengths: string[]; improvements: string[] };
   language: string;
+  telemetry?: AITaskTelemetryContext;
 }): Promise<CoachStart> {
   let prompt = `原始面试问题：${params.question}
 候选人原始回答：${params.originalAnswer}
@@ -204,6 +214,7 @@ export async function generateCoachContent(params: {
     schema: coachStartSchema,
     system: "你是面试教练，而非面试官。",
     prompt,
+    telemetry: params.telemetry,
   });
 
 }
@@ -213,6 +224,7 @@ export async function evaluateCoachAnswer(params: {
   practiceQuestion: string;
   answer: string;
   language: string;
+  telemetry?: AITaskTelemetryContext;
 }): Promise<CoachEvaluate> {
   let prompt = `原始面试问题（提供上下文）：${params.originalQuestion}
 练习问题：${params.practiceQuestion}
@@ -229,6 +241,7 @@ export async function evaluateCoachAnswer(params: {
     schema: coachEvaluateSchema,
     system: "你是面试教练。请对候选人的练习回答进行评分和点评。",
     prompt,
+    telemetry: params.telemetry,
   });
 
 }

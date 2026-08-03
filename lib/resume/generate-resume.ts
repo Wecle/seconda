@@ -1,6 +1,7 @@
 import { generateStructured } from "@/lib/ai/generate-structured";
 import type { GeneratedResumeInput } from "./generation-contract";
 import { parsedResumeSchema, type ParsedResume } from "./types";
+import type { AITaskTelemetryContext } from "@/lib/ai/telemetry/types";
 
 export type ResumeStructuredGeneratorInput = {
   task: "resume.generate";
@@ -8,6 +9,7 @@ export type ResumeStructuredGeneratorInput = {
   system: string;
   prompt: string;
   abortSignal?: AbortSignal;
+  telemetry?: AITaskTelemetryContext;
 };
 
 export type ResumeStructuredGenerator = (
@@ -17,6 +19,7 @@ export type ResumeStructuredGenerator = (
 type GenerateResumeOptions = {
   abortSignal?: AbortSignal;
   generate?: ResumeStructuredGenerator;
+  telemetry?: AITaskTelemetryContext;
 };
 
 const SYSTEM_PROMPT = `你是专业的简历撰写助手。请根据用户明确提供的事实生成结构化简历。
@@ -179,6 +182,7 @@ export async function generateResumeWithAI(
     system: SYSTEM_PROMPT,
     prompt: buildPrompt(input),
     abortSignal: options.abortSignal,
+    ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   });
 
   return parsedResumeSchema.parse({

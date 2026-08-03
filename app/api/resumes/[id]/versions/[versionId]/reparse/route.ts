@@ -126,7 +126,9 @@ export async function POST(
     }
 
     try {
-      const parsed = await parseResumeWithAI(extractedText);
+      const parsed = await parseResumeWithAI(extractedText, {
+        operationKey: `resume.parse:${versionId}`,
+      });
 
       await db
         .update(resumeVersions)

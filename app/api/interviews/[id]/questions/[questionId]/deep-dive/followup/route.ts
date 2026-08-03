@@ -102,6 +102,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         improvements,
         history: [],
         language: interview.language,
+        telemetry: {
+          operationKey: `question.follow-up:${session.id}:start`,
+          interviewId: id,
+          questionId,
+        },
       });
 
       const [newMsg] = await db
@@ -135,7 +140,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         .returning();
 
       const allMessages = [...existingMessages, userMsg];
-
       const history = allMessages.map((m) => ({
         role: m.role as "assistant" | "user",
         content:
@@ -150,6 +154,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         improvements,
         history,
         language: interview.language,
+        telemetry: {
+          operationKey: `question.follow-up:${session.id}:${userMsg.id}`,
+          interviewId: id,
+          questionId,
+        },
       });
 
       const [assistantMsg] = await db

@@ -1,5 +1,6 @@
 import { generateStructured } from "@/lib/ai/generate-structured";
 import { parsedResumeSchema } from "./types";
+import type { AITaskTelemetryContext } from "@/lib/ai/telemetry/types";
 
 function buildResumeParseInput(text: string): string {
   const normalized = text.trim();
@@ -12,7 +13,10 @@ function buildResumeParseInput(text: string): string {
   return `${head}\n\n[...中间内容省略...]\n\n${tail}`;
 }
 
-export async function parseResumeWithAI(extractedText: string) {
+export async function parseResumeWithAI(
+  extractedText: string,
+  telemetry?: AITaskTelemetryContext,
+) {
   return generateStructured({
     task: "resume.parse",
     schema: parsedResumeSchema,
@@ -23,5 +27,6 @@ summary 字段必须返回；如果简历中没有明确个人简介，可以总
 projects 字段必须提取"全部项目"，不要只挑选代表性项目。
 若简历里有多个项目（个人项目、公司项目、平台项目），都要逐条输出，保持原文顺序，不要合并。`,
     prompt: `请解析以下简历内容：\n\n${buildResumeParseInput(extractedText)}`,
+    telemetry,
   });
 }
