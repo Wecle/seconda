@@ -471,6 +471,309 @@ async function migrate() {
   await sql`ALTER TABLE interview_completion_jobs ADD COLUMN IF NOT EXISTS next_attempt_at TIMESTAMPTZ`;
 
   await sql`
+    CREATE TABLE IF NOT EXISTS ai_task_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      operation_key TEXT NOT NULL,
+      task TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      budget_mode TEXT NOT NULL,
+      budget_scope TEXT,
+      token_limit BIGINT,
+      would_exceed_budget INTEGER NOT NULL DEFAULT 0,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      output_tokens BIGINT NOT NULL DEFAULT 0,
+      cached_input_tokens BIGINT NOT NULL DEFAULT 0,
+      cache_write_tokens BIGINT NOT NULL DEFAULT 0,
+      usage_unavailable_attempts INTEGER NOT NULL DEFAULT 0,
+      estimated_cost_micros BIGINT,
+      unpriced_attempts INTEGER NOT NULL DEFAULT 0,
+      interview_id UUID REFERENCES interviews(id) ON DELETE CASCADE,
+      agent_run_id UUID REFERENCES interview_agent_runs(id) ON DELETE CASCADE,
+      question_id UUID REFERENCES interview_questions(id) ON DELETE CASCADE,
+      completion_job_id UUID REFERENCES interview_completion_jobs(id) ON DELETE CASCADE,
+      prompt_template_version TEXT,
+      error_json JSONB,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS operation_key TEXT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS task TEXT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS budget_mode TEXT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS budget_scope TEXT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS token_limit BIGINT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS would_exceed_budget INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS cached_input_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS usage_unavailable_attempts INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS estimated_cost_micros BIGINT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS unpriced_attempts INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS interview_id UUID REFERENCES interviews(id) ON DELETE CASCADE`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS agent_run_id UUID REFERENCES interview_agent_runs(id) ON DELETE CASCADE`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS question_id UUID REFERENCES interview_questions(id) ON DELETE CASCADE`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS completion_job_id UUID REFERENCES interview_completion_jobs(id) ON DELETE CASCADE`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS prompt_template_version TEXT`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS error_json JSONB`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE ai_task_runs ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS ai_task_attempts (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      task_run_id UUID NOT NULL REFERENCES ai_task_runs(id) ON DELETE CASCADE,
+      attempt_number INTEGER NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      credential_tier TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      usage_available INTEGER NOT NULL DEFAULT 0,
+      input_tokens BIGINT NOT NULL DEFAULT 0,
+      output_tokens BIGINT NOT NULL DEFAULT 0,
+      cached_input_tokens BIGINT,
+      cache_write_tokens BIGINT,
+      input_price_micros_per_million BIGINT,
+      output_price_micros_per_million BIGINT,
+      cache_read_price_micros_per_million BIGINT,
+      cache_write_price_micros_per_million BIGINT,
+      estimated_cost_micros BIGINT,
+      first_token_ms INTEGER,
+      duration_ms INTEGER,
+      error_category TEXT,
+      retryable INTEGER,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS task_run_id UUID REFERENCES ai_task_runs(id) ON DELETE CASCADE`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS attempt_number INTEGER`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS provider TEXT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS model TEXT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS credential_tier TEXT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS usage_available INTEGER NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS input_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS output_tokens BIGINT NOT NULL DEFAULT 0`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS cached_input_tokens BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS cache_write_tokens BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS input_price_micros_per_million BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS output_price_micros_per_million BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS cache_read_price_micros_per_million BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS cache_write_price_micros_per_million BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS estimated_cost_micros BIGINT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS first_token_ms INTEGER`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS duration_ms INTEGER`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS error_category TEXT`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS retryable INTEGER`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ`;
+  await sql`ALTER TABLE ai_task_attempts ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`;
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name IN ('ai_task_runs', 'ai_task_attempts')
+          AND column_name IN (
+            'token_limit', 'input_tokens', 'output_tokens', 'cached_input_tokens',
+            'cache_write_tokens', 'input_price_micros_per_million',
+            'output_price_micros_per_million', 'cache_read_price_micros_per_million',
+            'cache_write_price_micros_per_million', 'estimated_cost_micros'
+          )
+          AND data_type <> 'bigint'
+      ) THEN
+        DROP VIEW IF EXISTS ai_task_daily_summary;
+        DROP VIEW IF EXISTS ai_interview_observability;
+        DROP VIEW IF EXISTS ai_failure_summary;
+        DROP VIEW IF EXISTS ai_slow_operations;
+        DROP VIEW IF EXISTS ai_cache_efficiency;
+        DROP VIEW IF EXISTS ai_completion_health;
+
+        ALTER TABLE ai_task_runs
+          ALTER COLUMN token_limit TYPE BIGINT USING token_limit::bigint,
+          ALTER COLUMN input_tokens TYPE BIGINT USING input_tokens::bigint,
+          ALTER COLUMN output_tokens TYPE BIGINT USING output_tokens::bigint,
+          ALTER COLUMN cached_input_tokens TYPE BIGINT USING cached_input_tokens::bigint,
+          ALTER COLUMN cache_write_tokens TYPE BIGINT USING cache_write_tokens::bigint,
+          ALTER COLUMN estimated_cost_micros TYPE BIGINT USING estimated_cost_micros::bigint;
+        ALTER TABLE ai_task_attempts
+          ALTER COLUMN input_tokens TYPE BIGINT USING input_tokens::bigint,
+          ALTER COLUMN output_tokens TYPE BIGINT USING output_tokens::bigint,
+          ALTER COLUMN cached_input_tokens TYPE BIGINT USING cached_input_tokens::bigint,
+          ALTER COLUMN cache_write_tokens TYPE BIGINT USING cache_write_tokens::bigint,
+          ALTER COLUMN input_price_micros_per_million TYPE BIGINT USING input_price_micros_per_million::bigint,
+          ALTER COLUMN output_price_micros_per_million TYPE BIGINT USING output_price_micros_per_million::bigint,
+          ALTER COLUMN cache_read_price_micros_per_million TYPE BIGINT USING cache_read_price_micros_per_million::bigint,
+          ALTER COLUMN cache_write_price_micros_per_million TYPE BIGINT USING cache_write_price_micros_per_million::bigint,
+          ALTER COLUMN estimated_cost_micros TYPE BIGINT USING estimated_cost_micros::bigint;
+      END IF;
+    END
+    $$
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM ai_task_runs
+        WHERE operation_key IS NULL OR task IS NULL OR status IS NULL OR budget_mode IS NULL
+          OR would_exceed_budget IS NULL OR input_tokens IS NULL OR output_tokens IS NULL
+          OR cached_input_tokens IS NULL OR cache_write_tokens IS NULL
+          OR usage_unavailable_attempts IS NULL OR unpriced_attempts IS NULL
+          OR started_at IS NULL OR created_at IS NULL OR updated_at IS NULL
+      ) THEN
+        RAISE EXCEPTION 'Cannot enforce ai_task_runs required columns: manual repair or removal of incomplete operational telemetry is required';
+      END IF;
+      IF EXISTS (
+        SELECT 1 FROM ai_task_attempts
+        WHERE task_run_id IS NULL OR attempt_number IS NULL OR provider IS NULL OR model IS NULL
+          OR credential_tier IS NULL OR status IS NULL OR usage_available IS NULL
+          OR input_tokens IS NULL OR output_tokens IS NULL OR started_at IS NULL OR created_at IS NULL
+      ) THEN
+        RAISE EXCEPTION 'Cannot enforce ai_task_attempts required columns: manual repair or removal of incomplete operational telemetry is required';
+      END IF;
+
+      ALTER TABLE ai_task_runs
+        ALTER COLUMN operation_key SET NOT NULL,
+        ALTER COLUMN task SET NOT NULL,
+        ALTER COLUMN status SET NOT NULL,
+        ALTER COLUMN budget_mode SET NOT NULL,
+        ALTER COLUMN would_exceed_budget SET NOT NULL,
+        ALTER COLUMN input_tokens SET NOT NULL,
+        ALTER COLUMN output_tokens SET NOT NULL,
+        ALTER COLUMN cached_input_tokens SET NOT NULL,
+        ALTER COLUMN cache_write_tokens SET NOT NULL,
+        ALTER COLUMN usage_unavailable_attempts SET NOT NULL,
+        ALTER COLUMN unpriced_attempts SET NOT NULL,
+        ALTER COLUMN started_at SET NOT NULL,
+        ALTER COLUMN created_at SET NOT NULL,
+        ALTER COLUMN updated_at SET NOT NULL;
+      ALTER TABLE ai_task_attempts
+        ALTER COLUMN task_run_id SET NOT NULL,
+        ALTER COLUMN attempt_number SET NOT NULL,
+        ALTER COLUMN provider SET NOT NULL,
+        ALTER COLUMN model SET NOT NULL,
+        ALTER COLUMN credential_tier SET NOT NULL,
+        ALTER COLUMN status SET NOT NULL,
+        ALTER COLUMN usage_available SET NOT NULL,
+        ALTER COLUMN input_tokens SET NOT NULL,
+        ALTER COLUMN output_tokens SET NOT NULL,
+        ALTER COLUMN started_at SET NOT NULL,
+        ALTER COLUMN created_at SET NOT NULL;
+    END
+    $$
+  `;
+  await sql.begin(async (transaction) => {
+    await transaction.unsafe(`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM ai_task_runs
+          WHERE token_limit < 0 OR token_limit > 9007199254740991
+            OR task NOT IN (
+              'resume.parse', 'resume.generate', 'interview.agent', 'context.compact',
+              'question.generate', 'question.follow-up', 'answer.score', 'report.generate',
+              'coach.generate', 'coach.evaluate'
+            )
+            OR status NOT IN ('running', 'completed', 'failed', 'budget_exceeded')
+            OR budget_mode NOT IN ('off', 'observe', 'enforce')
+            OR would_exceed_budget NOT IN (0, 1)
+            OR input_tokens < 0 OR input_tokens > 9007199254740991
+            OR output_tokens < 0 OR output_tokens > 9007199254740991
+            OR cached_input_tokens < 0 OR cached_input_tokens > 9007199254740991
+            OR cache_write_tokens < 0 OR cache_write_tokens > 9007199254740991
+            OR estimated_cost_micros < 0 OR estimated_cost_micros > 9007199254740991
+            OR usage_unavailable_attempts < 0 OR unpriced_attempts < 0
+        ) OR EXISTS (
+          SELECT 1 FROM ai_task_attempts
+          WHERE attempt_number <= 0
+            OR provider NOT IN ('deepseek', 'openai', 'zhipu')
+            OR credential_tier NOT IN ('fast', 'quality')
+            OR status NOT IN ('running', 'completed', 'failed', 'budget_rejected')
+            OR usage_available NOT IN (0, 1)
+            OR retryable IS NOT NULL AND retryable NOT IN (0, 1)
+            OR input_tokens < 0 OR input_tokens > 9007199254740991
+            OR output_tokens < 0 OR output_tokens > 9007199254740991
+            OR cached_input_tokens < 0 OR cached_input_tokens > 9007199254740991
+            OR cache_write_tokens < 0 OR cache_write_tokens > 9007199254740991
+            OR input_price_micros_per_million < 0 OR input_price_micros_per_million > 9007199254740991
+            OR output_price_micros_per_million < 0 OR output_price_micros_per_million > 9007199254740991
+            OR cache_read_price_micros_per_million < 0 OR cache_read_price_micros_per_million > 9007199254740991
+            OR cache_write_price_micros_per_million < 0 OR cache_write_price_micros_per_million > 9007199254740991
+            OR estimated_cost_micros < 0 OR estimated_cost_micros > 9007199254740991
+            OR first_token_ms < 0 OR duration_ms < 0
+        ) THEN
+          RAISE EXCEPTION 'Cannot install telemetry constraints: manual repair or removal of invalid operational telemetry is required';
+        END IF;
+      END
+      $$
+    `);
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_token_limit_check");
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_nonnegative_check");
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_task_check");
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_status_check");
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_budget_mode_check");
+    await transaction.unsafe("ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_budget_flag_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_nonnegative_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_status_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_provider_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_credential_tier_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_usage_available_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_retryable_check");
+    await transaction.unsafe("ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_positive_number_check");
+    await transaction.unsafe(`
+      ALTER TABLE ai_task_runs
+        ADD CONSTRAINT ai_task_runs_token_limit_check CHECK (
+          token_limit IS NULL OR token_limit BETWEEN 0 AND 9007199254740991
+        ),
+        ADD CONSTRAINT ai_task_runs_nonnegative_check CHECK (
+          input_tokens BETWEEN 0 AND 9007199254740991
+          AND output_tokens BETWEEN 0 AND 9007199254740991
+          AND cached_input_tokens BETWEEN 0 AND 9007199254740991
+          AND cache_write_tokens BETWEEN 0 AND 9007199254740991
+          AND usage_unavailable_attempts >= 0 AND unpriced_attempts >= 0
+          AND (estimated_cost_micros IS NULL OR estimated_cost_micros BETWEEN 0 AND 9007199254740991)
+        ),
+        ADD CONSTRAINT ai_task_runs_task_check CHECK (task IN (
+          'resume.parse', 'resume.generate', 'interview.agent', 'context.compact',
+          'question.generate', 'question.follow-up', 'answer.score', 'report.generate',
+          'coach.generate', 'coach.evaluate'
+        )),
+        ADD CONSTRAINT ai_task_runs_status_check CHECK (status IN ('running', 'completed', 'failed', 'budget_exceeded')),
+        ADD CONSTRAINT ai_task_runs_budget_mode_check CHECK (budget_mode IN ('off', 'observe', 'enforce')),
+        ADD CONSTRAINT ai_task_runs_budget_flag_check CHECK (would_exceed_budget IN (0, 1))
+    `);
+    await transaction.unsafe(`
+      ALTER TABLE ai_task_attempts
+        ADD CONSTRAINT ai_task_attempts_nonnegative_check CHECK (
+          input_tokens BETWEEN 0 AND 9007199254740991
+          AND output_tokens BETWEEN 0 AND 9007199254740991
+          AND (cached_input_tokens IS NULL OR cached_input_tokens BETWEEN 0 AND 9007199254740991)
+          AND (cache_write_tokens IS NULL OR cache_write_tokens BETWEEN 0 AND 9007199254740991)
+          AND (input_price_micros_per_million IS NULL OR input_price_micros_per_million BETWEEN 0 AND 9007199254740991)
+          AND (output_price_micros_per_million IS NULL OR output_price_micros_per_million BETWEEN 0 AND 9007199254740991)
+          AND (cache_read_price_micros_per_million IS NULL OR cache_read_price_micros_per_million BETWEEN 0 AND 9007199254740991)
+          AND (cache_write_price_micros_per_million IS NULL OR cache_write_price_micros_per_million BETWEEN 0 AND 9007199254740991)
+          AND (estimated_cost_micros IS NULL OR estimated_cost_micros BETWEEN 0 AND 9007199254740991)
+          AND (first_token_ms IS NULL OR first_token_ms >= 0)
+          AND (duration_ms IS NULL OR duration_ms >= 0)
+        ),
+        ADD CONSTRAINT ai_task_attempts_status_check CHECK (status IN ('running', 'completed', 'failed', 'budget_rejected')),
+        ADD CONSTRAINT ai_task_attempts_provider_check CHECK (provider IN ('deepseek', 'openai', 'zhipu')),
+        ADD CONSTRAINT ai_task_attempts_credential_tier_check CHECK (credential_tier IN ('fast', 'quality')),
+        ADD CONSTRAINT ai_task_attempts_usage_available_check CHECK (usage_available IN (0, 1)),
+        ADD CONSTRAINT ai_task_attempts_retryable_check CHECK (retryable IS NULL OR retryable IN (0, 1)),
+        ADD CONSTRAINT ai_task_attempts_positive_number_check CHECK (attempt_number > 0)
+    `);
+  });
+  await sql`
     CREATE TABLE IF NOT EXISTS interview_context_snapshots (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
@@ -627,6 +930,333 @@ async function migrate() {
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_context_snapshots_interview ON interview_context_snapshots(interview_id, cache_epoch)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_messages_interview ON interview_messages(interview_id)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_interview_coverage_interview ON interview_coverage(interview_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_task_started ON ai_task_runs(task, started_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_status_started ON ai_task_runs(status, started_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_budget_scope_started ON ai_task_runs(budget_scope, started_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_interview_started ON ai_task_runs(interview_id, started_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_agent_run ON ai_task_runs(agent_run_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_question ON ai_task_runs(question_id)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_runs_completion_job ON ai_task_runs(completion_job_id)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_task_runs_operation_key ON ai_task_runs(operation_key)`;
+  await sql`CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_task_attempts_run_number ON ai_task_attempts(task_run_id, attempt_number)`;
+  await sql`ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_operation_key_key`;
+  await sql`ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_task_run_id_attempt_number_key`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_attempts_model_started ON ai_task_attempts(model, started_at)`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_attempts_status_started ON ai_task_attempts(status, started_at)`;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_task_daily_summary AS
+    WITH task_metrics AS (
+      SELECT
+        date_trunc('day', runs.started_at) AS day,
+        runs.task,
+        first_attempt.provider,
+        first_attempt.model,
+        COUNT(*)::bigint AS task_count,
+        COUNT(*) FILTER (WHERE runs.status = 'completed')::bigint AS success_count,
+        COUNT(*) FILTER (WHERE runs.status IN ('failed', 'budget_exceeded'))::bigint AS failure_count
+      FROM ai_task_runs AS runs
+      LEFT JOIN LATERAL (
+        SELECT attempts.provider, attempts.model
+        FROM ai_task_attempts AS attempts
+        WHERE attempts.task_run_id = runs.id
+        ORDER BY attempts.attempt_number, attempts.id
+        LIMIT 1
+      ) AS first_attempt ON TRUE
+      GROUP BY date_trunc('day', runs.started_at), runs.task, first_attempt.provider, first_attempt.model
+    ), attempt_metrics AS (
+      SELECT
+        date_trunc('day', attempts.started_at) AS day,
+        runs.task,
+        attempts.provider,
+        attempts.model,
+        COUNT(*)::bigint AS attempt_count,
+        COUNT(*) FILTER (WHERE attempts.attempt_number > 1)::bigint AS fallback_count,
+        SUM(attempts.input_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS input_tokens,
+        SUM(attempts.output_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS output_tokens,
+        SUM(attempts.cached_input_tokens) FILTER (
+          WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+        )::bigint AS cached_input_tokens,
+        SUM(attempts.cache_write_tokens) FILTER (
+          WHERE attempts.usage_available = 1 AND attempts.cache_write_tokens IS NOT NULL
+        )::bigint AS cache_write_tokens,
+        SUM(attempts.estimated_cost_micros)::numeric AS known_cost_micros,
+        COUNT(*) FILTER (
+          WHERE attempts.status IN ('completed', 'failed')
+            AND attempts.usage_available = 1
+            AND (
+              attempts.input_price_micros_per_million IS NULL
+              OR attempts.output_price_micros_per_million IS NULL
+              OR (attempts.cached_input_tokens IS NOT NULL AND attempts.cache_read_price_micros_per_million IS NULL)
+              OR (attempts.cache_write_tokens IS NOT NULL AND attempts.cache_write_price_micros_per_million IS NULL)
+            )
+        )::bigint AS unpriced_attempts,
+        COUNT(*) FILTER (
+          WHERE attempts.status IN ('completed', 'failed') AND attempts.usage_available = 0
+        )::bigint AS usage_unavailable_attempts,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY attempts.duration_ms)
+          FILTER (WHERE attempts.duration_ms IS NOT NULL) AS duration_p50_ms,
+        percentile_cont(0.95) WITHIN GROUP (ORDER BY attempts.duration_ms)
+          FILTER (WHERE attempts.duration_ms IS NOT NULL) AS duration_p95_ms
+      FROM ai_task_attempts AS attempts
+      JOIN ai_task_runs AS runs ON runs.id = attempts.task_run_id
+      GROUP BY date_trunc('day', attempts.started_at), runs.task, attempts.provider, attempts.model
+    )
+    SELECT
+      COALESCE(task_metrics.day, attempt_metrics.day) AS day,
+      COALESCE(task_metrics.task, attempt_metrics.task) AS task,
+      COALESCE(task_metrics.provider, attempt_metrics.provider) AS provider,
+      COALESCE(task_metrics.model, attempt_metrics.model) AS model,
+      COALESCE(task_metrics.task_count, 0)::bigint AS task_count,
+      COALESCE(attempt_metrics.attempt_count, 0)::bigint AS attempt_count,
+      COALESCE(task_metrics.success_count, 0)::bigint AS success_count,
+      COALESCE(task_metrics.failure_count, 0)::bigint AS failure_count,
+      COALESCE(attempt_metrics.fallback_count, 0)::bigint AS fallback_count,
+      attempt_metrics.input_tokens,
+      attempt_metrics.output_tokens,
+      attempt_metrics.cached_input_tokens,
+      attempt_metrics.cache_write_tokens,
+      attempt_metrics.known_cost_micros,
+      attempt_metrics.unpriced_attempts,
+      attempt_metrics.usage_unavailable_attempts,
+      attempt_metrics.duration_p50_ms,
+      attempt_metrics.duration_p95_ms
+    FROM task_metrics
+    FULL OUTER JOIN attempt_metrics
+      ON attempt_metrics.day = task_metrics.day
+      AND attempt_metrics.task = task_metrics.task
+      AND attempt_metrics.provider IS NOT DISTINCT FROM task_metrics.provider
+      AND attempt_metrics.model IS NOT DISTINCT FROM task_metrics.model
+  `;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_interview_observability AS
+    WITH task_metrics AS (
+      SELECT
+        interview_id,
+        COUNT(DISTINCT agent_run_id) FILTER (WHERE task = 'interview.agent' AND agent_run_id IS NOT NULL)::bigint AS agent_run_count,
+        COUNT(DISTINCT agent_run_id) FILTER (
+          WHERE task = 'interview.agent' AND agent_run_id IS NOT NULL AND status IN ('failed', 'budget_exceeded')
+        )::bigint AS failed_agent_run_count,
+        MIN(started_at) AS earliest_task_at,
+        MAX(COALESCE(completed_at, started_at)) AS latest_task_at
+      FROM ai_task_runs
+      WHERE interview_id IS NOT NULL
+      GROUP BY interview_id
+    ), attempt_metrics AS (
+      SELECT
+        runs.interview_id,
+        COUNT(attempts.id) FILTER (WHERE attempts.attempt_number > 1)::bigint AS retry_fallback_count,
+        SUM(attempts.input_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS input_tokens,
+        SUM(attempts.output_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS output_tokens,
+        SUM(attempts.cached_input_tokens) FILTER (
+          WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+        )::bigint AS cached_input_tokens,
+        SUM(attempts.cache_write_tokens) FILTER (
+          WHERE attempts.usage_available = 1 AND attempts.cache_write_tokens IS NOT NULL
+        )::bigint AS cache_write_tokens,
+        SUM(attempts.estimated_cost_micros)::numeric AS known_cost_micros,
+        COUNT(attempts.id) FILTER (
+          WHERE attempts.status IN ('completed', 'failed')
+            AND attempts.usage_available = 1
+            AND (
+              attempts.input_price_micros_per_million IS NULL
+              OR attempts.output_price_micros_per_million IS NULL
+              OR (attempts.cached_input_tokens IS NOT NULL AND attempts.cache_read_price_micros_per_million IS NULL)
+              OR (attempts.cache_write_tokens IS NOT NULL AND attempts.cache_write_price_micros_per_million IS NULL)
+            )
+        )::bigint AS unpriced_attempts,
+        COUNT(attempts.id) FILTER (
+          WHERE attempts.status IN ('completed', 'failed') AND attempts.usage_available = 0
+        )::bigint AS usage_unavailable_attempts
+      FROM ai_task_runs AS runs
+      JOIN ai_task_attempts AS attempts ON attempts.task_run_id = runs.id
+      WHERE runs.interview_id IS NOT NULL
+      GROUP BY runs.interview_id
+    ), recovery_metrics AS (
+      SELECT interview_id, SUM(resume_count)::bigint AS recovery_count
+      FROM interview_agent_runs
+      GROUP BY interview_id
+    ), completion_metrics AS (
+      SELECT
+        interview_id,
+        CASE
+          WHEN completed_at IS NULL THEN NULL
+          ELSE FLOOR(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000)::bigint
+        END AS completion_latency_ms
+      FROM interview_completion_jobs
+    )
+    SELECT
+      interviews.id AS interview_id,
+      task_metrics.agent_run_count,
+      task_metrics.failed_agent_run_count,
+      attempt_metrics.retry_fallback_count,
+      recovery_metrics.recovery_count,
+      attempt_metrics.input_tokens,
+      attempt_metrics.output_tokens,
+      attempt_metrics.cached_input_tokens,
+      attempt_metrics.cache_write_tokens,
+      attempt_metrics.known_cost_micros,
+      attempt_metrics.unpriced_attempts,
+      attempt_metrics.usage_unavailable_attempts,
+      task_metrics.earliest_task_at,
+      task_metrics.latest_task_at,
+      completion_metrics.completion_latency_ms
+    FROM interviews
+    LEFT JOIN task_metrics ON task_metrics.interview_id = interviews.id
+    LEFT JOIN attempt_metrics ON attempt_metrics.interview_id = interviews.id
+    LEFT JOIN recovery_metrics ON recovery_metrics.interview_id = interviews.id
+    LEFT JOIN completion_metrics ON completion_metrics.interview_id = interviews.id
+  `;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_failure_summary AS
+    SELECT
+      date_trunc('day', attempts.started_at) AS day,
+      runs.task,
+      attempts.provider,
+      attempts.model,
+      attempts.status,
+      attempts.error_category,
+      attempts.retryable,
+      (attempts.status = 'budget_rejected') AS budget_rejection,
+      COUNT(*)::bigint AS failure_count
+    FROM ai_task_attempts AS attempts
+    JOIN ai_task_runs AS runs ON runs.id = attempts.task_run_id
+    WHERE attempts.status IN ('failed', 'budget_rejected')
+    GROUP BY
+      date_trunc('day', attempts.started_at), runs.task, attempts.provider, attempts.model,
+      attempts.status, attempts.error_category, attempts.retryable, (attempts.status = 'budget_rejected')
+  `;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_slow_operations AS
+    SELECT
+      runs.id AS task_run_id,
+      attempts.id AS attempt_id,
+      runs.interview_id,
+      runs.agent_run_id,
+      runs.question_id,
+      runs.completion_job_id,
+      runs.task,
+      attempts.provider,
+      attempts.model,
+      attempts.attempt_number,
+      attempts.status,
+      attempts.first_token_ms,
+      attempts.duration_ms,
+      CASE
+        WHEN runs.completed_at IS NULL THEN NULL
+        ELSE FLOOR(EXTRACT(EPOCH FROM (runs.completed_at - runs.started_at)) * 1000)::bigint
+      END AS task_duration_ms,
+      attempts.started_at,
+      attempts.completed_at
+    FROM ai_task_attempts AS attempts
+    JOIN ai_task_runs AS runs ON runs.id = attempts.task_run_id
+    WHERE attempts.duration_ms IS NOT NULL
+  `;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_cache_efficiency AS
+    SELECT
+      date_trunc('day', attempts.started_at) AS day,
+      runs.task,
+      attempts.model,
+      runs.prompt_template_version,
+      COUNT(*) FILTER (
+        WHERE attempts.status IN ('completed', 'failed') AND attempts.cached_input_tokens IS NOT NULL
+      )::bigint AS available_sample_count,
+      COUNT(*) FILTER (
+        WHERE attempts.status IN ('completed', 'failed') AND attempts.cached_input_tokens IS NULL
+      )::bigint AS unavailable_sample_count,
+      SUM(attempts.input_tokens) FILTER (
+        WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+      )::bigint AS input_tokens,
+      SUM(attempts.cached_input_tokens) FILTER (
+        WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+      )::bigint AS cache_read_tokens,
+      SUM(attempts.cache_write_tokens) FILTER (
+        WHERE attempts.usage_available = 1 AND attempts.cache_write_tokens IS NOT NULL
+      )::bigint AS cache_write_tokens,
+      SUM(attempts.cached_input_tokens) FILTER (
+        WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+      )::numeric
+        / NULLIF(SUM(attempts.input_tokens) FILTER (
+          WHERE attempts.usage_available = 1 AND attempts.cached_input_tokens IS NOT NULL
+        ), 0) AS cache_read_ratio
+    FROM ai_task_attempts AS attempts
+    JOIN ai_task_runs AS runs ON runs.id = attempts.task_run_id
+    GROUP BY date_trunc('day', attempts.started_at), runs.task, attempts.model, runs.prompt_template_version
+  `;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_completion_health AS
+    WITH question_metrics AS (
+      SELECT
+        jobs.id AS completion_job_id,
+        COUNT(questions.id) FILTER (WHERE questions.answer_text IS NOT NULL)::bigint AS questions_requiring_scores,
+        COUNT(scores.id)::bigint AS scored_questions,
+        COUNT(questions.id) FILTER (WHERE questions.score_status = 'failed')::bigint AS failed_questions
+      FROM interview_completion_jobs AS jobs
+      LEFT JOIN interview_questions AS questions ON questions.interview_id = jobs.interview_id
+      LEFT JOIN question_scores AS scores ON scores.question_id = questions.id
+      GROUP BY jobs.id
+    ), task_metrics AS (
+      SELECT
+        runs.completion_job_id,
+        runs.task,
+        SUM(attempts.input_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS input_tokens,
+        SUM(attempts.output_tokens) FILTER (WHERE attempts.usage_available = 1)::bigint AS output_tokens,
+        SUM(attempts.estimated_cost_micros)::numeric AS known_cost_micros,
+        COUNT(attempts.id) FILTER (
+          WHERE attempts.status IN ('completed', 'failed')
+            AND attempts.usage_available = 1
+            AND (
+              attempts.input_price_micros_per_million IS NULL
+              OR attempts.output_price_micros_per_million IS NULL
+              OR (attempts.cached_input_tokens IS NOT NULL AND attempts.cache_read_price_micros_per_million IS NULL)
+              OR (attempts.cache_write_tokens IS NOT NULL AND attempts.cache_write_price_micros_per_million IS NULL)
+            )
+        )::bigint AS unpriced_attempts,
+        COUNT(attempts.id) FILTER (
+          WHERE attempts.status IN ('completed', 'failed') AND attempts.usage_available = 0
+        )::bigint AS usage_unavailable_attempts
+      FROM ai_task_runs AS runs
+      JOIN ai_task_attempts AS attempts ON attempts.task_run_id = runs.id
+      WHERE runs.completion_job_id IS NOT NULL AND runs.task IN ('answer.score', 'report.generate')
+      GROUP BY runs.completion_job_id, runs.task
+    )
+    SELECT
+      jobs.id AS completion_job_id,
+      jobs.interview_id,
+      jobs.status,
+      jobs.attempt_count AS execution_attempts,
+      question_metrics.questions_requiring_scores,
+      question_metrics.scored_questions,
+      question_metrics.failed_questions,
+      score_metrics.input_tokens AS score_input_tokens,
+      score_metrics.output_tokens AS score_output_tokens,
+      score_metrics.known_cost_micros AS score_known_cost_micros,
+      score_metrics.unpriced_attempts AS score_unpriced_attempts,
+      score_metrics.usage_unavailable_attempts AS score_usage_unavailable_attempts,
+      report_metrics.input_tokens AS report_input_tokens,
+      report_metrics.output_tokens AS report_output_tokens,
+      report_metrics.known_cost_micros AS report_known_cost_micros,
+      report_metrics.unpriced_attempts AS report_unpriced_attempts,
+      report_metrics.usage_unavailable_attempts AS report_usage_unavailable_attempts,
+      jobs.created_at AS started_at,
+      jobs.completed_at,
+      CASE
+        WHEN jobs.completed_at IS NULL THEN NULL
+        ELSE FLOOR(EXTRACT(EPOCH FROM (jobs.completed_at - jobs.created_at)) * 1000)::bigint
+      END AS duration_ms
+    FROM interview_completion_jobs AS jobs
+    JOIN question_metrics ON question_metrics.completion_job_id = jobs.id
+    LEFT JOIN task_metrics AS score_metrics
+      ON score_metrics.completion_job_id = jobs.id AND score_metrics.task = 'answer.score'
+    LEFT JOIN task_metrics AS report_metrics
+      ON report_metrics.completion_job_id = jobs.id AND report_metrics.task = 'report.generate'
+  `;
 
   console.log("Database migrated successfully");
   await sql.end();
