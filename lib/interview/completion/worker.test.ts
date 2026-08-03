@@ -26,7 +26,7 @@ test("failed and stale completion jobs can be recovered", async () => {
   assert.equal(getCompletionRecoveryDisposition(failed, failed.nextAttemptAt!), "schedule");
 });
 
-test("completion jobs exhaust a three-attempt total budget", async () => {
+test("completion resource failures preserve the existing three-attempt total budget", async () => {
   const repository = createInMemoryCompletionJobRepository();
   const job = await repository.createJob("interview");
   let now = new Date(0);
@@ -34,7 +34,10 @@ test("completion jobs exhaust a three-attempt total budget", async () => {
     const claimed = await repository.claimJob(job.id, `worker-${attempt}`, now, 1_000);
     assert.ok(claimed);
     const lease = { owner: `worker-${attempt}`, generation: claimed.leaseGeneration };
-    await repository.failJob(job.id, lease, new Error("boom"), now);
+    await repository.failJob(job.id, lease, Object.assign(
+      new Error("AI_RESOURCE_BUDGET_EXCEEDED"),
+      { code: "AI_RESOURCE_BUDGET_EXCEEDED" },
+    ), now);
     const current = await repository.getJob(job.id);
     assert.equal(current?.attemptCount, attempt);
     if (current?.nextAttemptAt) now = current.nextAttemptAt;

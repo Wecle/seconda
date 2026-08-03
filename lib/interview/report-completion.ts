@@ -4,9 +4,22 @@ import { interviewQuestions, interviewResumeSnapshots, interviews, questionScore
 import { generateInterviewReport } from "./index";
 import { assertCompletionLease } from "./completion/fencing";
 import type { CompletionLeaseToken } from "./completion/repository";
+import type { AITaskTelemetryContext } from "@/lib/ai/telemetry/types";
 
 type Database = typeof import("@/lib/db").db;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+export function createCompletionReportTelemetryContext(input: {
+  interviewId: string;
+  jobId: string;
+}): AITaskTelemetryContext {
+  return {
+    operationKey: `report.generate:${input.jobId}`,
+    interviewId: input.interviewId,
+    completionJobId: input.jobId,
+    budgetScope: `completion:${input.jobId}`,
+  };
+}
 
 export async function completeInterviewReport(
   database: Database,
@@ -18,6 +31,7 @@ export async function completeInterviewReport(
   if (!interview) throw new Error("Interview not found");
   if (interview.status === "completed" && interview.reportJson) return interview.reportJson;
   if (interview.status !== "reporting") throw new Error("Interview must be reporting before report generation");
+  await assertLeaseIfConfigured(database, options);
   try {
     const rows = await database.select({ question: interviewQuestions, score: questionScores })
       .from(interviewQuestions)
@@ -66,6 +80,12 @@ export async function completeInterviewReport(
       language: interview.language,
       resumeSummary: resume ? `${resume.name} - ${resume.title}. Skills: ${resume.skills.join(", ")}` : "",
       signal: options?.signal,
+      ...(options?.jobId ? {
+        telemetry: createCompletionReportTelemetryContext({
+          interviewId,
+          jobId: options.jobId,
+        }),
+      } : {}),
     });
     await persistCompletedReport(database, interviewId, report, options);
     return report;

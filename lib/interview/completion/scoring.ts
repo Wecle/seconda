@@ -5,9 +5,24 @@ import { scoreInterviewAnswer } from "@/lib/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { assertCompletionLease } from "./fencing";
 import type { CompletionLeaseToken } from "./repository";
+import type { AITaskTelemetryContext } from "@/lib/ai/telemetry/types";
 
 type Database = typeof import("@/lib/db").db;
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+export function createCompletionScoreTelemetryContext(input: {
+  interviewId: string;
+  jobId: string;
+  questionId: string;
+}): AITaskTelemetryContext {
+  return {
+    operationKey: `answer.score:${input.jobId}:${input.questionId}`,
+    interviewId: input.interviewId,
+    questionId: input.questionId,
+    completionJobId: input.jobId,
+    budgetScope: `completion:${input.jobId}`,
+  };
+}
 
 export async function mapWithConcurrency<T>(items: T[], concurrency: number, task: (item: T) => Promise<void>) {
   const queue = [...items];
@@ -97,6 +112,13 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
         language: context.interview.language,
         resumeContext,
         signal: options?.signal,
+        ...(options?.jobId ? {
+          telemetry: createCompletionScoreTelemetryContext({
+            interviewId,
+            jobId: options.jobId,
+            questionId: question.id,
+          }),
+        } : {}),
       });
       await database.transaction(async (tx) => {
         await assertLeaseIfConfigured(tx, options);
