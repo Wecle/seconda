@@ -1258,6 +1258,30 @@ async function migrate() {
       ON report_metrics.completion_job_id = jobs.id AND report_metrics.task = 'report.generate'
   `;
 
+  await sql`
+    CREATE OR REPLACE VIEW ai_budget_warnings AS
+    SELECT
+      runs.id AS task_run_id,
+      runs.task,
+      runs.budget_scope,
+      runs.budget_mode,
+      runs.token_limit,
+      COALESCE((
+        SELECT SUM(attempts.input_tokens + attempts.output_tokens)::bigint
+        FROM ai_task_runs AS scoped_runs
+        JOIN ai_task_attempts AS attempts ON attempts.task_run_id = scoped_runs.id
+        WHERE scoped_runs.budget_scope = runs.budget_scope
+          AND attempts.status IN ('completed', 'failed')
+          AND attempts.usage_available = 1
+      ), 0)::bigint AS used_tokens,
+      (runs.status = 'budget_exceeded') AS rejected,
+      runs.started_at
+    FROM ai_task_runs AS runs
+    WHERE runs.budget_scope IS NOT NULL
+      AND runs.token_limit IS NOT NULL
+      AND (runs.would_exceed_budget = 1 OR runs.status = 'budget_exceeded')
+  `;
+
   console.log("Database migrated successfully");
   await sql.end();
 }

@@ -7,12 +7,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test lib/ai/*.test.ts lib/resume/*.test.ts lib/interview/*.test.ts lib/interview/agent/*/*.test.ts lib/interview/completion/*.test.ts components/interview/*.test.ts",
+    "test": "tsx --test lib/ai/*.test.ts lib/ai/telemetry/*.test.ts lib/operations/*.test.ts lib/resume/*.test.ts lib/interview/*.test.ts lib/interview/agent/*/*.test.ts lib/interview/completion/*.test.ts components/interview/*.test.ts scripts/*cli.test.ts",
     "test:ai:contract": "tsx --env-file=.env scripts/ai-live-contract.ts",
     "test:interview:agent": "tsx --env-file=.env scripts/interview-agent-contract.ts",
     "test:interview:failure": "tsx --env-file=.env scripts/interview-agent-failure-contract.ts",
     "agent:cutover": "tsx --env-file=.env scripts/agent-runtime-cutover.ts",
-    "db:migrate": "tsx --env-file=.env lib/db/migrate.ts"
+    "db:migrate": "tsx --env-file=.env lib/db/migrate.ts",
+    "ops:ai": "tsx --env-file=.env scripts/ai-operations.ts"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.11",
