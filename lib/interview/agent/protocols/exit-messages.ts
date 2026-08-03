@@ -12,6 +12,23 @@ const messages: Record<AgentExitReason, string> = {
   prompt_too_long: "面试上下文过长，暂时无法继续。",
 };
 
-export function agentExitMessage(reason: AgentExitReason | null) {
+export function agentExitMessage(reason: AgentExitReason | null, error?: unknown) {
+  if (reason === "provider_failed" && hasResourceBudgetCode(error)) {
+    return "本轮处理达到资源保护上限，请稍后重试。";
+  }
   return reason ? messages[reason] : null;
+}
+
+function hasResourceBudgetCode(error: unknown): boolean {
+  let current = error;
+  const seen = new Set<object>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    if (code === "AI_RESOURCE_BUDGET_EXCEEDED" || code === "AI_RESOURCE_BUDGET_UNAVAILABLE") {
+      return true;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }

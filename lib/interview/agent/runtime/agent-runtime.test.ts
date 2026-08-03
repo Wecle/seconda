@@ -15,8 +15,9 @@ import {
 } from "@/lib/interview/agent/providers/model-port";
 import { type InterviewAgentRepository } from "@/lib/interview/agent/persistence/repository";
 import { runInterviewAgent } from "@/lib/interview/agent/runtime/agent-runtime";
+import { AIResourceBudgetError } from "@/lib/ai/telemetry/lifecycle";
 import type {
-  BeforeToolPipelineHook,
+  ToolPipelineHook,
   InterviewToolDefinition,
 } from "@/lib/interview/agent/tools/pipeline";
 import type { InterviewTurnProposal } from "@/lib/interview/agent/domain/turn-proposal";
@@ -481,7 +482,7 @@ async function createRuntimeFixture(options?: {
   model?: InterviewAgentModelPort;
   initialState?: InterviewAgentState;
   tools?: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>;
-  hooks?: readonly BeforeToolPipelineHook[];
+  hooks?: readonly ToolPipelineHook[];
   progressHash?: () => string;
   allowedTerms?: readonly string[];
   answerCategory?: QuestionCategory;
@@ -773,7 +774,7 @@ test("withholds split sensitive terminal public analysis before authorization", 
 
 test("streams terminal public analysis before authorization and strips it from hooks", async () => {
   let committedInput: unknown;
-  const hook: BeforeToolPipelineHook = {
+  const hook: ToolPipelineHook = {
     phase: "before",
     async run(input) {
       if (input.toolName === "submit_interview_turn") committedInput = input.input;
@@ -1802,6 +1803,74 @@ for (const fixtureCase of [
     assert.equal(snapshot.messageCommittedEvents.length, 0);
   });
 }
+
+for (const fixtureCase of [
+  {
+    name: "stop",
+    async run() {
+      return { action: "stop" as const, message: "observer cannot veto commit" };
+    },
+  },
+  {
+    name: "failure",
+    async run() {
+      throw new Error("private observer failure");
+    },
+  },
+]) {
+  test(`terminal after hook ${fixtureCase.name} is an observer and cannot change the committed outcome`, async () => {
+    let hookCalls = 0;
+    let commitsObservedByHook = 0;
+    const fixture = await createRuntimeFixture({
+      hooks: [{
+        phase: "after",
+        async run(input) {
+          hookCalls += 1;
+          commitsObservedByHook = (
+            input.context.repository as ReturnType<typeof createInMemoryInterviewAgentRepository>
+          ).inspectInterview("interview").submitTurnCommits.length;
+          return fixtureCase.run();
+        },
+      }],
+    });
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    try {
+      const result = await runInterviewAgent(fixture.runOptions);
+      assert.equal(result.exitReason, "completed");
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const snapshot = fixture.repository.inspectInterview("interview");
+    assert.equal(hookCalls, 1);
+    assert.equal(commitsObservedByHook, 1);
+    assert.equal(snapshot.submitTurnCommits.length, 1);
+    assert.equal(snapshot.messages.length, 1);
+    assert.equal(snapshot.messageCommittedEvents.length, 1);
+  });
+}
+
+test("resource protection fails the current Run without committing a terminal outcome", async () => {
+  const budgetError = new AIResourceBudgetError("AI_RESOURCE_BUDGET_EXCEEDED");
+  const model: InterviewAgentModelPort = {
+    async nextStep() { throw budgetError; },
+    async nextStepStream() { throw budgetError; },
+  };
+  const fixture = await createRuntimeFixture({ model });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "provider_failed");
+  const snapshot = fixture.repository.inspectInterview("interview");
+  assert.equal(snapshot.submitTurnCommits.length, 0);
+  assert.equal(snapshot.messages.length, 0);
+  const failure = (await fixture.publicEvents()).find((event) => event.type === "run_failed");
+  assert.equal(
+    (failure?.payload as { userMessage?: string } | undefined)?.userMessage,
+    "本轮处理达到资源保护上限，请稍后重试。",
+  );
+});
 
 test("returns a durable ack only when a stream callback writes a public event", async () => {
   const acknowledgements: boolean[] = [];

@@ -10,8 +10,14 @@ import { classifyModelError } from "@/lib/ai/model-errors";
 import {
   loadModelPolicy,
   resolveModelCandidates,
+  type AIModelTier,
   type ModelCandidate,
 } from "@/lib/ai/model-policy";
+import type {
+  AIAttemptHandle,
+  AITaskHandle,
+  AITelemetryLifecycle,
+} from "@/lib/ai/telemetry/lifecycle";
 import { createProviderModel } from "@/lib/ai/provider-registry";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/interview/agent/prompts/system";
 
@@ -42,11 +48,11 @@ import {
 
 type CandidateStream = {
   fullStream: AsyncIterable<unknown>;
-  usage?: PromiseLike<unknown>;
+  usage?: unknown;
 };
 
 export function createStreamingInterviewAgentModelPort(options: {
-  candidates: readonly { model: string }[];
+  candidates: readonly { model: string; credentialTier?: AIModelTier }[];
   classifyError: (error: unknown) => "transient" | "fatal";
   streamCandidate: (input: {
     model: string;
@@ -67,7 +73,10 @@ export function createStreamingInterviewAgentModelPort(options: {
   sleep?: (delayMs: number, signal?: AbortSignal) => Promise<void>;
   random?: () => number;
   onUsage?: (input: { runId: string; usage: NormalizedModelUsage }) => Promise<void>;
+  telemetry?: { lifecycle: AITelemetryLifecycle; task: AITaskHandle };
+  now?: () => number;
 }): InterviewAgentModelPort {
+  const now = options.now ?? Date.now;
   const port: InterviewAgentModelPort = {
     async nextStep(input) {
       const result = await port.nextStepStream!({
@@ -82,7 +91,9 @@ export function createStreamingInterviewAgentModelPort(options: {
       const messageIds = new Map<string, string>();
       const result = await runAgentAttempts({
         candidates: options.candidates,
-        classifyError: options.classifyError,
+        classifyError: (error) => isResourceBudgetError(error)
+          ? "fatal"
+          : options.classifyError(error),
         signal: input.signal,
         sleep: options.sleep,
         random: options.random,
@@ -98,11 +109,25 @@ export function createStreamingInterviewAgentModelPort(options: {
           await options.onAttemptStarted(startedAttempt);
           await input.onAttemptStarted?.(startedAttempt);
         },
-        attempt: async ({ model, attemptId, acceptProvisional }) => {
+        attempt: async ({ model, attemptId, attemptNumber, acceptProvisional }) => {
           const attemptController = new AbortController();
           const combined = combineAbortSignals([input.signal, attemptController.signal]);
           let iterator: AsyncIterator<unknown> | undefined;
+          let telemetryAttempt: AIAttemptHandle | undefined;
+          let normalizedUsage: Promise<NormalizedModelUsage | null> | undefined;
+          let onUsageAttempted = false;
+          const startedAtMs = now();
+          let firstTokenMs: number | null = null;
           try {
+            if (options.telemetry) {
+              const candidate = options.candidates.find((item) => item.model === model);
+              telemetryAttempt = await options.telemetry.lifecycle.beforeAttempt({
+                task: options.telemetry.task,
+                attemptNumber,
+                model,
+                credentialTier: candidate?.credentialTier ?? "fast",
+              });
+            }
             const stream = await withAbortSignal(options.streamCandidate({
               model,
               runId: input.runId,
@@ -110,6 +135,7 @@ export function createStreamingInterviewAgentModelPort(options: {
               tools: input.tools,
               signal: combined.signal,
             }), combined.signal);
+            normalizedUsage = resolveNormalizedUsage(stream.usage);
             const activeToolNames = new Set(input.tools.map((descriptor) => descriptor.name));
             let startedTool: {
               id: string;
@@ -129,8 +155,11 @@ export function createStreamingInterviewAgentModelPort(options: {
                 (error) => attemptController.abort(error),
               );
               if (next.done) break;
-              await input.onProviderProgress();
               const part = asStreamPart(next.value);
+              if (part && firstTokenMs === null && isNonEmptyStreamPart(part)) {
+                firstTokenMs = Math.max(0, now() - startedAtMs);
+              }
+              await input.onProviderProgress();
               if (!part) continue;
 
               if (part.type === "error") {
@@ -397,16 +426,39 @@ export function createStreamingInterviewAgentModelPort(options: {
                 code: "MODEL_TOOL_CALL_REQUIRED",
               });
             }
-            if (stream.usage) {
+            const usage = await normalizedUsage;
+            if (usage) {
+              onUsageAttempted = true;
               await options.onUsage?.({
                 runId: input.runId,
-                usage: normalizeModelUsage(await Promise.resolve(stream.usage)),
+                usage,
               });
+            }
+            if (options.telemetry && telemetryAttempt) {
+              await options.telemetry.lifecycle.completeAttempt({
+                attempt: telemetryAttempt,
+                usage,
+                firstTokenMs,
+                durationMs: Math.max(0, now() - startedAtMs),
+              }).catch(() => {});
             }
             return finalToolCall;
           } catch (error) {
             if (!attemptController.signal.aborted) attemptController.abort(error);
             closeIterator(iterator);
+            const usage = normalizedUsage ? await normalizedUsage : null;
+            if (usage && !onUsageAttempted) {
+              await options.onUsage?.({ runId: input.runId, usage }).catch(() => {});
+            }
+            if (options.telemetry && telemetryAttempt) {
+              await options.telemetry.lifecycle.failAttempt({
+                attempt: telemetryAttempt,
+                error,
+                usage,
+                firstTokenMs,
+                durationMs: Math.max(0, now() - startedAtMs),
+              }).catch(() => {});
+            }
             throw error;
           } finally {
             combined.dispose();
@@ -428,6 +480,8 @@ export function createStreamingInterviewAgentModelPort(options: {
 export function createStructuredInterviewAgentModelPort(options?: {
   onUsage?: (input: { runId: string; usage: NormalizedModelUsage }) => Promise<void>;
   fetch?: typeof globalThis.fetch;
+  telemetry?: { lifecycle: AITelemetryLifecycle; task: AITaskHandle };
+  now?: () => number;
 }): InterviewAgentModelPort {
   const policy = loadModelPolicy(process.env);
   const { candidates } = resolveModelCandidates("interview.agent", policy);
@@ -440,6 +494,8 @@ export function createStructuredInterviewAgentModelPort(options?: {
     classifyError: classifyInterviewAgentModelError,
     async onAttemptStarted() {},
     onUsage: options?.onUsage,
+    telemetry: options?.telemetry,
+    now: options?.now,
     async streamCandidate(input) {
       const candidate = candidates.find((item) => item.model === input.model);
       if (!candidate) throw new Error(`Unknown Agent model candidate: ${input.model}`);
@@ -449,8 +505,33 @@ export function createStructuredInterviewAgentModelPort(options?: {
 }
 
 export function classifyInterviewAgentModelError(error: unknown) {
+  if (isResourceBudgetError(error)) return "fatal" as const;
   if (readErrorCode(error) === "PROVIDER_IDLE_TIMEOUT") return "transient" as const;
   return classifyModelError(error) === "fatal" ? "fatal" as const : "transient" as const;
+}
+
+function isResourceBudgetError(error: unknown) {
+  const code = readErrorCode(error);
+  return code === "AI_RESOURCE_BUDGET_EXCEEDED"
+    || code === "AI_RESOURCE_BUDGET_UNAVAILABLE";
+}
+
+function resolveNormalizedUsage(usage: unknown) {
+  if (usage === undefined) return Promise.resolve(null);
+  return Promise.resolve(usage).then(normalizeModelUsage, () => null);
+}
+
+function isNonEmptyStreamPart(part: { type: string; [key: string]: unknown }) {
+  if (part.type === "error" || part.type === "abort") return false;
+  if (part.type === "text-delta") return typeof part.text === "string" && part.text.length > 0;
+  if (part.type === "reasoning-delta") {
+    const text = part.text ?? part.delta;
+    return typeof text === "string" && text.length > 0;
+  }
+  if (part.type === "tool-input-delta") {
+    return typeof part.delta === "string" && part.delta.length > 0;
+  }
+  return true;
 }
 
 function createProviderAgentStream(

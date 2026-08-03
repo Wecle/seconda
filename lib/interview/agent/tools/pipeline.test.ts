@@ -119,6 +119,62 @@ test("denies unauthorized tools before execution", async () => {
   assert.equal(repository.inspectRun(run.id)?.eventSequence, 1);
 });
 
+test("runs business validation and before hooks before independent authorization", async () => {
+  const { order, repository, definition } = fixture({ authorize: false });
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  let afterCalls = 0;
+  const result = await executeInterviewTool({
+    definition,
+    rawInput: { value: "x" },
+    context: { interviewId: "interview", runId: run.id, repository },
+    hooks: [
+      {
+        phase: "before",
+        async run(input) {
+          order.push("beforeHook");
+          return { action: "continue", input: input.input };
+        },
+      },
+      {
+        phase: "after",
+        async run(input) {
+          afterCalls += 1;
+          return { action: "continue", output: input.output };
+        },
+      },
+    ],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? "" : result.error.code, "TOOL_PERMISSION_DENIED");
+  assert.deepEqual(order, ["normalize", "validateBusiness", "beforeHook", "normalize", "authorize"]);
+  assert.equal(afterCalls, 0);
+});
+
+test("turns an after-hook exception into a failed completion without a second execution", async () => {
+  const { order, repository, definition } = fixture();
+  const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
+  const result = await executeInterviewTool({
+    definition,
+    rawInput: { value: "x" },
+    context: { interviewId: "interview", runId: run.id, repository },
+    hooks: [{
+      phase: "after",
+      async run() {
+        order.push("afterHook");
+        throw new Error("private audit failure");
+      },
+    }],
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.ok ? "" : result.error.code, "TOOL_EXECUTION_FAILED");
+  assert.deepEqual(order, ["normalize", "validateBusiness", "authorize", "execute", "afterHook"]);
+  const events = await repository.listEvents(run.id, 0);
+  assert.equal(events.filter((event) => event.type === "tool_call_started").length, 1);
+  assert.equal(events.filter((event) => event.type === "tool_call_completed").length, 1);
+});
+
 test("sanitizes executor failures before returning and persisting", async () => {
   const { repository, definition } = fixture({ throws: true });
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });

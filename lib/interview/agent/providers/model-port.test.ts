@@ -10,6 +10,12 @@ import {
 } from "@/lib/interview/agent/providers/model-port";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/interview/agent/prompts/system";
 import { RESPONSE_TEXT_SCHEMA_DESCRIPTION } from "@/lib/interview/agent/domain/turn-proposal";
+import {
+  AIResourceBudgetError,
+  type AIAttemptHandle,
+  type AITaskHandle,
+  type AITelemetryLifecycle,
+} from "@/lib/ai/telemetry/lifecycle";
 
 const submitTool = [{ name: "submit_interview_turn", description: "submit" }];
 const openingProposal = {
@@ -26,6 +32,42 @@ const openingProposal = {
   },
   responseText: "请介绍一下自己。",
 };
+
+const telemetryTask: AITaskHandle = {
+  id: "telemetry-task",
+  task: "interview.agent",
+  context: { operationKey: "interview.agent:run" },
+  budgetMode: "observe",
+  tokenLimit: 500_000,
+  noOp: false,
+};
+
+function telemetryFixture(overrides: Partial<AITelemetryLifecycle> = {}) {
+  const calls: Array<{ name: string; input?: unknown }> = [];
+  const lifecycle: AITelemetryLifecycle = {
+    async startTask() { return telemetryTask; },
+    async beforeAttempt(input) {
+      calls.push({ name: "before", input });
+      return {
+        id: `telemetry-attempt-${input.attemptNumber}`,
+        taskRunId: telemetryTask.id,
+        attemptNumber: input.attemptNumber,
+        provider: "deepseek",
+        model: input.model,
+        credentialTier: input.credentialTier,
+        startedAtMs: 0,
+        price: null,
+        noOp: false,
+      } satisfies AIAttemptHandle;
+    },
+    async completeAttempt(input) { calls.push({ name: "complete", input }); },
+    async failAttempt(input) { calls.push({ name: "fail", input }); },
+    async completeTask() {},
+    async failTask() {},
+    ...overrides,
+  };
+  return { lifecycle, calls };
+}
 
 test("system prompt requests public progress without hidden reasoning", () => {
   for (const language of ["zh", "en", "es", "de"]) {
@@ -879,6 +921,180 @@ test("turns an AI SDK abort part into a provider stream failure", async () => {
     return true;
   });
   assert.equal(providerSignal?.aborted, true);
+});
+
+test("records first provider output timing and resolves successful Usage once", async () => {
+  const telemetry = telemetryFixture();
+  const usage = Promise.resolve({
+    inputTokens: 12,
+    outputTokens: 3,
+    inputTokenDetails: { cacheReadTokens: 4 },
+  });
+  let usageReads = 0;
+  const usageOnce = { then: usage.then.bind(usage) };
+  Object.defineProperty(usageOnce, "then", {
+    get() {
+      usageReads += 1;
+      return usage.then.bind(usage);
+    },
+  });
+  const times = [100, 125, 170];
+  const observedUsage: unknown[] = [];
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "deepseek/fast", credentialTier: "fast" }],
+    classifyError: () => "fatal",
+    now: () => times.shift() ?? 170,
+    telemetry: { lifecycle: telemetry.lifecycle, task: telemetryTask },
+    onAttemptStarted: async () => {},
+    onUsage: async ({ usage: value }) => { observedUsage.push(value); },
+    streamCandidate: async () => ({
+      usage: usageOnce,
+      fullStream: parts(
+        { type: "text-delta", text: "" },
+        {
+          type: "tool-call",
+          toolCallId: "call",
+          toolName: "submit_interview_turn",
+          input: openingProposal,
+        },
+      ),
+    }),
+  });
+
+  await port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: submitTool,
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => false,
+  });
+
+  assert.equal(usageReads, 1);
+  assert.deepEqual(observedUsage, [{
+    inputTokens: 12,
+    outputTokens: 3,
+    cachedInputTokens: 4,
+    cacheWriteTokens: null,
+  }]);
+  const completed = telemetry.calls.find((call) => call.name === "complete")?.input as {
+    usage: unknown;
+    firstTokenMs: number;
+    durationMs: number;
+  };
+  assert.deepEqual(completed.usage, observedUsage[0]);
+  assert.equal(completed.firstTokenMs, 25);
+  assert.equal(completed.durationMs, 70);
+});
+
+test("records failed Usage and keeps retry attempt numbers monotonic", async () => {
+  const telemetry = telemetryFixture();
+  const attempts: number[] = [];
+  let providerCalls = 0;
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "deepseek/fast", credentialTier: "fast" }],
+    classifyError: () => "transient",
+    sleep: async () => {},
+    telemetry: { lifecycle: telemetry.lifecycle, task: telemetryTask },
+    onAttemptStarted: async ({ attemptNumber }) => { attempts.push(attemptNumber); },
+    streamCandidate: async () => {
+      providerCalls += 1;
+      if (providerCalls === 1) {
+        return {
+          usage: Promise.resolve({ inputTokens: 7, outputTokens: 1 }),
+          fullStream: (async function* () { throw new Error("temporary"); })(),
+        };
+      }
+      return {
+        usage: Promise.resolve({ inputTokens: 8, outputTokens: 2 }),
+        fullStream: parts({
+          type: "tool-call",
+          toolCallId: "call",
+          toolName: "submit_interview_turn",
+          input: openingProposal,
+        }),
+      };
+    },
+  });
+
+  await port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: submitTool,
+    signal: new AbortController().signal,
+    attemptNumberOffset: 4,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => false,
+  });
+
+  assert.deepEqual(attempts, [5, 6]);
+  assert.deepEqual(
+    telemetry.calls.filter((call) => call.name === "before")
+      .map((call) => (call.input as { attemptNumber: number }).attemptNumber),
+    [5, 6],
+  );
+  assert.deepEqual(
+    (telemetry.calls.find((call) => call.name === "fail")?.input as { usage: unknown }).usage,
+    { inputTokens: 7, outputTokens: 1, cachedInputTokens: null, cacheWriteTokens: null },
+  );
+});
+
+test("rejects an exhausted budget before invoking the provider", async () => {
+  const telemetry = telemetryFixture({
+    async beforeAttempt() {
+      throw new AIResourceBudgetError("AI_RESOURCE_BUDGET_EXCEEDED");
+    },
+  });
+  let providerCalls = 0;
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "deepseek/fast", credentialTier: "fast" }],
+    classifyError: () => "transient",
+    telemetry: { lifecycle: telemetry.lifecycle, task: telemetryTask },
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => {
+      providerCalls += 1;
+      return { fullStream: parts() };
+    },
+  });
+
+  await assert.rejects(port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: submitTool,
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => false,
+  }), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, "AI_RESOURCE_BUDGET_EXCEEDED");
+    return true;
+  });
+  assert.equal(providerCalls, 0);
+});
+
+test("marks a provisionally accepted stream abort as a failed telemetry attempt", async () => {
+  const telemetry = telemetryFixture();
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "deepseek/fast", credentialTier: "fast" }],
+    classifyError: () => "transient",
+    telemetry: { lifecycle: telemetry.lifecycle, task: telemetryTask },
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => ({
+      fullStream: (async function* () {
+        yield { type: "text-delta", text: "durable" };
+        throw new Error("stream closed");
+      })(),
+    }),
+  });
+
+  await assert.rejects(port.nextStepStream!({
+    runId: "run",
+    messages: [],
+    tools: submitTool,
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => true,
+  }), /provisional content was accepted/);
+  assert.equal(telemetry.calls.filter((call) => call.name === "fail").length, 1);
 });
 
 async function assertProtocolRejected(

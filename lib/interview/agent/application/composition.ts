@@ -28,34 +28,21 @@ import { compactInterviewContextIfNeeded } from "@/lib/interview/agent/context/p
 import { resolveRunSkills } from "@/lib/interview/agent/skills/catalog";
 import { agentRunFence } from "@/lib/interview/agent/persistence/fencing";
 import type { InterviewToolHandlers } from "@/lib/interview/agent/tools/registry";
+import {
+  createProductionAITelemetryLifecycle,
+  type AITelemetryLifecycle,
+} from "@/lib/ai/telemetry/lifecycle";
 
-export function createProductionAgentDependencies(options?: { defer?: (task: () => Promise<void>) => void }) {
+export function createProductionAgentDependencies(options?: {
+  defer?: (task: () => Promise<void>) => void;
+  telemetry?: AITelemetryLifecycle;
+}) {
   const repository = createDrizzleInterviewAgentRepository(db);
   const completion = createProductionCompletionDependencies(options?.defer ?? ((task) => { void task(); }));
+  const telemetry = options?.telemetry ?? createProductionAITelemetryLifecycle();
   const executor: AgentRunExecutor = {
     async run(input) {
       if (!input.lease) throw new Error("Agent run lease is required");
-      const model = createStructuredInterviewAgentModelPort({
-        async onUsage({ runId, usage }) {
-          const updated = await db.update(interviewAgentRuns).set({
-            inputTokens: sql`${interviewAgentRuns.inputTokens} + ${usage.inputTokens}`,
-            outputTokens: sql`${interviewAgentRuns.outputTokens} + ${usage.outputTokens}`,
-            ...(usage.cachedInputTokens === null ? {} : {
-              cachedInputTokens: sql`${interviewAgentRuns.cachedInputTokens} + ${usage.cachedInputTokens}`,
-            }),
-            ...(usage.cacheWriteTokens === null ? {} : {
-              cacheWriteTokens: sql`${interviewAgentRuns.cacheWriteTokens} + ${usage.cacheWriteTokens}`,
-            }),
-            ...(
-              usage.cachedInputTokens === null && usage.cacheWriteTokens === null
-                ? {}
-                : { cacheMetricsAvailable: 1 }
-            ),
-            updatedAt: new Date(),
-          }).where(agentRunFence(runId, input.lease)).returning({ id: interviewAgentRuns.id });
-          if (updated.length === 0) throw new Error("Agent run lease is stale");
-        },
-      });
       const contextWindow = readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000);
       const outputReserve = readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000);
       await compactInterviewContextIfNeeded(db, {
@@ -78,34 +65,73 @@ export function createProductionAgentDependencies(options?: { defer?: (task: () 
         updatedAt: new Date(),
       }).where(agentRunFence(input.runId, input.lease)).returning({ id: interviewAgentRuns.id });
       if (contextUpdated.length === 0) throw new Error("Agent run lease is stale");
-      let progressVersion = 0;
-      const handlers = createToolHandlers(repository, completion, () => {
-        progressVersion += 1;
-      });
-      const tools = createInterviewToolRegistry({
-        handlers,
-      });
-      const active = resolveRunSkills(input.mode);
-      const deferredTools = new Map(
-        [...tools].filter(([name]) => active.toolNames.has(name)),
-      );
-      return runInterviewAgent({
-        interviewId: input.interviewId,
-        runId: input.runId,
-        repository,
-        model,
-        tools: deferredTools,
-        activeSkills: active.skills,
-        initialMessages: [{ role: "user", content: input.instruction }],
-        signal: input.signal,
-        lease: input.lease,
-        progressHash: () => String(progressVersion),
-        promptContext: {
-          stablePrefix: promptContext.stablePrefix,
-          incrementalTail: promptContext.incrementalTail,
+      const telemetryTask = await telemetry.startTask({
+        task: "interview.agent",
+        context: {
+          operationKey: `interview.agent:${input.runId}`,
+          interviewId: input.interviewId,
+          agentRunId: input.runId,
+          budgetScope: `agent_run:${input.runId}`,
+          promptTemplateVersion: promptContext.templateVersion,
         },
-        turnContext: promptContext.turnContext,
       });
+      try {
+        const model = createStructuredInterviewAgentModelPort({
+          telemetry: { lifecycle: telemetry, task: telemetryTask },
+          async onUsage({ runId, usage }) {
+            const updated = await db.update(interviewAgentRuns).set({
+              inputTokens: sql`${interviewAgentRuns.inputTokens} + ${usage.inputTokens}`,
+              outputTokens: sql`${interviewAgentRuns.outputTokens} + ${usage.outputTokens}`,
+              ...(usage.cachedInputTokens === null ? {} : {
+                cachedInputTokens: sql`${interviewAgentRuns.cachedInputTokens} + ${usage.cachedInputTokens}`,
+              }),
+              ...(usage.cacheWriteTokens === null ? {} : {
+                cacheWriteTokens: sql`${interviewAgentRuns.cacheWriteTokens} + ${usage.cacheWriteTokens}`,
+              }),
+              ...(
+                usage.cachedInputTokens === null && usage.cacheWriteTokens === null
+                  ? {}
+                  : { cacheMetricsAvailable: 1 }
+              ),
+              updatedAt: new Date(),
+            }).where(agentRunFence(runId, input.lease)).returning({ id: interviewAgentRuns.id });
+            if (updated.length === 0) throw new Error("Agent run lease is stale");
+          },
+        });
+        let progressVersion = 0;
+        const handlers = createToolHandlers(repository, completion, () => {
+          progressVersion += 1;
+        });
+        const tools = createInterviewToolRegistry({
+          handlers,
+        });
+        const active = resolveRunSkills(input.mode);
+        const deferredTools = new Map(
+          [...tools].filter(([name]) => active.toolNames.has(name)),
+        );
+        const result = await runInterviewAgent({
+          interviewId: input.interviewId,
+          runId: input.runId,
+          repository,
+          model,
+          tools: deferredTools,
+          activeSkills: active.skills,
+          initialMessages: [{ role: "user", content: input.instruction }],
+          signal: input.signal,
+          lease: input.lease,
+          progressHash: () => String(progressVersion),
+          promptContext: {
+            stablePrefix: promptContext.stablePrefix,
+            incrementalTail: promptContext.incrementalTail,
+          },
+          turnContext: promptContext.turnContext,
+        });
+        await telemetry.completeTask(telemetryTask).catch(() => {});
+        return result;
+      } catch (error) {
+        await telemetry.failTask(telemetryTask, error).catch(() => {});
+        throw error;
+      }
     },
   };
   return { repository, executor };

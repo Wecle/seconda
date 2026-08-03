@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 import type {
   AgentCheckpoint,
@@ -42,8 +43,8 @@ import {
 } from "@/lib/interview/agent/runtime/safe-tail-buffer";
 import {
   executeInterviewTool,
-  type BeforeToolPipelineHook,
   type InterviewToolDefinition,
+  type ToolPipelineHook,
 } from "@/lib/interview/agent/tools/pipeline";
 import { publicInterviewToolLabels } from "@/lib/interview/agent/tools/registry";
 import {
@@ -68,6 +69,7 @@ import {
   MAX_TERMINAL_ATTEMPTS,
   isTerminalTool,
 } from "@/lib/interview/agent/runtime/policy";
+import { agentExitMessage } from "@/lib/interview/agent/protocols/exit-messages";
 
 export type TurnRuntimeContext = {
   mode: "opening" | "answer";
@@ -108,7 +110,7 @@ type RunOptions = {
   repository: InterviewAgentRepository;
   model: InterviewAgentModelPort;
   tools: ReadonlyMap<string, InterviewToolDefinition<unknown, unknown>>;
-  hooks?: readonly BeforeToolPipelineHook[];
+  hooks?: readonly ToolPipelineHook[];
   initialMessages: readonly AgentRuntimeMessage[];
   signal: AbortSignal;
   lease: RunLeaseToken;
@@ -917,7 +919,15 @@ export async function runInterviewAgent(
         language: context.language,
       },
     };
+    const businessError = await terminalDefinition.validateBusiness(
+      authorizedTerminalInput,
+      terminalContext,
+    );
+    if (businessError) {
+      throw new AttemptFailure(businessError.code, businessError.message);
+    }
     for (const hook of options.hooks ?? []) {
+      if (hook.phase !== "before") continue;
       const result = await hook.run({
         toolName: terminalDefinition.name,
         input: structuredClone(authorizedTerminalInput),
@@ -933,17 +943,31 @@ export async function runInterviewAgent(
         );
       }
     }
-    const businessError = await terminalDefinition.validateBusiness(
-      authorizedTerminalInput,
-      terminalContext,
-    );
-    if (businessError) {
-      throw new AttemptFailure(businessError.code, businessError.message);
-    }
     if (!(await terminalDefinition.authorize(authorizedTerminalInput, terminalContext))) {
       throw new AttemptFailure("TOOL_PERMISSION_DENIED", "终结工具未获授权。");
     }
     const outcome = await terminalDefinition.execute(authorizedTerminalInput, terminalContext);
+    for (const hook of options.hooks ?? []) {
+      if (hook.phase !== "after") continue;
+      try {
+        const result = await hook.run({
+          toolName: terminalDefinition.name,
+          input: structuredClone(authorizedTerminalInput),
+          output: structuredClone(outcome),
+          context: terminalContext,
+        });
+        if (result.action === "stop") {
+          console.error("Agent terminal after hook stopped", {
+            toolName: terminalDefinition.name,
+          });
+        }
+      } catch (error) {
+        console.error("Agent terminal after hook failed", {
+          toolName: terminalDefinition.name,
+          category: sanitizeAIError(error).category,
+        });
+      }
+    }
     const committedEventSequence = readCommittedEventSequence(outcome);
     lastEventSequence = Math.max(lastEventSequence, committedEventSequence);
     await attempt.reasoning.dispose();
@@ -1542,7 +1566,7 @@ async function failRun(
   const exitReason = error instanceof FatalRunFailure ? error.exitReason : reason;
   await options.repository.terminateRun(
     options.runId,
-    { exitReason, error },
+    { exitReason, error, userMessage: agentExitMessage(exitReason, error) ?? undefined },
     options.lease,
   );
   return { exitReason, turnCount };

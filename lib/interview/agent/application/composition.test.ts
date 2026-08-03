@@ -12,3 +12,19 @@ test("production composition supplies authoritative turn context", async () => {
   assert.match(source, /turnContext:\s*promptContext\.turnContext/);
   assert.doesNotMatch(source, /publicThinkingSummary|thinkingAlreadyStarted/);
 });
+
+test("production composition creates one correlated telemetry task per Agent Run", async () => {
+  const source = await readFile(new URL("./composition.ts", import.meta.url), "utf8");
+  assert.match(source, /operationKey:\s*`interview\.agent:\$\{input\.runId\}`/);
+  assert.match(source, /interviewId:\s*input\.interviewId/);
+  assert.match(source, /agentRunId:\s*input\.runId/);
+  assert.match(source, /budgetScope:\s*`agent_run:\$\{input\.runId\}`/);
+  assert.match(source, /promptTemplateVersion:\s*promptContext\.templateVersion/);
+  assert.match(source, /telemetry:\s*\{ lifecycle: telemetry, task: telemetryTask \}/);
+});
+
+test("production composition finishes telemetry without replacing the runtime result", async () => {
+  const source = await readFile(new URL("./composition.ts", import.meta.url), "utf8");
+  assert.match(source, /await telemetry\.completeTask\(telemetryTask\)\.catch\(\(\) => \{\}\);\s*return result/);
+  assert.match(source, /await telemetry\.failTask\(telemetryTask, error\)\.catch\(\(\) => \{\}\);\s*throw error/);
+});
