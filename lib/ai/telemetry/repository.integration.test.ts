@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import * as schema from "@/lib/db/schema";
+import {
+  AIResourceBudgetError,
+  createAITelemetryLifecycle,
+} from "./lifecycle";
+import { createDrizzleAITelemetryRepository } from "./repository";
 
 if (!process.env.DATABASE_URL) {
   try {
@@ -13,6 +20,7 @@ if (!process.env.DATABASE_URL) {
 const databaseUrl = process.env.DATABASE_URL;
 
 const expectedRelations = [
+  "ai_budget_warnings",
   "ai_cache_efficiency",
   "ai_completion_health",
   "ai_failure_summary",
@@ -45,6 +53,7 @@ test("migration creates the AI telemetry tables, constraints, indexes, and views
       WHERE relname IN (
         'ai_task_runs',
         'ai_task_attempts',
+        'ai_budget_warnings',
         'ai_task_daily_summary',
         'ai_interview_observability',
         'ai_failure_summary',
@@ -460,5 +469,418 @@ test("migration creates the AI telemetry tables, constraints, indexes, and views
     }
   } finally {
     await sql.end();
+  }
+});
+
+test("AI budget warning view exposes only actionable budget metadata", {
+  skip: databaseUrl ? false : "DATABASE_URL is not configured",
+}, async () => {
+  execFileSync("pnpm", ["db:migrate"], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "pipe",
+  });
+  const sql = postgres(databaseUrl!, { prepare: false });
+  const prefix = `telemetry-budget-view-${randomUUID()}`;
+  try {
+    const rows = await sql<{ id: string; operationKey: string }[]>`
+      INSERT INTO ai_task_runs (
+        operation_key, task, status, budget_mode, budget_scope, token_limit,
+        would_exceed_budget
+      ) VALUES
+        (${`${prefix}-normal`}, 'answer.score', 'completed', 'observe', ${`completion:${prefix}`}, 20, 0),
+        (${`${prefix}-warning`}, 'answer.score', 'running', 'observe', ${`completion:${prefix}`}, 10, 1),
+        (${`${prefix}-rejected`}, 'report.generate', 'budget_exceeded', 'enforce', ${`completion:${prefix}`}, 20, 1)
+      RETURNING id, operation_key AS "operationKey"
+    `;
+    const ids = new Map(rows.map((row) => [row.operationKey, row.id]));
+    await sql`
+      INSERT INTO ai_task_attempts (
+        task_run_id, attempt_number, provider, model, credential_tier, status,
+        usage_available, input_tokens, output_tokens, completed_at
+      ) VALUES (
+        ${ids.get(`${prefix}-normal`)!}, 1, 'openai', 'openai/test', 'quality',
+        'completed', 1, 7, 5, NOW()
+      )
+    `;
+    const warnings = await sql<{
+      taskRunId: string;
+      task: string;
+      budgetScope: string;
+      budgetMode: string;
+      tokenLimit: string;
+      usedTokens: string;
+      rejected: boolean;
+      startedAt: Date;
+    }[]>`
+      SELECT
+        task_run_id AS "taskRunId",
+        task,
+        budget_scope AS "budgetScope",
+        budget_mode AS "budgetMode",
+        token_limit::text AS "tokenLimit",
+        used_tokens::text AS "usedTokens",
+        rejected,
+        started_at AS "startedAt"
+      FROM ai_budget_warnings
+      WHERE task_run_id = ANY(${[...ids.values()]})
+      ORDER BY task_run_id
+    `;
+    assert.equal(warnings.length, 2);
+    assert.deepEqual(
+      new Set(warnings.map((row) => row.taskRunId)),
+      new Set([
+        ids.get(`${prefix}-warning`),
+        ids.get(`${prefix}-rejected`),
+      ]),
+    );
+    assert.deepEqual(
+      warnings.map(({ task, budgetScope, budgetMode, tokenLimit, usedTokens, rejected }) => ({
+        task,
+        budgetScope,
+        budgetMode,
+        tokenLimit,
+        usedTokens,
+        rejected,
+      })).sort((left, right) => left.task.localeCompare(right.task)),
+      [
+        {
+          task: "answer.score",
+          budgetScope: `completion:${prefix}`,
+          budgetMode: "observe",
+          tokenLimit: "10",
+          usedTokens: "12",
+          rejected: false,
+        },
+        {
+          task: "report.generate",
+          budgetScope: `completion:${prefix}`,
+          budgetMode: "enforce",
+          tokenLimit: "20",
+          usedTokens: "12",
+          rejected: true,
+        },
+      ],
+    );
+    assert.ok(warnings.every((row) => row.startedAt instanceof Date));
+  } finally {
+    await sql`DELETE FROM ai_task_runs WHERE operation_key LIKE ${`${prefix}%`}`;
+    await sql.end();
+  }
+});
+
+test("durable lifecycle is idempotent and serializes enforcing budget reads", {
+  skip: databaseUrl ? false : "DATABASE_URL is not configured",
+}, async () => {
+  execFileSync("pnpm", ["db:migrate"], {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: "pipe",
+  });
+  const client = postgres(databaseUrl!, { prepare: false });
+  const database = drizzle(client, { schema });
+  const repository = createDrizzleAITelemetryRepository(database);
+  const prefix = `telemetry-lifecycle-${randomUUID()}`;
+  const scope = `agent_run:${prefix}` as const;
+  const pricing = {
+    version: 1 as const,
+    models: {
+      "openai/primary": {
+        inputMicrosPerMillion: 1_000_000,
+        outputMicrosPerMillion: 1_000_000,
+      },
+      "openai/fallback": {
+        inputMicrosPerMillion: 2_000_000,
+        outputMicrosPerMillion: 2_000_000,
+      },
+      "openai/complete-price": {
+        inputMicrosPerMillion: 1,
+        outputMicrosPerMillion: 1,
+        cacheReadMicrosPerMillion: 1,
+        cacheWriteMicrosPerMillion: 1,
+      },
+    },
+  };
+  const observe = createAITelemetryLifecycle({
+    repository,
+    policy: { mode: "observe", agentRunTokenLimit: 2, completionTokenLimit: 20 },
+    pricing,
+  });
+
+  try {
+    const task = await observe.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-observe`, budgetScope: scope },
+    });
+    const duplicate = await observe.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-observe`, budgetScope: scope },
+    });
+    assert.equal(duplicate.id, task.id);
+
+    const first = await observe.beforeAttempt({
+      task,
+      attemptNumber: 1,
+      model: "openai/primary",
+      credentialTier: "fast",
+    });
+    const firstCompletion = {
+      attempt: first,
+      usage: {
+        inputTokens: 2,
+        outputTokens: 1,
+        cachedInputTokens: null,
+        cacheWriteTokens: null,
+      },
+      firstTokenMs: 3,
+      durationMs: 5,
+    };
+    await observe.completeAttempt(firstCompletion);
+    await observe.completeAttempt(firstCompletion);
+
+    const resumed = await observe.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-observe`, budgetScope: scope },
+    });
+    const fallback = await observe.beforeAttempt({
+      task: resumed,
+      attemptNumber: 1,
+      model: "openai/fallback",
+      credentialTier: "quality",
+    });
+    assert.equal(fallback.attemptNumber, 2);
+    await observe.failAttempt({
+      attempt: fallback,
+      error: new TypeError("network detail is sanitized"),
+      usage: null,
+      firstTokenMs: null,
+      durationMs: 8,
+    });
+    const warningAttempt = await observe.beforeAttempt({
+      task: resumed,
+      attemptNumber: 2,
+      model: "openai/fallback",
+      credentialTier: "quality",
+    });
+    assert.equal(warningAttempt.attemptNumber, 3);
+
+    const [storedTask] = await client<{
+      inputTokens: string;
+      outputTokens: string;
+      unavailable: number;
+      unpriced: number;
+      cost: string | null;
+      warning: number;
+    }[]>`
+      SELECT
+        input_tokens::text AS "inputTokens",
+        output_tokens::text AS "outputTokens",
+        usage_unavailable_attempts AS unavailable,
+        unpriced_attempts AS unpriced,
+        estimated_cost_micros::text AS cost,
+        would_exceed_budget AS warning
+      FROM ai_task_runs WHERE id = ${task.id!}
+    `;
+    assert.deepEqual(storedTask, {
+      inputTokens: "2",
+      outputTokens: "1",
+      unavailable: 1,
+      unpriced: 0,
+      cost: "3",
+      warning: 1,
+    });
+    const attempts = await client<{
+      number: number;
+      model: string;
+      status: string;
+      inputPrice: string | null;
+      usageAvailable: number;
+      errorCategory: string | null;
+    }[]>`
+      SELECT
+        attempt_number AS number,
+        model,
+        status,
+        input_price_micros_per_million::text AS "inputPrice",
+        usage_available AS "usageAvailable",
+        error_category AS "errorCategory"
+      FROM ai_task_attempts WHERE task_run_id = ${task.id!}
+      ORDER BY attempt_number
+    `;
+    assert.deepEqual(attempts, [
+      {
+        number: 1,
+        model: "openai/primary",
+        status: "completed",
+        inputPrice: "1000000",
+        usageAvailable: 1,
+        errorCategory: null,
+      },
+      {
+        number: 2,
+        model: "openai/fallback",
+        status: "failed",
+        inputPrice: "2000000",
+        usageAvailable: 0,
+        errorCategory: "network",
+      },
+      {
+        number: 3,
+        model: "openai/fallback",
+        status: "running",
+        inputPrice: "2000000",
+        usageAvailable: 0,
+        errorCategory: null,
+      },
+    ]);
+
+    const enforce = createAITelemetryLifecycle({
+      repository,
+      policy: { mode: "enforce", agentRunTokenLimit: 2, completionTokenLimit: 20 },
+      pricing,
+    });
+    const enforcingTask = await enforce.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-enforce`, budgetScope: scope },
+    });
+    await assert.rejects(enforce.beforeAttempt({
+      task: enforcingTask,
+      attemptNumber: 1,
+      model: "openai/primary",
+      credentialTier: "fast",
+    }), (error) => error instanceof AIResourceBudgetError
+      && error.code === "AI_RESOURCE_BUDGET_EXCEEDED");
+    const [rejected] = await client<{ status: string; completed: boolean }[]>`
+      SELECT status, completed_at IS NOT NULL AS completed
+      FROM ai_task_attempts WHERE task_run_id = ${enforcingTask.id!}
+    `;
+    assert.deepEqual(rejected, { status: "budget_rejected", completed: true });
+
+    const invalidCostTask = await observe.startTask({
+      task: "resume.parse",
+      context: { operationKey: `${prefix}-invalid-cost` },
+    });
+    const invalidCostAttempt = await observe.beforeAttempt({
+      task: invalidCostTask,
+      attemptNumber: 1,
+      model: "openai/complete-price",
+      credentialTier: "fast",
+    });
+    await observe.completeAttempt({
+      attempt: invalidCostAttempt,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 0,
+        cachedInputTokens: 2,
+        cacheWriteTokens: null,
+      },
+      firstTokenMs: null,
+      durationMs: 1,
+    });
+    const unpricedTask = await observe.startTask({
+      task: "resume.parse",
+      context: { operationKey: `${prefix}-unpriced` },
+    });
+    const unpricedAttempt = await observe.beforeAttempt({
+      task: unpricedTask,
+      attemptNumber: 1,
+      model: "openai/unpriced",
+      credentialTier: "fast",
+    });
+    await observe.completeAttempt({
+      attempt: unpricedAttempt,
+      usage: {
+        inputTokens: 1,
+        outputTokens: 0,
+        cachedInputTokens: null,
+        cacheWriteTokens: null,
+      },
+      firstTokenMs: null,
+      durationMs: 1,
+    });
+    const priceClassification = await client<{
+      operationKey: string;
+      unpriced: number;
+      cost: string | null;
+    }[]>`
+      SELECT operation_key AS "operationKey", unpriced_attempts AS unpriced,
+        estimated_cost_micros::text AS cost
+      FROM ai_task_runs
+      WHERE id IN (${invalidCostTask.id!}, ${unpricedTask.id!})
+      ORDER BY operation_key
+    `;
+    assert.deepEqual(priceClassification, [
+      { operationKey: `${prefix}-invalid-cost`, unpriced: 0, cost: null },
+      { operationKey: `${prefix}-unpriced`, unpriced: 1, cost: null },
+    ]);
+
+    const offScope = `agent_run:${prefix}-off-lock` as const;
+    const off = createAITelemetryLifecycle({
+      repository,
+      policy: { mode: "off", agentRunTokenLimit: 2, completionTokenLimit: 20 },
+      pricing,
+    });
+    const offTask = await off.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-off-lock`, budgetScope: offScope },
+    });
+    await client.begin(async (transaction) => {
+      const transactionSql = transaction as unknown as typeof client;
+      await transactionSql`SELECT pg_advisory_xact_lock(hashtext(${offScope}))`;
+      const result = await Promise.race([
+        off.beforeAttempt({
+          task: offTask,
+          attemptNumber: 1,
+          model: "openai/primary",
+          credentialTier: "fast",
+        }).then(() => "started" as const),
+        new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+      ]);
+      assert.equal(result, "started");
+    });
+
+    const concurrentScope = `agent_run:${prefix}-concurrent` as const;
+    const concurrentTask = await enforce.startTask({
+      task: "interview.agent",
+      context: { operationKey: `${prefix}-concurrent`, budgetScope: concurrentScope },
+    });
+    let settled = false;
+    let pending: Promise<{ ok: boolean; error?: unknown }> | undefined;
+    await client.begin(async (transaction) => {
+      const transactionSql = transaction as unknown as typeof client;
+      await transactionSql`SELECT pg_advisory_xact_lock(hashtext(${concurrentScope}))`;
+      pending = enforce.beforeAttempt({
+        task: concurrentTask,
+        attemptNumber: 1,
+        model: "openai/primary",
+        credentialTier: "fast",
+      }).then(
+        () => ({ ok: true }),
+        (error: unknown) => ({ ok: false, error }),
+      ).finally(() => {
+        settled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      assert.equal(settled, false);
+      const [seed] = await transactionSql<{ id: string }[]>`
+        INSERT INTO ai_task_runs (
+          operation_key, task, status, budget_mode, budget_scope, token_limit
+        ) VALUES (${`${prefix}-concurrent-seed`}, 'interview.agent', 'completed', 'observe', ${concurrentScope}, 2)
+        RETURNING id
+      `;
+      await transactionSql`
+        INSERT INTO ai_task_attempts (
+          task_run_id, attempt_number, provider, model, credential_tier, status,
+          usage_available, input_tokens, output_tokens, completed_at
+        ) VALUES (${seed.id}, 1, 'openai', 'openai/primary', 'fast', 'completed', 1, 2, 0, NOW())
+      `;
+    });
+    const concurrentResult = await pending!;
+    assert.equal(concurrentResult.ok, false);
+    assert.ok(concurrentResult.error instanceof AIResourceBudgetError);
+    assert.equal(concurrentResult.error.code, "AI_RESOURCE_BUDGET_EXCEEDED");
+  } finally {
+    await client`DELETE FROM ai_task_runs WHERE operation_key LIKE ${`${prefix}%`}`;
+    await client.end({ timeout: 5 });
   }
 });
