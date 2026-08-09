@@ -6,6 +6,7 @@ export interface AgentRunExecutor {
     interviewId: string;
     runId: string;
     mode: "opening" | "answer";
+    answerMessageId?: string;
     instruction: string;
     signal: AbortSignal;
     lease: RunLeaseToken;

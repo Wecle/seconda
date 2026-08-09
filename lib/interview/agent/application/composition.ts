@@ -57,6 +57,7 @@ export function createProductionAgentDependencies(options?: {
         runId: input.runId,
         currentInstruction: input.instruction,
         mode: input.mode,
+        answerMessageId: input.answerMessageId,
       });
       const contextUpdated = await db.update(interviewAgentRuns).set({
         promptTemplateVersion: promptContext.templateVersion,

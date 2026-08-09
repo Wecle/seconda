@@ -610,6 +610,27 @@ test("rejects an answer from another run without turn writes", async () => {
   assert.equal(snapshot.submitTurnCommits.length, 0);
 });
 
+test("commits a replacement run against the original persisted answer", async () => {
+  const fixture = await createAnsweredTurnFixture();
+  const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
+  const answer = snapshot.messages.find(
+    (message) => message.id === fixture.input.answerMessageId,
+  )!;
+  answer.runId = "failed-source-run";
+  await fixture.repository.saveRunTrigger(fixture.run.id, {
+    mode: "answer",
+    instruction: "retry answer",
+    answerMessageId: answer.id,
+  });
+
+  const outcome = await fixture.repository.commitTurnOutcome(fixture.input);
+  const committed = fixture.repository.inspectInterview(fixture.input.interviewId);
+
+  assert.equal(outcome.committed, true);
+  assert.equal(committed.assessments[0]?.answerMessageId, answer.id);
+  assert.equal(committed.messages.filter((message) => message.role === "user").length, 1);
+});
+
 test("rejects a memory run committed through another interview id without writes", async () => {
   const fixture = await createAnsweredTurnFixture();
 

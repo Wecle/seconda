@@ -23,8 +23,10 @@ const base = {
   recentMessages: [{ id: "message-4", sequence: 4, role: "assistant", kind: "question", content: "为什么这样设计？" }],
 };
 
-test("binds the authoritative latest answer to the active run", async () => {
+test("binds the authoritative latest answer to the active or replacement run", async () => {
   const source = await readFile(new URL("./assembler.ts", import.meta.url), "utf8");
+  assert.match(source, /input\.answerMessageId/);
+  assert.match(source, /eq\(interviewMessages\.id, input\.answerMessageId\)/);
   assert.match(source, /eq\(interviewMessages\.runId, input\.runId\)/);
 });
 

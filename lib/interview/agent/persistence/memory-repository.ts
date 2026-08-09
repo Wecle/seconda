@@ -211,6 +211,25 @@ export function createInMemoryInterviewAgentRepository(
       const run = runs.get(runId);
       return run ? memoryRunRecord(run) : null;
     },
+    async getLatestRun(interviewId) {
+      const run = [...runs.values()]
+        .filter((candidate) => candidate.interviewId === interviewId)
+        .at(-1);
+      return run ? memoryRunRecord(run) : null;
+    },
+    async findRunByIdempotencyKey(interviewId, idempotencyKey) {
+      const runId = runKeys.get(`${interviewId}:${idempotencyKey}`);
+      const run = runId ? runs.get(runId) : null;
+      return run ? memoryRunRecord(run) : null;
+    },
+    async findCandidateAnswerForRun(runId) {
+      const message = [...interviewMessagesById.values()].flat().find((candidate) => (
+        candidate.runId === runId
+        && candidate.role === "user"
+        && candidate.kind === "answer"
+      ));
+      return message ? { id: message.id } : null;
+    },
     async listEvents(runId, afterSequence, options) {
       return requireMemoryRun(runs, runId).events.filter((event) => (
         event.sequence > afterSequence
@@ -450,9 +469,11 @@ export function createInMemoryInterviewAgentRepository(
       const answerQuestion = answerMessage?.questionId
         ? questions.find((question) => question.id === answerMessage.questionId)
         : null;
+      const answerLinkedByTrigger = run.trigger?.mode === "answer"
+        && run.trigger.answerMessageId === input.answerMessageId;
       if (input.answerMessageId && (
         !answerMessage
-        || answerMessage.runId !== input.runId
+        || (answerMessage.runId !== input.runId && !answerLinkedByTrigger)
         || answerMessage.role !== "user"
         || answerMessage.kind !== "answer"
         || !answerQuestion

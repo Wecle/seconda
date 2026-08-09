@@ -96,6 +96,93 @@ export async function submitCandidateMessage(options: {
   };
 }
 
+type RetryFailedRunErrorCode =
+  | "RETRY_RUN_NOT_FOUND"
+  | "RETRY_RUN_NOT_FAILED"
+  | "RETRY_RUN_NOT_REPLACEABLE"
+  | "RETRY_RUN_TRIGGER_MISSING"
+  | "RETRY_RUN_ANSWER_MISSING"
+  | "RETRY_RUN_STALE";
+
+function retryFailedRunError(code: RetryFailedRunErrorCode) {
+  return Object.assign(new Error(code), { code });
+}
+
+export async function retryFailedAgentRun(options: {
+  interviewId: string;
+  failedRunId: string;
+  repository: InterviewAgentRepository;
+  scheduler: AgentRunScheduler;
+  now: Date;
+}) {
+  const source = await options.repository.getRun(options.failedRunId);
+  if (!source || source.interviewId !== options.interviewId) {
+    throw retryFailedRunError("RETRY_RUN_NOT_FOUND");
+  }
+  if (source.status !== "failed") {
+    throw retryFailedRunError("RETRY_RUN_NOT_FAILED");
+  }
+  if (getRecoveryDisposition(source, options.now) !== "failed") {
+    throw retryFailedRunError("RETRY_RUN_NOT_REPLACEABLE");
+  }
+  if (!source.trigger) {
+    throw retryFailedRunError("RETRY_RUN_TRIGGER_MISSING");
+  }
+
+  let replacementTrigger = source.trigger;
+  if (source.trigger.mode === "answer") {
+    const answerMessageId = source.trigger.answerMessageId
+      ?? (await options.repository.findCandidateAnswerForRun(source.id))?.id;
+    if (!answerMessageId) {
+      throw retryFailedRunError("RETRY_RUN_ANSWER_MISSING");
+    }
+    replacementTrigger = { ...source.trigger, answerMessageId };
+  }
+
+  const idempotencyKey = `retry-of:${source.id}`;
+  const existing = await options.repository.findRunByIdempotencyKey(
+    options.interviewId,
+    idempotencyKey,
+  );
+  if (existing) {
+    if (getRecoveryDisposition(existing, options.now) === "schedule") {
+      await options.scheduler.schedule(existing.id);
+    }
+    const current = await options.repository.getRun(existing.id);
+    return {
+      runId: existing.id,
+      runStatus: current?.status ?? existing.status,
+    };
+  }
+
+  const latest = await options.repository.getLatestRun(options.interviewId);
+  if (latest?.id !== source.id) {
+    throw retryFailedRunError("RETRY_RUN_STALE");
+  }
+
+  const replacement = await options.repository.createRun({
+    interviewId: options.interviewId,
+    idempotencyKey,
+  });
+  let persisted = await options.repository.getRun(replacement.id);
+  if (!persisted) throw retryFailedRunError("RETRY_RUN_NOT_FOUND");
+  if (!persisted.trigger) {
+    await options.repository.saveRunTrigger(replacement.id, replacementTrigger);
+    persisted = await options.repository.getRun(replacement.id);
+  }
+  if (!persisted?.trigger) {
+    throw retryFailedRunError("RETRY_RUN_TRIGGER_MISSING");
+  }
+  if (getRecoveryDisposition(persisted, options.now) === "schedule") {
+    await options.scheduler.schedule(persisted.id);
+  }
+  const scheduled = await options.repository.getRun(persisted.id);
+  return {
+    runId: persisted.id,
+    runStatus: scheduled?.status ?? persisted.status,
+  };
+}
+
 function publicMessage(message: { id: string; sequence: number; content: string }) {
   return { id: message.id, sequence: message.sequence, content: message.content };
 }

@@ -4,6 +4,7 @@ import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/pe
 import {
   createAgentInterview,
   endAgentInterview,
+  retryFailedAgentRun,
   submitCandidateMessage,
 } from "@/lib/interview/agent/application/interview-service";
 import type {
@@ -37,6 +38,11 @@ function fixture(options?: { status?: string; configVersion?: number; scheduleFa
       rounds += 1;
       calls.push("acceptCandidateMessage");
       const message = { id: `message-${messages.size + 1}`, runId: run.id, sequence: messages.size + 1, content: input.content, created: true };
+      await repository.saveRunTrigger(run.id, {
+        ...input.trigger,
+        mode: "answer",
+        answerMessageId: message.id,
+      });
       messages.set(input.idempotencyKey, message);
       return message;
     },
@@ -53,6 +59,43 @@ function fixture(options?: { status?: string; configVersion?: number; scheduleFa
     },
   };
   return { repository, store, scheduler, calls, getRounds: () => rounds };
+}
+
+async function terminallyFailRun(
+  repository: ReturnType<typeof createInMemoryInterviewAgentRepository>,
+  input: { interviewId?: string; key: string; mode: "opening" | "answer" },
+) {
+  const interviewId = input.interviewId ?? "interview";
+  const run = await repository.createRun({
+    interviewId,
+    idempotencyKey: input.key,
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: input.mode,
+    instruction: input.mode === "opening" ? "opening instruction" : "answer instruction",
+  });
+  if (input.mode === "answer") {
+    await repository.appendMessage({
+      interviewId,
+      runId: run.id,
+      role: "user",
+      kind: "answer",
+      content: "candidate answer",
+    });
+  }
+  await repository.failRun(
+    run.id,
+    "terminal_action_failed",
+    new Error("invalid action"),
+  );
+  return run.id;
+}
+
+async function expectRetryCode(promise: Promise<unknown>, code: string) {
+  await assert.rejects(promise, (error: unknown) => (
+    typeof error === "object" && error !== null
+    && "code" in error && error.code === code
+  ));
 }
 
 test("creates an interview, initializes coverage and starts an opening run", async () => {
@@ -136,6 +179,183 @@ test("repairs an accepted answer without accepting it or incrementing the round 
   assert.equal(f.getRounds(), 1);
   assert.equal(f.calls.filter((call) => call === "acceptCandidateMessage").length, 1);
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 2);
+});
+
+test("retries the latest terminal failure with one replacement run", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "failed",
+    mode: "opening",
+  });
+
+  const first = await retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  });
+  const second = await retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  });
+
+  assert.equal(first.runId, second.runId);
+  assert.notEqual(first.runId, failedRunId);
+  assert.deepEqual((await f.repository.getRun(first.runId))?.trigger, {
+    mode: "opening",
+    instruction: "opening instruction",
+  });
+  assert.equal(f.calls.filter((call) => call === "run:opening").length, 1);
+});
+
+test("preserves the original answer message without creating another", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "answer-failed",
+    mode: "answer",
+  });
+  const beforeMessages = f.repository.inspectInterview("interview").messages;
+  const originalAnswer = beforeMessages.find((message) => message.runId === failedRunId);
+  assert.ok(originalAnswer);
+
+  const retried = await retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  });
+
+  assert.equal(
+    f.repository.inspectInterview("interview").messages.length,
+    beforeMessages.length,
+  );
+  const trigger = (await f.repository.getRun(retried.runId))?.trigger;
+  assert.equal(trigger?.mode, "answer");
+  assert.equal(
+    trigger?.mode === "answer" ? trigger.answerMessageId : null,
+    originalAnswer.id,
+  );
+});
+
+test("rejects a stale failed run when no replacement exists", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "old-failed",
+    mode: "opening",
+  });
+  await f.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "newer",
+  });
+
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_STALE");
+});
+
+test("retry rejects unsafe source runs with stable codes", async () => {
+  const f = fixture();
+
+  const running = await f.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "running",
+  });
+  await f.repository.saveRunTrigger(running.id, {
+    mode: "opening",
+    instruction: "open",
+  });
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: running.id,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_FAILED");
+
+  const completed = await f.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "completed",
+  });
+  await f.repository.saveRunTrigger(completed.id, {
+    mode: "opening",
+    instruction: "open",
+  });
+  await f.repository.completeRun(completed.id, "completed");
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: completed.id,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_FAILED");
+
+  const resumable = await f.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "resumable",
+  });
+  await f.repository.saveRunTrigger(resumable.id, {
+    mode: "opening",
+    instruction: "open",
+  });
+  await f.repository.failRun(
+    resumable.id,
+    "provider_failed",
+    new Error("provider"),
+  );
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: resumable.id,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_REPLACEABLE");
+
+  const triggerless = await f.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "triggerless",
+  });
+  await f.repository.failRun(
+    triggerless.id,
+    "terminal_action_failed",
+    new Error("invalid"),
+  );
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: triggerless.id,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_TRIGGER_MISSING");
+
+  const foreign = await terminallyFailRun(f.repository, {
+    interviewId: "another-interview",
+    key: "foreign",
+    mode: "opening",
+  });
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: foreign,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_FOUND");
+
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId: "missing",
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_FOUND");
 });
 
 test("rejects inactive interviews", async () => {

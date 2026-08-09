@@ -159,6 +159,7 @@ export async function loadAgentContext(
     runId: string;
     currentInstruction: string;
     mode: "opening" | "answer";
+    answerMessageId?: string;
   },
 ) {
   const [interviewRows, coverage, messages, snapshots, assessments, answerRows] = await Promise.all([
@@ -216,7 +217,9 @@ export async function loadAgentContext(
       .innerJoin(interviewQuestions, eq(interviewQuestions.id, interviewMessages.questionId))
       .where(and(
         eq(interviewMessages.interviewId, input.interviewId),
-        eq(interviewMessages.runId, input.runId),
+        input.answerMessageId
+          ? eq(interviewMessages.id, input.answerMessageId)
+          : eq(interviewMessages.runId, input.runId),
         eq(interviewMessages.role, "user"),
         eq(interviewMessages.kind, "answer"),
       ))

@@ -193,6 +193,66 @@ export function createDrizzleInterviewAgentRepository(
       }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
       return run ? parseRunRecord(run) : null;
     },
+    async getLatestRun(interviewId) {
+      const [run] = await database.select({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+        status: interviewAgentRuns.status,
+        phase: interviewAgentRuns.phase,
+        attemptId: interviewAgentRuns.attemptId,
+        attemptNumber: interviewAgentRuns.attemptNumber,
+        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
+        exitReason: interviewAgentRuns.exitReason,
+        leaseOwner: interviewAgentRuns.leaseOwner,
+        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+        leaseGeneration: interviewAgentRuns.leaseGeneration,
+        resumeCount: interviewAgentRuns.resumeCount,
+        nextResumeAt: interviewAgentRuns.nextResumeAt,
+        checkpoint: interviewAgentRuns.checkpointJson,
+        trigger: interviewAgentRuns.triggerJson,
+        lastEventSequence: interviewAgentRuns.lastEventSequence,
+      }).from(interviewAgentRuns)
+        .where(eq(interviewAgentRuns.interviewId, interviewId))
+        .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
+        .limit(1);
+      return run ? parseRunRecord(run) : null;
+    },
+    async findRunByIdempotencyKey(interviewId, idempotencyKey) {
+      const [run] = await database.select({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+        status: interviewAgentRuns.status,
+        phase: interviewAgentRuns.phase,
+        attemptId: interviewAgentRuns.attemptId,
+        attemptNumber: interviewAgentRuns.attemptNumber,
+        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
+        exitReason: interviewAgentRuns.exitReason,
+        leaseOwner: interviewAgentRuns.leaseOwner,
+        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+        leaseGeneration: interviewAgentRuns.leaseGeneration,
+        resumeCount: interviewAgentRuns.resumeCount,
+        nextResumeAt: interviewAgentRuns.nextResumeAt,
+        checkpoint: interviewAgentRuns.checkpointJson,
+        trigger: interviewAgentRuns.triggerJson,
+        lastEventSequence: interviewAgentRuns.lastEventSequence,
+      }).from(interviewAgentRuns).where(and(
+        eq(interviewAgentRuns.interviewId, interviewId),
+        eq(interviewAgentRuns.idempotencyKey, idempotencyKey),
+      )).limit(1);
+      return run ? parseRunRecord(run) : null;
+    },
+    async findCandidateAnswerForRun(runId) {
+      const [message] = await database.select({ id: interviewMessages.id })
+        .from(interviewMessages)
+        .where(and(
+          eq(interviewMessages.runId, runId),
+          eq(interviewMessages.role, "user"),
+          eq(interviewMessages.kind, "answer"),
+        ))
+        .orderBy(desc(interviewMessages.sequence))
+        .limit(1);
+      return message ?? null;
+    },
     async listEvents(runId, afterSequence, options) {
       const rows = await database.select({
         id: interviewAgentEvents.id,
@@ -544,6 +604,7 @@ export function createDrizzleInterviewAgentRepository(
           interviewId: interviewAgentRuns.interviewId,
           model: interviewAgentRuns.model,
           phase: interviewAgentRuns.phase,
+          trigger: interviewAgentRuns.triggerJson,
           authorizedProposal: interviewAgentRuns.authorizedProposalJson,
           authorizedProposalHash: interviewAgentRuns.authorizedProposalHash,
           responseStartedAt: interviewAgentRuns.responseStartedAt,
@@ -613,11 +674,13 @@ export function createDrizzleInterviewAgentRepository(
           }).from(interviewMessages).where(and(
             eq(interviewMessages.id, input.answerMessageId),
             eq(interviewMessages.interviewId, input.interviewId),
-            eq(interviewMessages.runId, input.runId),
           )).limit(1);
+          const runTrigger = run.trigger as AgentRunTrigger | null;
+          const answerLinkedByTrigger = runTrigger?.mode === "answer"
+            && runTrigger.answerMessageId === input.answerMessageId;
           if (
             !answer
-            || answer.runId !== input.runId
+            || (answer.runId !== input.runId && !answerLinkedByTrigger)
             || answer.role !== "user"
             || answer.kind !== "answer"
             || !answer.questionId

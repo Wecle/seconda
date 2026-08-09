@@ -16,6 +16,12 @@ export interface InterviewAgentRepository {
     interviewId: string;
     idempotencyKey: string;
   }): Promise<{ id: string; status: "running"; created: boolean }>;
+  getLatestRun(interviewId: string): Promise<AgentRunRecord | null>;
+  findRunByIdempotencyKey(
+    interviewId: string,
+    idempotencyKey: string,
+  ): Promise<AgentRunRecord | null>;
+  findCandidateAnswerForRun(runId: string): Promise<{ id: string } | null>;
   appendEvent(
     runId: string,
     event: AgentEventInput,
@@ -220,10 +226,9 @@ export type AgentRunPhase =
   | "scoring"
   | "reporting";
 
-export type AgentRunTrigger = {
-  mode: "opening" | "answer";
-  instruction: string;
-};
+export type AgentRunTrigger =
+  | { mode: "opening"; instruction: string }
+  | { mode: "answer"; instruction: string; answerMessageId?: string };
 
 export const RECOVERABLE_RUN_EXIT_REASONS: AgentExitReason[] = [
   "aborted_streaming",

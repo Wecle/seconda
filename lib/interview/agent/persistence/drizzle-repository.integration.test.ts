@@ -577,8 +577,11 @@ test("real database atomically commits an authorized turn and rolls back policy 
     assert.equal(wrongRunQuestions.length, 1);
     assert.equal(wrongRunCommits.length, 0);
     assert.equal(wrongRunEvents.length, 0);
-    await db.update(interviewMessages).set({ runId: run.id })
-      .where(eq(interviewMessages.id, answerMessage.id));
+    await repository.saveRunTrigger(run.id, {
+      mode: "answer",
+      instruction: "retry the persisted answer",
+      answerMessageId: answerMessage.id,
+    });
     const [first, replay] = await Promise.all([
       repository.commitTurnOutcome(commitInput),
       repository.commitTurnOutcome(commitInput),

@@ -226,6 +226,13 @@ export function createDrizzleAgentInterviewStore(
           content: input.content,
           questionId: question.id,
         }).returning({ id: interviewMessages.id, sequence: interviewMessages.sequence, content: interviewMessages.content });
+        await tx.update(interviewAgentRuns).set({
+          triggerJson: {
+            ...input.trigger,
+            mode: "answer",
+            answerMessageId: message.id,
+          },
+        }).where(eq(interviewAgentRuns.id, runId));
         return { ...message, runId, created: true };
       });
     },
