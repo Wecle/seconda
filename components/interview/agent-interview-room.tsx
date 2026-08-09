@@ -398,6 +398,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
 
   const retryFailedRun = async () => {
     if (!run || run.status !== "failed" || retryingRun) return;
+    beginAgentRoomRequest(agentRoomRequestEpochRef.current);
     setRetryingRun(true);
     setError(null);
     try {
@@ -420,6 +421,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
         userMessage: null,
         lastEventSequence: 0,
       });
+      if (result.runStatus !== "running") await refresh();
     } catch (retryError) {
       setError(retryError instanceof Error ? retryError.message : "本轮重试失败，请稍后再试。");
     } finally {

@@ -193,53 +193,36 @@ export function createDrizzleInterviewAgentRepository(
       }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, runId)).limit(1);
       return run ? parseRunRecord(run) : null;
     },
-    async getLatestRun(interviewId) {
-      const [run] = await database.select({
-        id: interviewAgentRuns.id,
-        interviewId: interviewAgentRuns.interviewId,
-        status: interviewAgentRuns.status,
-        phase: interviewAgentRuns.phase,
-        attemptId: interviewAgentRuns.attemptId,
-        attemptNumber: interviewAgentRuns.attemptNumber,
-        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
-        exitReason: interviewAgentRuns.exitReason,
-        leaseOwner: interviewAgentRuns.leaseOwner,
-        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
-        leaseGeneration: interviewAgentRuns.leaseGeneration,
-        resumeCount: interviewAgentRuns.resumeCount,
-        nextResumeAt: interviewAgentRuns.nextResumeAt,
-        checkpoint: interviewAgentRuns.checkpointJson,
-        trigger: interviewAgentRuns.triggerJson,
-        lastEventSequence: interviewAgentRuns.lastEventSequence,
-      }).from(interviewAgentRuns)
-        .where(eq(interviewAgentRuns.interviewId, interviewId))
-        .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
-        .limit(1);
-      return run ? parseRunRecord(run) : null;
-    },
-    async findRunByIdempotencyKey(interviewId, idempotencyKey) {
-      const [run] = await database.select({
-        id: interviewAgentRuns.id,
-        interviewId: interviewAgentRuns.interviewId,
-        status: interviewAgentRuns.status,
-        phase: interviewAgentRuns.phase,
-        attemptId: interviewAgentRuns.attemptId,
-        attemptNumber: interviewAgentRuns.attemptNumber,
-        provisionalMessageId: interviewAgentRuns.provisionalMessageId,
-        exitReason: interviewAgentRuns.exitReason,
-        leaseOwner: interviewAgentRuns.leaseOwner,
-        leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
-        leaseGeneration: interviewAgentRuns.leaseGeneration,
-        resumeCount: interviewAgentRuns.resumeCount,
-        nextResumeAt: interviewAgentRuns.nextResumeAt,
-        checkpoint: interviewAgentRuns.checkpointJson,
-        trigger: interviewAgentRuns.triggerJson,
-        lastEventSequence: interviewAgentRuns.lastEventSequence,
-      }).from(interviewAgentRuns).where(and(
-        eq(interviewAgentRuns.interviewId, interviewId),
-        eq(interviewAgentRuns.idempotencyKey, idempotencyKey),
-      )).limit(1);
-      return run ? parseRunRecord(run) : null;
+    async createReplacementRun(input) {
+      return database.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${input.interviewId}))`);
+        const [interview] = await tx.select({ status: interviews.status })
+          .from(interviews)
+          .where(eq(interviews.id, input.interviewId))
+          .limit(1);
+        if (interview?.status !== "active") return { outcome: "inactive" as const };
+        const [existing] = await tx.select({ id: interviewAgentRuns.id })
+          .from(interviewAgentRuns)
+          .where(and(
+            eq(interviewAgentRuns.interviewId, input.interviewId),
+            eq(interviewAgentRuns.idempotencyKey, input.idempotencyKey),
+          ))
+          .limit(1);
+        if (existing) return { outcome: "existing" as const, runId: existing.id };
+        const [latest] = await tx.select({ id: interviewAgentRuns.id })
+          .from(interviewAgentRuns)
+          .where(eq(interviewAgentRuns.interviewId, input.interviewId))
+          .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
+          .limit(1);
+        if (latest?.id !== input.sourceRunId) return { outcome: "stale" as const };
+        const [created] = await tx.insert(interviewAgentRuns).values({
+          interviewId: input.interviewId,
+          idempotencyKey: input.idempotencyKey,
+          triggerJson: input.trigger,
+          streamMode: "durable_provisional",
+        }).returning({ id: interviewAgentRuns.id });
+        return { outcome: "created" as const, runId: created.id };
+      });
     },
     async findCandidateAnswerForRun(runId) {
       const [message] = await database.select({ id: interviewMessages.id })

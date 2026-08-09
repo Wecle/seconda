@@ -16,11 +16,17 @@ export interface InterviewAgentRepository {
     interviewId: string;
     idempotencyKey: string;
   }): Promise<{ id: string; status: "running"; created: boolean }>;
-  getLatestRun(interviewId: string): Promise<AgentRunRecord | null>;
-  findRunByIdempotencyKey(
-    interviewId: string,
-    idempotencyKey: string,
-  ): Promise<AgentRunRecord | null>;
+  createReplacementRun(input: {
+    interviewId: string;
+    sourceRunId: string;
+    idempotencyKey: string;
+    trigger: AgentRunTrigger;
+  }): Promise<
+    | { outcome: "created"; runId: string }
+    | { outcome: "existing"; runId: string }
+    | { outcome: "inactive" }
+    | { outcome: "stale" }
+  >;
   findCandidateAnswerForRun(runId: string): Promise<{ id: string } | null>;
   appendEvent(
     runId: string,

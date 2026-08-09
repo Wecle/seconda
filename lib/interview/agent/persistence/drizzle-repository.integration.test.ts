@@ -344,6 +344,37 @@ test("real database fences stale workers, notifies durable events and preserves 
       [],
     );
 
+    await repository.failRun(
+      runId,
+      "terminal_action_failed",
+      new Error("replacement race fixture"),
+    );
+    const replacementTrigger = {
+      mode: "opening" as const,
+      instruction: "retry opening after a terminal validation failure",
+    };
+    const concurrentReplacements = await Promise.all(Array.from({ length: 4 }, () => (
+      repository.createReplacementRun({
+        interviewId: interviewId!,
+        sourceRunId: runId,
+        idempotencyKey: `retry-of:${runId}`,
+        trigger: replacementTrigger,
+      })
+    )));
+    const replacementIds = concurrentReplacements.flatMap((result) => (
+      "runId" in result ? [result.runId] : []
+    ));
+    assert.equal(new Set(replacementIds).size, 1);
+    const replacementRunId = replacementIds[0];
+    assert.ok(replacementRunId);
+    const replacementRun = await repository.getRun(replacementRunId);
+    assert.deepEqual(replacementRun?.trigger, replacementTrigger);
+    await repository.failRun(
+      replacementRunId,
+      "terminal_action_failed",
+      new Error("retry versus completion fixture"),
+    );
+
     const answerEndRace = await Promise.allSettled([
       store.acceptCandidateMessage({
         interviewId,
@@ -352,12 +383,19 @@ test("real database fences stale workers, notifies durable events and preserves 
         runIdempotencyKey: `message:${randomUUID()}`,
         trigger: { mode: "answer", instruction: "continue from the accepted answer" },
       }),
+      repository.createReplacementRun({
+        interviewId,
+        sourceRunId: replacementRunId,
+        idempotencyKey: `retry-of:${replacementRunId}`,
+        trigger: replacementTrigger,
+      }),
       repository.markInterviewCompleting(interviewId),
     ]);
-    assert.equal(answerEndRace[1].status, "fulfilled");
+    assert.equal(answerEndRace[2].status, "fulfilled");
     const postEndRuns = await db.select().from(schema.interviewAgentRuns)
       .where(eq(schema.interviewAgentRuns.interviewId, interviewId));
-    assert.equal(postEndRuns.some((candidate) => candidate.status === "running" && candidate.triggerJson === null), false);
+    assert.equal(postEndRuns.some((candidate) => candidate.status === "running"), false);
+    assert.equal(postEndRuns.some((candidate) => candidate.idempotencyKey.startsWith("retry-of:") && candidate.triggerJson === null), false);
 
     const completion = createDrizzleCompletionJobRepository(db);
     const job = await completion.createJob(interviewId);

@@ -140,37 +140,21 @@ export async function retryFailedAgentRun(options: {
   }
 
   const idempotencyKey = `retry-of:${source.id}`;
-  const existing = await options.repository.findRunByIdempotencyKey(
-    options.interviewId,
+  const replacement = await options.repository.createReplacementRun({
+    interviewId: options.interviewId,
+    sourceRunId: source.id,
     idempotencyKey,
-  );
-  if (existing) {
-    if (getRecoveryDisposition(existing, options.now) === "schedule") {
-      await options.scheduler.schedule(existing.id);
-    }
-    const current = await options.repository.getRun(existing.id);
-    return {
-      runId: existing.id,
-      runStatus: current?.status ?? existing.status,
-    };
+    trigger: replacementTrigger,
+  });
+  if (replacement.outcome === "inactive") {
+    throw retryFailedRunError("RETRY_RUN_NOT_REPLACEABLE");
   }
-
-  const latest = await options.repository.getLatestRun(options.interviewId);
-  if (latest?.id !== source.id) {
+  if (replacement.outcome === "stale") {
     throw retryFailedRunError("RETRY_RUN_STALE");
   }
-
-  const replacement = await options.repository.createRun({
-    interviewId: options.interviewId,
-    idempotencyKey,
-  });
-  let persisted = await options.repository.getRun(replacement.id);
+  const persisted = await options.repository.getRun(replacement.runId);
   if (!persisted) throw retryFailedRunError("RETRY_RUN_NOT_FOUND");
   if (!persisted.trigger) {
-    await options.repository.saveRunTrigger(replacement.id, replacementTrigger);
-    persisted = await options.repository.getRun(replacement.id);
-  }
-  if (!persisted?.trigger) {
     throw retryFailedRunError("RETRY_RUN_TRIGGER_MISSING");
   }
   if (getRecoveryDisposition(persisted, options.now) === "schedule") {

@@ -11,4 +11,6 @@ test("room renders hydrated failure and switches to a replacement run", async ()
   assert.match(source, /重试本轮/);
   assert.match(source, /lastEventSequence: 0/);
   assert.match(source, /setRun\(\{[\s\S]+id: result\.runId/);
+  assert.match(source, /retryFailedRun[\s\S]+beginAgentRoomRequest[\s\S]+runs\/\$\{run\.id\}\/retry/);
+  assert.match(source, /result\.runStatus !== "running"\) await refresh\(\)/);
 });

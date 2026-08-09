@@ -211,16 +211,44 @@ export function createInMemoryInterviewAgentRepository(
       const run = runs.get(runId);
       return run ? memoryRunRecord(run) : null;
     },
-    async getLatestRun(interviewId) {
-      const run = [...runs.values()]
-        .filter((candidate) => candidate.interviewId === interviewId)
+    async createReplacementRun(input) {
+      if (completingInterviews.has(input.interviewId)) return { outcome: "inactive" };
+      const key = `${input.interviewId}:${input.idempotencyKey}`;
+      const existingId = runKeys.get(key);
+      if (existingId) return { outcome: "existing", runId: existingId };
+      const latest = [...runs.values()]
+        .filter((candidate) => candidate.interviewId === input.interviewId)
         .at(-1);
-      return run ? memoryRunRecord(run) : null;
-    },
-    async findRunByIdempotencyKey(interviewId, idempotencyKey) {
-      const runId = runKeys.get(`${interviewId}:${idempotencyKey}`);
-      const run = runId ? runs.get(runId) : null;
-      return run ? memoryRunRecord(run) : null;
+      if (latest?.id !== input.sourceRunId) return { outcome: "stale" };
+      const run: MemoryRun = {
+        id: `run-${++id}`,
+        interviewId: input.interviewId,
+        idempotencyKey: input.idempotencyKey,
+        status: "running",
+        phase: "accepted",
+        eventSequence: 0,
+        exitReason: null,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+        leaseGeneration: 0,
+        resumeCount: 0,
+        nextResumeAt: null,
+        events: [],
+        eventDedupeSequences: new Map(),
+        model: null,
+        attemptId: null,
+        attemptNumber: 0,
+        provisionalMessageId: null,
+        lastProviderProgressAt: null,
+        trigger: input.trigger,
+        authorizedProposal: null,
+        authorizedProposalHash: null,
+        proposalAuthorizedAt: null,
+        responseStartedAt: null,
+      };
+      runs.set(run.id, run);
+      runKeys.set(key, run.id);
+      return { outcome: "created", runId: run.id };
     },
     async findCandidateAnswerForRun(runId) {
       const message = [...interviewMessagesById.values()].flat().find((candidate) => (

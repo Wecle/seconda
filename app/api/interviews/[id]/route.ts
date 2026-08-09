@@ -62,7 +62,7 @@ export async function GET(
         : Promise.resolve([]),
       usesAgentRoom
         ? db.select({ id: interviewAgentRuns.id, interviewId: interviewAgentRuns.interviewId, status: interviewAgentRuns.status, phase: interviewAgentRuns.phase, attemptId: interviewAgentRuns.attemptId, attemptNumber: interviewAgentRuns.attemptNumber, provisionalMessageId: interviewAgentRuns.provisionalMessageId, exitReason: interviewAgentRuns.exitReason, leaseOwner: interviewAgentRuns.leaseOwner, leaseExpiresAt: interviewAgentRuns.leaseExpiresAt, leaseGeneration: interviewAgentRuns.leaseGeneration, resumeCount: interviewAgentRuns.resumeCount, nextResumeAt: interviewAgentRuns.nextResumeAt, checkpoint: interviewAgentRuns.checkpointJson, trigger: interviewAgentRuns.triggerJson, lastEventSequence: interviewAgentRuns.lastEventSequence })
-          .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt)).limit(1)
+          .from(interviewAgentRuns).where(eq(interviewAgentRuns.interviewId, id)).orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id)).limit(1)
         : Promise.resolve([]),
       usesAgentRoom
         ? db.select({ id: interviewCompletionJobs.id, interviewId: interviewCompletionJobs.interviewId, status: interviewCompletionJobs.status, leaseOwner: interviewCompletionJobs.leaseOwner, leaseExpiresAt: interviewCompletionJobs.leaseExpiresAt, leaseGeneration: interviewCompletionJobs.leaseGeneration, attemptCount: interviewCompletionJobs.attemptCount, nextAttemptAt: interviewCompletionJobs.nextAttemptAt })

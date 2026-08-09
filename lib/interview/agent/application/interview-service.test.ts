@@ -212,6 +212,46 @@ test("retries the latest terminal failure with one replacement run", async () =>
   assert.equal(f.calls.filter((call) => call === "run:opening").length, 1);
 });
 
+test("concurrent retries observe one fully initialized replacement", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "concurrent-failed",
+    mode: "opening",
+  });
+
+  const results = await Promise.all(Array.from({ length: 4 }, () => retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  })));
+
+  assert.equal(new Set(results.map((result) => result.runId)).size, 1);
+  const replacement = await f.repository.getRun(results[0].runId);
+  assert.deepEqual(replacement?.trigger, {
+    mode: "opening",
+    instruction: "opening instruction",
+  });
+});
+
+test("does not create a replacement after the interview starts completing", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "inactive-failed",
+    mode: "opening",
+  });
+  await f.repository.markInterviewCompleting("interview");
+
+  await expectRetryCode(retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  }), "RETRY_RUN_NOT_REPLACEABLE");
+});
+
 test("preserves the original answer message without creating another", async () => {
   const f = fixture();
   const failedRunId = await terminallyFailRun(f.repository, {
