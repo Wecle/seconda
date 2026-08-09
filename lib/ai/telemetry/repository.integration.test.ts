@@ -709,7 +709,7 @@ test("durable lifecycle is idempotent and serializes enforcing budget reads", {
       FROM ai_task_attempts WHERE task_run_id = ${task.id!}
       ORDER BY attempt_number
     `;
-    assert.deepEqual(attempts, [
+    assert.deepEqual([...attempts], [
       {
         number: 1,
         model: "openai/primary",
@@ -811,7 +811,7 @@ test("durable lifecycle is idempotent and serializes enforcing budget reads", {
       WHERE id IN (${invalidCostTask.id!}, ${unpricedTask.id!})
       ORDER BY operation_key
     `;
-    assert.deepEqual(priceClassification, [
+    assert.deepEqual([...priceClassification], [
       { operationKey: `${prefix}-invalid-cost`, unpriced: 0, cost: null },
       { operationKey: `${prefix}-unpriced`, unpriced: 1, cost: null },
     ]);
