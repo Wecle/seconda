@@ -2,7 +2,7 @@
 
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bot, FileText, Loader2, LogOut, Send } from "lucide-react";
+import { Bot, FileText, Loader2, LogOut, RotateCcw, Send } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,7 @@ import { buildInterviewRoomTimeline, type InterviewRoomTimelineGroup } from "./i
 import { useCompletionPolling } from "./use-completion-polling";
 import { agentRoomReducer, initialAgentRoomState, type PublicRoomEvent, type RoomMessage, type RoomTurn } from "@/lib/interview/agent/client/room-state";
 import { latestRunSnapshotSequence } from "@/lib/interview/agent/client/stream";
+import { runFailurePresentation } from "@/lib/interview/agent/client/run-failure";
 import {
   applyAgentRoomRefresh,
   beginAgentRoomRequest,
@@ -141,6 +142,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
   const [ending, setEnding] = useState(false);
   const endingRef = useRef(false);
   const [recoveringRun, setRecoveringRun] = useState(false);
+  const [retryingRun, setRetryingRun] = useState(false);
   const runRecoveryInFlightRef = useRef(false);
   const [resumeOpen, setResumeOpen] = useState(false);
   const [interviewStatus, setInterviewStatus] = useState(status);
@@ -166,6 +168,7 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     [messageElements],
   );
   const runRecoveryExhausted = run?.recoveryDisposition === "exhausted";
+  const failurePresentation = runFailurePresentation(run);
   const busy = submitting || (run?.status === "running" && !runRecoveryExhausted);
   const runId = run?.id;
   const hydratedRunSequence = useMemo(
@@ -281,7 +284,6 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
           userMessage: event.payload.userMessage,
           lastEventSequence: Math.max(current.lastEventSequence, sequence),
         } : current);
-        setError(event.payload.userMessage);
         await refresh();
         return;
       }
@@ -306,7 +308,6 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     setRun(terminal);
     if (terminal.status === "failed") {
       dispatch({ type: "run_failed", runId: terminal.id });
-      setError(terminal.userMessage ?? "答案已接收，但 Agent 本轮未完成。你可以恢复原 Run，无需重新提交答案。");
     }
     await refresh();
   }, [refresh]);
@@ -395,6 +396,37 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
     }
   };
 
+  const retryFailedRun = async () => {
+    if (!run || run.status !== "failed" || retryingRun) return;
+    setRetryingRun(true);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/interviews/${interviewId}/runs/${run.id}/retry`,
+        { method: "POST" },
+      );
+      const result = await response.json() as {
+        runId?: string;
+        runStatus?: "running" | "completed" | "failed";
+        error?: string;
+      };
+      if (!response.ok || !result.runId || !result.runStatus) {
+        throw new Error("本轮重试失败，请稍后再试。");
+      }
+      setRun({
+        id: result.runId,
+        status: result.runStatus,
+        exitReason: null,
+        userMessage: null,
+        lastEventSequence: 0,
+      });
+    } catch (retryError) {
+      setError(retryError instanceof Error ? retryError.message : "本轮重试失败，请稍后再试。");
+    } finally {
+      setRetryingRun(false);
+    }
+  };
+
   const retryCompletion = async () => {
     if (completionRetryInFlightRef.current) return;
     completionRetryInFlightRef.current = true;
@@ -472,7 +504,23 @@ export function AgentInterviewRoom({ interviewId, initialMessages, initialRun, r
             {connectionState === "recovering" && <p className="text-sm text-amber-600">连接持续中断，正在执行一次受控 Run 恢复。</p>}
             {connectionState === "manual_retry" && <div className="flex items-center gap-3"><p className="text-sm text-amber-600">连接已中断，但不会重新提交答案。</p><Button variant="outline" size="sm" onClick={retryConnection}>重新连接</Button></div>}
             {submissionFailed && pendingAnswer && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案尚未确认送达。重试会沿用同一个提交标识，不会生成重复答案。</p><Button variant="outline" size="sm" disabled={submitting} onClick={() => void sendPendingAnswer(pendingAnswer)}>重试发送</Button></div>}
-            {run?.status === "failed" && run.recoveryDisposition === "schedule" && <div className="flex items-center gap-3"><p className="text-sm text-destructive">答案已接收，但 Agent 本轮失败。</p><Button variant="outline" size="sm" disabled={recoveringRun} onClick={() => void recoverFailedRun()}>{recoveringRun ? <Loader2 className="size-4 animate-spin" /> : null}恢复原 Run</Button></div>}
+            {failurePresentation ? (
+              <div className="flex items-center gap-3">
+                <p className="text-sm text-destructive">{failurePresentation.message}</p>
+                {failurePresentation.action === "resume" ? (
+                  <Button variant="outline" size="sm" disabled={recoveringRun} onClick={() => void recoverFailedRun()}>
+                    {recoveringRun ? <Loader2 className="size-4 animate-spin" /> : null}
+                    恢复原 Run
+                  </Button>
+                ) : null}
+                {failurePresentation.action === "retry" ? (
+                  <Button variant="outline" size="sm" disabled={retryingRun} onClick={() => void retryFailedRun()}>
+                    {retryingRun ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                    重试本轮
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             {run?.status === "failed" && run.recoveryDisposition === "cooldown" && <p className="text-sm text-amber-600">答案已保存，Agent Run 正在冷却，稍后可恢复。</p>}
             {runRecoveryExhausted && <p className="text-sm text-destructive">答案已保存，但 Agent Run 恢复次数已用尽，请联系支持人员处理。</p>}
             {error && <p className="text-sm text-destructive">{error}</p>}
