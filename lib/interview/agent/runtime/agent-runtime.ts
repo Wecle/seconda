@@ -393,6 +393,13 @@ export async function runInterviewAgent(
         "publicAnalysis 必须是非空公开文本。",
       );
     }
+    if (
+      fieldState === "incomplete"
+      && progress.status === "unchanged"
+      && progress.fullText.length === 0
+    ) {
+      return;
+    }
     if (progress.status === "rewritten") {
       throw new AttemptFailure(
         "PUBLIC_ANALYSIS_REWRITTEN",

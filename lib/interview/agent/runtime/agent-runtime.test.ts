@@ -118,6 +118,7 @@ function streamingTerminalScript(options: {
   chunks?: readonly string[];
   beforeFinal?: Promise<void>;
   acknowledgements?: boolean[];
+  includeIncompleteEmptyAnalysis?: boolean;
 }): StreamScript {
   return async (input, callNumber) => {
     const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
@@ -136,6 +137,16 @@ function streamingTerminalScript(options: {
         text: options.reasoning,
       });
       options.acknowledgements?.push(acknowledged);
+    }
+    if (options.includeIncompleteEmptyAnalysis) {
+      await input.onStreamEvent({
+        type: "tool_input_delta",
+        attemptId,
+        toolCallId: `terminal-${callNumber}`,
+        toolName: "submit_interview_turn",
+        inputText: '{"publicAnalysis":"',
+        partialInput: { publicAnalysis: "" },
+      });
     }
     const requestedPublicAnalysis = options.publicAnalysis ?? DEFAULT_TERMINAL_ANALYSIS;
     const publicAnalysisChunks = options.publicAnalysisChunks ?? [requestedPublicAnalysis];
@@ -902,6 +913,27 @@ test("rejects blank terminal public analysis before proposal authorization", asy
     event.type === "attempt_discarded"
     && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
   )).length, 3);
+});
+
+test("allows an empty public analysis while its JSON string is incomplete", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: openingProposal(),
+        includeIncompleteEmptyAnalysis: true,
+      }),
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+  const events = await fixture.publicEvents();
+
+  assert.equal(result.exitReason, "completed");
+  assert.equal(events.some((event) => event.type === "proposal_authorized"), true);
+  assert.equal(events.some((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+  )), false);
 });
 
 test("rejects duplicate terminal public analysis fields before authorization", async () => {
