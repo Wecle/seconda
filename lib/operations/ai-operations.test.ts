@@ -91,6 +91,31 @@ test("uses parameters and queries only operational views", async () => {
   assert.ok(!calls[0].text.includes("ai_task_attempts"));
 });
 
+test("uses exact rolling timestamps for aggregate operational sections", async () => {
+  const since = new Date("2026-08-02T12:34:56.000Z");
+  const { sql, calls } = sqlFixture({});
+
+  const result = await queryAIOperations(sql, {
+    command: "all",
+    since,
+    limit: 20,
+  });
+  const untilMs = Date.parse(result.window.until);
+
+  const aggregateCalls = calls.filter(({ text }) => text.includes("ai_task_operation_attempts"));
+  assert.equal(aggregateCalls.length, 5);
+  for (const call of aggregateCalls) {
+    assert.doesNotMatch(call.text, /date_trunc/);
+    assert.doesNotMatch(call.text, /attempt_number = 1/);
+    assert.ok(call.values.includes(since));
+    assert.ok(call.values.some((value) => value instanceof Date && value.getTime() === untilMs));
+    assert.doesNotMatch(call.text, /(?:FROM|JOIN) ai_task_runs\b/);
+    assert.doesNotMatch(call.text, /(?:FROM|JOIN) ai_task_attempts\b/);
+  }
+  assert.equal(aggregateCalls.filter(({ text }) =>
+    text.includes("is_first_persisted_attempt = TRUE")).length, 2);
+});
+
 test("reads budget details from the privacy-safe budget view", async () => {
   const { sql } = sqlFixture({
     ai_budget_warnings: [{

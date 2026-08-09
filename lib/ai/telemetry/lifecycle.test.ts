@@ -208,6 +208,54 @@ test("enforce mode fails closed when task start or budget read is unavailable", 
   assert.equal(providerCalls, 0);
 });
 
+test("enforce mode blocks the next attempt after terminal Usage persistence fails", async (t) => {
+  t.mock.method(console, "error", () => {});
+  for (const terminal of ["complete", "fail"] as const) {
+    const repo = repository({
+      async completeAttempt() {
+        if (terminal === "complete") throw new Error("write unavailable");
+      },
+      async failAttempt() {
+        if (terminal === "fail") throw new Error("write unavailable");
+      },
+    });
+    const lifecycle = createAITelemetryLifecycle({
+      repository: repo.value,
+      policy: { mode: "enforce", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    });
+    const task = await lifecycle.startTask({ task: "interview.agent", context });
+    const attempt = await lifecycle.beforeAttempt({
+      task,
+      attemptNumber: 1,
+      model: "openai/test",
+      credentialTier: "fast",
+    });
+    const terminalWrite = terminal === "complete"
+      ? lifecycle.completeAttempt({
+          attempt,
+          usage: null,
+          firstTokenMs: null,
+          durationMs: 1,
+        })
+      : lifecycle.failAttempt({
+          attempt,
+          error: new Error("business failure"),
+          usage: null,
+          firstTokenMs: null,
+          durationMs: 1,
+        });
+    await assert.doesNotReject(terminalWrite);
+    await assert.rejects(lifecycle.beforeAttempt({
+      task,
+      attemptNumber: 2,
+      model: "openai/test",
+      credentialTier: "fast",
+    }), (error) => error instanceof AIResourceBudgetError
+      && error.code === "AI_RESOURCE_BUDGET_UNAVAILABLE");
+    assert.equal(repo.calls.attempts.length, 1);
+  }
+});
+
 test("budget rejection exposes only the stable exceeded error code", async () => {
   const repo = repository({
     async startAttempt(input) {

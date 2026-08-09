@@ -113,7 +113,12 @@ function logFailure(operation: string, task: AITask, error: unknown) {
 export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemetryLifecycle {
   const pricing = options.pricing ?? { version: 1, models: {} };
   const now = options.now ?? Date.now;
-  const attemptTasks = new Map<string, AITask>();
+  const attemptOwners = new Map<string, {
+    task: AITask;
+    taskRunId: string;
+    budgetMode: BudgetMode;
+  }>();
+  const unavailableBudgetTasks = new Set<string>();
 
   return {
     async startTask(input) {
@@ -161,6 +166,9 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         }
         return noOp();
       }
+      if (input.task.budgetMode === "enforce" && unavailableBudgetTasks.has(input.task.id)) {
+        throw new AIResourceBudgetError("AI_RESOURCE_BUDGET_UNAVAILABLE");
+      }
       try {
         const record = await options.repository.startAttempt({
           taskRunId: input.task.id,
@@ -176,7 +184,11 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         if (record.rejected) {
           throw new AIResourceBudgetError("AI_RESOURCE_BUDGET_EXCEEDED");
         }
-        attemptTasks.set(record.id, input.task.task);
+        attemptOwners.set(record.id, {
+          task: input.task.task,
+          taskRunId: record.taskRunId,
+          budgetMode: input.task.budgetMode,
+        });
         return {
           id: record.id,
           taskRunId: record.taskRunId,
@@ -212,9 +224,11 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
           durationMs: input.durationMs,
         });
       } catch (error) {
-        logFailure("complete_attempt", attemptTasks.get(input.attempt.id) ?? "interview.agent", error);
+        const owner = attemptOwners.get(input.attempt.id);
+        logFailure("complete_attempt", owner?.task ?? "interview.agent", error);
+        if (owner?.budgetMode === "enforce") unavailableBudgetTasks.add(owner.taskRunId);
       } finally {
-        attemptTasks.delete(input.attempt.id);
+        attemptOwners.delete(input.attempt.id);
       }
     },
 
@@ -235,9 +249,11 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
           retryable: sanitized.retryable,
         });
       } catch (error) {
-        logFailure("fail_attempt", attemptTasks.get(input.attempt.id) ?? "interview.agent", error);
+        const owner = attemptOwners.get(input.attempt.id);
+        logFailure("fail_attempt", owner?.task ?? "interview.agent", error);
+        if (owner?.budgetMode === "enforce") unavailableBudgetTasks.add(owner.taskRunId);
       } finally {
-        attemptTasks.delete(input.attempt.id);
+        attemptOwners.delete(input.attempt.id);
       }
     },
 
@@ -247,6 +263,8 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         await options.repository.completeTask(task.id);
       } catch (error) {
         logFailure("complete_task", task.task, error);
+      } finally {
+        unavailableBudgetTasks.delete(task.id);
       }
     },
 
@@ -256,6 +274,8 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         await options.repository.failTask(task.id, sanitizeAIError(error));
       } catch (telemetryError) {
         logFailure("fail_task", task.task, telemetryError);
+      } finally {
+        unavailableBudgetTasks.delete(task.id);
       }
     },
   };

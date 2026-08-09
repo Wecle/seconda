@@ -160,17 +160,25 @@ function budgetMode(value: unknown): BudgetMode {
 
 async function querySummary(sql: Sql, since: Date, until: Date) {
   const rows = await sql<Row[]>`
+    WITH tasks AS (
+      SELECT task_run_id, task_status
+      FROM ai_task_operation_attempts
+      WHERE task_started_at >= ${since} AND task_started_at <= ${until}
+        AND is_first_persisted_attempt = TRUE
+    ), attempts AS (
+      SELECT input_tokens, output_tokens, estimated_cost_micros
+      FROM ai_task_operation_attempts
+      WHERE attempt_id IS NOT NULL
+        AND attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+    )
     SELECT
-      COALESCE(SUM(task_count), 0)::bigint AS "taskRuns",
-      COALESCE(SUM(attempt_count), 0)::bigint AS "attempts",
-      COALESCE(SUM(success_count), 0)::bigint AS "completedTasks",
-      COALESCE(SUM(failure_count), 0)::bigint AS "failedTasks",
-      COALESCE(SUM(input_tokens), 0)::bigint AS "inputTokens",
-      COALESCE(SUM(output_tokens), 0)::bigint AS "outputTokens",
-      SUM(known_cost_micros)::numeric AS "knownCostMicros"
-    FROM ai_task_daily_summary
-    WHERE day >= date_trunc('day', ${since}::timestamptz)
-      AND day <= date_trunc('day', ${until}::timestamptz)
+      (SELECT COUNT(*) FROM tasks)::bigint AS "taskRuns",
+      (SELECT COUNT(*) FROM attempts)::bigint AS attempts,
+      (SELECT COUNT(*) FROM tasks WHERE task_status = 'completed')::bigint AS "completedTasks",
+      (SELECT COUNT(*) FROM tasks WHERE task_status IN ('failed', 'budget_exceeded'))::bigint AS "failedTasks",
+      COALESCE((SELECT SUM(input_tokens) FROM attempts), 0)::bigint AS "inputTokens",
+      COALESCE((SELECT SUM(output_tokens) FROM attempts), 0)::bigint AS "outputTokens",
+      (SELECT SUM(estimated_cost_micros) FROM attempts)::numeric AS "knownCostMicros"
   `;
   const row = rows[0];
   if (!row || requiredSafeNumber(row.taskRuns, "task count") === 0) return null;
@@ -187,23 +195,45 @@ async function querySummary(sql: Sql, since: Date, until: Date) {
 
 async function queryDistribution(sql: Sql, since: Date, until: Date, limit: number) {
   const rows = await sql<Row[]>`
+    WITH task_metrics AS (
+      SELECT
+        task, provider, model,
+        COUNT(*)::bigint AS task_count,
+        COUNT(*) FILTER (WHERE task_status = 'completed')::bigint AS success_count
+      FROM ai_task_operation_attempts
+      WHERE task_started_at >= ${since} AND task_started_at <= ${until}
+        AND is_first_persisted_attempt = TRUE
+      GROUP BY task, provider, model
+    ), attempt_metrics AS (
+      SELECT
+        task, provider, model,
+        COUNT(*)::bigint AS attempt_count,
+        SUM(input_tokens)::bigint AS input_tokens,
+        SUM(output_tokens)::bigint AS output_tokens,
+        SUM(estimated_cost_micros)::numeric AS known_cost_micros
+      FROM ai_task_operation_attempts
+      WHERE attempt_id IS NOT NULL
+        AND attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+      GROUP BY task, provider, model
+    )
     SELECT
-      task,
-      COALESCE(provider, 'unavailable') AS provider,
-      COALESCE(model, 'unavailable') AS model,
-      SUM(task_count)::bigint AS "taskRuns",
-      SUM(attempt_count)::bigint AS attempts,
-      CASE WHEN SUM(task_count) = 0 THEN NULL
-        ELSE SUM(success_count)::numeric / SUM(task_count)
+      COALESCE(task_metrics.task, attempt_metrics.task) AS task,
+      COALESCE(task_metrics.provider, attempt_metrics.provider, 'unavailable') AS provider,
+      COALESCE(task_metrics.model, attempt_metrics.model, 'unavailable') AS model,
+      COALESCE(task_metrics.task_count, 0)::bigint AS "taskRuns",
+      COALESCE(attempt_metrics.attempt_count, 0)::bigint AS attempts,
+      CASE WHEN COALESCE(task_metrics.task_count, 0) = 0 THEN NULL
+        ELSE task_metrics.success_count::numeric / task_metrics.task_count
       END AS "successRate",
-      COALESCE(SUM(input_tokens), 0)::bigint AS "inputTokens",
-      COALESCE(SUM(output_tokens), 0)::bigint AS "outputTokens",
-      SUM(known_cost_micros)::numeric AS "knownCostMicros"
-    FROM ai_task_daily_summary
-    WHERE day >= date_trunc('day', ${since}::timestamptz)
-      AND day <= date_trunc('day', ${until}::timestamptz)
-    GROUP BY task, provider, model
-    ORDER BY SUM(task_count) DESC, task, provider, model
+      COALESCE(attempt_metrics.input_tokens, 0)::bigint AS "inputTokens",
+      COALESCE(attempt_metrics.output_tokens, 0)::bigint AS "outputTokens",
+      attempt_metrics.known_cost_micros AS "knownCostMicros"
+    FROM task_metrics
+    FULL OUTER JOIN attempt_metrics
+      ON attempt_metrics.task = task_metrics.task
+      AND attempt_metrics.provider IS NOT DISTINCT FROM task_metrics.provider
+      AND attempt_metrics.model IS NOT DISTINCT FROM task_metrics.model
+    ORDER BY COALESCE(task_metrics.task_count, 0) DESC, task, provider, model
     LIMIT ${limit}
   `;
   return rows.map((row) => ({
@@ -225,12 +255,12 @@ async function queryFailures(sql: Sql, since: Date, until: Date, limit: number) 
       task, provider, model,
       error_category AS "errorCategory",
       retryable,
-      SUM(failure_count)::bigint AS count
-    FROM ai_failure_summary
-    WHERE day >= date_trunc('day', ${since}::timestamptz)
-      AND day <= date_trunc('day', ${until}::timestamptz)
+      COUNT(*)::bigint AS count
+    FROM ai_task_operation_attempts
+    WHERE attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+      AND attempt_status IN ('failed', 'budget_rejected')
     GROUP BY task, provider, model, error_category, retryable
-    ORDER BY SUM(failure_count) DESC, task, provider, model
+    ORDER BY COUNT(*) DESC, task, provider, model
     LIMIT ${limit}
   `;
   return rows.map((row) => ({
@@ -275,17 +305,20 @@ async function queryCache(sql: Sql, since: Date, until: Date, limit: number) {
       task,
       model,
       prompt_template_version AS "promptTemplateVersion",
-      SUM(available_sample_count)::bigint AS "availableSamples",
-      SUM(unavailable_sample_count)::bigint AS "unavailableSamples",
-      COALESCE(SUM(input_tokens), 0)::bigint AS "inputTokens",
-      COALESCE(SUM(cache_read_tokens), 0)::bigint AS "cachedInputTokens",
-      COALESCE(SUM(cache_write_tokens), 0)::bigint AS "cacheWriteTokens",
-      SUM(cache_read_tokens)::numeric / NULLIF(SUM(input_tokens), 0) AS "cacheReadRatio"
-    FROM ai_cache_efficiency
-    WHERE day >= date_trunc('day', ${since}::timestamptz)
-      AND day <= date_trunc('day', ${until}::timestamptz)
+      COUNT(*) FILTER (WHERE attempt_status IN ('completed', 'failed') AND cached_input_tokens IS NOT NULL)::bigint AS "availableSamples",
+      COUNT(*) FILTER (WHERE attempt_status IN ('completed', 'failed') AND cached_input_tokens IS NULL)::bigint AS "unavailableSamples",
+      COALESCE(SUM(input_tokens) FILTER (WHERE usage_available = 1 AND cached_input_tokens IS NOT NULL), 0)::bigint AS "inputTokens",
+      COALESCE(SUM(cached_input_tokens) FILTER (WHERE usage_available = 1 AND cached_input_tokens IS NOT NULL), 0)::bigint AS "cachedInputTokens",
+      COALESCE(SUM(cache_write_tokens) FILTER (
+        WHERE usage_available = 1 AND cache_write_tokens IS NOT NULL
+      ), 0)::bigint AS "cacheWriteTokens",
+      SUM(cached_input_tokens) FILTER (WHERE usage_available = 1 AND cached_input_tokens IS NOT NULL)::numeric
+        / NULLIF(SUM(input_tokens) FILTER (WHERE usage_available = 1 AND cached_input_tokens IS NOT NULL), 0) AS "cacheReadRatio"
+    FROM ai_task_operation_attempts
+    WHERE attempt_id IS NOT NULL
+      AND attempt_started_at >= ${since} AND attempt_started_at <= ${until}
     GROUP BY task, model, prompt_template_version
-    ORDER BY SUM(available_sample_count + unavailable_sample_count) DESC, task, model
+    ORDER BY COUNT(*) FILTER (WHERE attempt_status IN ('completed', 'failed')) DESC, task, model
     LIMIT ${limit}
   `;
   return rows.map((row) => ({
@@ -368,22 +401,22 @@ async function queryDataQuality(sql: Sql, since: Date, until: Date) {
   const rows = await sql<Row[]>`
     SELECT
       COALESCE((
-        SELECT SUM(usage_unavailable_attempts)
-        FROM ai_task_daily_summary
-        WHERE day >= date_trunc('day', ${since}::timestamptz)
-          AND day <= date_trunc('day', ${until}::timestamptz)
+        SELECT COUNT(*)
+        FROM ai_task_operation_attempts
+        WHERE attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+          AND attempt_status IN ('completed', 'failed') AND usage_available = 0
       ), 0)::bigint AS "usageUnavailableAttempts",
       COALESCE((
-        SELECT SUM(unavailable_sample_count)
-        FROM ai_cache_efficiency
-        WHERE day >= date_trunc('day', ${since}::timestamptz)
-          AND day <= date_trunc('day', ${until}::timestamptz)
+        SELECT COUNT(*)
+        FROM ai_task_operation_attempts
+        WHERE attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+          AND attempt_status IN ('completed', 'failed') AND cached_input_tokens IS NULL
       ), 0)::bigint AS "cacheUnavailableAttempts",
       COALESCE((
-        SELECT SUM(unpriced_attempts)
-        FROM ai_task_daily_summary
-        WHERE day >= date_trunc('day', ${since}::timestamptz)
-          AND day <= date_trunc('day', ${until}::timestamptz)
+        SELECT COUNT(*)
+        FROM ai_task_operation_attempts
+        WHERE attempt_started_at >= ${since} AND attempt_started_at <= ${until}
+          AND unpriced = TRUE
       ), 0)::bigint AS "unpricedAttempts"
   `;
   const row = rows[0];

@@ -28,6 +28,7 @@ const expectedRelations = [
   "ai_slow_operations",
   "ai_task_attempts",
   "ai_task_daily_summary",
+  "ai_task_operation_attempts",
   "ai_task_runs",
 ];
 
@@ -53,6 +54,7 @@ test("migration creates the AI telemetry tables, constraints, indexes, and views
       WHERE relname IN (
         'ai_task_runs',
         'ai_task_attempts',
+        'ai_task_operation_attempts',
         'ai_budget_warnings',
         'ai_task_daily_summary',
         'ai_interview_observability',

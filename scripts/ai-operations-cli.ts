@@ -65,6 +65,8 @@ function isUUID(value: string | undefined): value is string {
 }
 
 export function parseAIOperationsArgs(args: readonly string[]): AIOperationsArguments {
+  if (args[0] === "--") return parseAIOperationsArgs(args.slice(1));
+
   let command: AIOperationsCommand = "all";
   let sinceMs = 86_400_000;
   let limit = 20;

@@ -596,6 +596,7 @@ async function migrate() {
         DROP VIEW IF EXISTS ai_slow_operations;
         DROP VIEW IF EXISTS ai_cache_efficiency;
         DROP VIEW IF EXISTS ai_completion_health;
+        DROP VIEW IF EXISTS ai_task_operation_attempts;
 
         ALTER TABLE ai_task_runs
           ALTER COLUMN token_limit TYPE BIGINT USING token_limit::bigint,
@@ -943,6 +944,46 @@ async function migrate() {
   await sql`ALTER TABLE ai_task_attempts DROP CONSTRAINT IF EXISTS ai_task_attempts_task_run_id_attempt_number_key`;
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_attempts_model_started ON ai_task_attempts(model, started_at)`;
   await sql`CREATE INDEX IF NOT EXISTS idx_ai_task_attempts_status_started ON ai_task_attempts(status, started_at)`;
+
+  await sql`
+    CREATE OR REPLACE VIEW ai_task_operation_attempts AS
+    SELECT
+      runs.id AS task_run_id,
+      runs.task,
+      runs.status AS task_status,
+      runs.prompt_template_version,
+      runs.started_at AS task_started_at,
+      attempts.id AS attempt_id,
+      attempts.attempt_number,
+      (
+        attempts.id IS NULL
+        OR attempts.attempt_number = MIN(attempts.attempt_number) OVER (PARTITION BY runs.id)
+      ) AS is_first_persisted_attempt,
+      attempts.provider,
+      attempts.model,
+      attempts.status AS attempt_status,
+      attempts.usage_available,
+      attempts.input_tokens,
+      attempts.output_tokens,
+      attempts.cached_input_tokens,
+      attempts.cache_write_tokens,
+      attempts.estimated_cost_micros,
+      (
+        attempts.status IN ('completed', 'failed')
+        AND attempts.usage_available = 1
+        AND (
+          attempts.input_price_micros_per_million IS NULL
+          OR attempts.output_price_micros_per_million IS NULL
+          OR (attempts.cached_input_tokens IS NOT NULL AND attempts.cache_read_price_micros_per_million IS NULL)
+          OR (attempts.cache_write_tokens IS NOT NULL AND attempts.cache_write_price_micros_per_million IS NULL)
+        )
+      ) AS unpriced,
+      attempts.error_category,
+      attempts.retryable,
+      attempts.started_at AS attempt_started_at
+    FROM ai_task_runs AS runs
+    LEFT JOIN ai_task_attempts AS attempts ON attempts.task_run_id = runs.id
+  `;
 
   await sql`
     CREATE OR REPLACE VIEW ai_task_daily_summary AS

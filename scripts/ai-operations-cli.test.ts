@@ -55,6 +55,18 @@ test("parses the default complete report and focused options", () => {
     limit: 20,
     json: true,
   });
+  assert.deepEqual(parseAIOperationsArgs(["--", "summary"]), {
+    command: "summary",
+    sinceMs: 86_400_000,
+    limit: 20,
+    json: false,
+  });
+  assert.deepEqual(parseAIOperationsArgs(["--", "--json"]), {
+    command: "all",
+    sinceMs: 86_400_000,
+    limit: 20,
+    json: true,
+  });
 });
 
 test("parses every focused command and validates interview UUIDs", () => {
