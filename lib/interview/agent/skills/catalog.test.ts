@@ -26,6 +26,16 @@ test("loads answer planning without formal scoring tools", () => {
   assert.match(answerPlanning?.instructions ?? "", /第 3 题.*exhausted/);
 });
 
+test("loads clarification-safe base skills without answer planning", () => {
+  const resolved = resolveRunSkills("opening_clarification");
+  assert.deepEqual(resolved.skills.map((skill) => skill.name), [
+    "resume-grounding",
+    "coverage-planning",
+  ]);
+  assert.equal(resolved.toolNames.has("get_interview_history"), true);
+  assert.equal(resolved.toolNames.has("submit_interview_turn"), true);
+});
+
 test("prefers injected history and coverage over redundant reads", () => {
   const instructions = resolveRunSkills("answer").skills.map((skill) => skill.instructions).join("\n");
   assert.match(instructions, /已注入的最近消息/);

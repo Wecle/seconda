@@ -20,10 +20,31 @@ import { createDrizzleAgentInterviewStore } from "../lib/interview/agent/persist
 import { createDrizzleInterviewAgentRepository } from "../lib/interview/agent/persistence/drizzle-repository";
 import {
   createDrizzleAgentRuntimeCutoverStore,
+  isAgentRunTrigger,
   reconcileAgentRuntimeCutover,
   runAgentRuntimeCutoverCommand,
   type AgentRuntimeCutoverStore,
 } from "./agent-runtime-cutover";
+
+test("validates mode-specific persisted run trigger identity", () => {
+  assert.equal(isAgentRunTrigger({ mode: "opening", instruction: "open" }), true);
+  assert.equal(isAgentRunTrigger({
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: "answer-1",
+  }), true);
+  assert.equal(isAgentRunTrigger({
+    mode: "opening_clarification",
+    instruction: "confirm role",
+    answerMessageId: "clarification-1",
+  }), true);
+  assert.equal(isAgentRunTrigger({ mode: "answer", instruction: "continue" }), false);
+  assert.equal(isAgentRunTrigger({
+    mode: "opening_clarification",
+    instruction: "confirm role",
+  }), false);
+  assert.equal(isAgentRunTrigger({ mode: "unknown", instruction: "continue" }), false);
+});
 
 type FixtureTerminalEvent = {
   sequence: number;
@@ -559,6 +580,43 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       streamMode: interviewAgentRuns.streamMode,
     }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, accepted.runId));
     assert.equal(acceptedRun.streamMode, "durable_provisional");
+
+    const clarificationInterviewId = await createInterview();
+    const clarificationRepository = createDrizzleInterviewAgentRepository(database);
+    const clarificationRun = await clarificationRepository.createRun({
+      interviewId: clarificationInterviewId,
+      idempotencyKey: "legacy-clarification",
+    });
+    const clarificationAnswer = await clarificationRepository.appendMessage({
+      interviewId: clarificationInterviewId,
+      runId: clarificationRun.id,
+      role: "user",
+      kind: "clarification_answer",
+      content: "我希望面试前端工程师岗位。",
+    });
+    const clarificationMessagesBefore = await database.select({ id: interviewMessages.id })
+      .from(interviewMessages)
+      .where(eq(interviewMessages.interviewId, clarificationInterviewId));
+    await database.update(interviewAgentRuns).set({
+      streamMode: "non_streaming",
+      triggerJson: { mode: "opening_clarification", instruction: "confirm" },
+    }).where(eq(interviewAgentRuns.id, clarificationRun.id));
+    const clarificationCutover = createDrizzleAgentRuntimeCutoverStore(database, {
+      interviewIds: [clarificationInterviewId],
+    });
+    assert.equal(await clarificationCutover.reconcileRun(clarificationRun.id), "resume");
+    const [recoveredClarification] = await database.select({
+      trigger: interviewAgentRuns.triggerJson,
+    }).from(interviewAgentRuns).where(eq(interviewAgentRuns.id, clarificationRun.id));
+    assert.deepEqual(recoveredClarification.trigger, {
+      mode: "opening_clarification",
+      instruction: "根据候选人已保存的岗位澄清回答确认目标岗位，然后提交 roleResolution.status=confirmed、assessment=null、coverageChanges=[] 的 introduction 新主题提案并邀请候选人自我介绍。不得引入回答中不存在的岗位。",
+      answerMessageId: clarificationAnswer.id,
+    });
+    const clarificationMessagesAfter = await database.select({ id: interviewMessages.id })
+      .from(interviewMessages)
+      .where(eq(interviewMessages.interviewId, clarificationInterviewId));
+    assert.deepEqual(clarificationMessagesAfter, clarificationMessagesBefore);
 
     const reconciliationInterviewId = await createInterview();
     const repository = createDrizzleInterviewAgentRepository(database);

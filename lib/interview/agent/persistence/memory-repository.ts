@@ -251,11 +251,13 @@ export function createInMemoryInterviewAgentRepository(
       return { outcome: "created", runId: run.id };
     },
     async findCandidateAnswerForRun(runId) {
-      const message = [...interviewMessagesById.values()].flat().find((candidate) => (
-        candidate.runId === runId
-        && candidate.role === "user"
-        && candidate.kind === "answer"
-      ));
+      const message = [...interviewMessagesById.values()].flat()
+        .filter((candidate) => (
+          candidate.runId === runId
+          && candidate.role === "user"
+          && ["answer", "clarification_answer"].includes(candidate.kind)
+        ))
+        .toSorted((left, right) => right.sequence - left.sequence)[0];
       return message ? { id: message.id } : null;
     },
     async listEvents(runId, afterSequence, options) {

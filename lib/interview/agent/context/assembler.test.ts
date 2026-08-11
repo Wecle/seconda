@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   assembleAgentContext,
+  assembleTurnRuntimeContext,
   collectAllowedTerms,
 } from "./assembler";
 import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
@@ -15,6 +16,7 @@ const base = {
   targetRoleStatus: "inferred",
   targetRoleConfidence: "high",
   targetRoleSourceIds: ["project:0:abc"],
+  openingStage: "role_resolution" as const,
   resumeOverview: '{"title":"Frontend Engineer"}',
   evidenceDirectory: [{ id: "project:0:abc", kind: "project", label: "Seconda" }],
   cacheEpoch: 1,
@@ -101,6 +103,41 @@ test("keeps prior committed assessments and the latest raw answer in the increme
   assert.equal(context.incrementalTail.includes("当前回答已完成轻量评估"), false);
 });
 
+test("keeps the clarification answer in the turn tail without treating it as a formal answer", () => {
+  const context = assembleAgentContext({
+    ...base,
+    openingStage: "awaiting_role_clarification",
+    currentInstruction: "确认候选岗位",
+    runId: "run-clarification",
+    clarificationAnswer: {
+      id: "clarification-1",
+      content: "我希望面试前端工程师岗位。",
+    },
+  });
+  assert.equal(context.stablePrefix.includes("awaiting_role_clarification"), true);
+  assert.equal(context.incrementalTail.includes("latest-clarification-answer"), true);
+  assert.equal(context.incrementalTail.includes("我希望面试前端工程师岗位。"), true);
+  assert.equal(context.incrementalTail.includes("latest-raw-answer"), false);
+});
+
+test("builds a clarification runtime context with no formal answer category", () => {
+  const turnContext = assembleTurnRuntimeContext({
+    mode: "opening_clarification",
+    openingStage: "awaiting_role_clarification",
+    latestAnswer: null,
+    clarificationAnswer: { id: "clarification-1", content: "前端工程师" },
+    language: "zh",
+    persona: "standard",
+    allowedTerms: ["前端工程师"],
+  });
+
+  assert.equal(turnContext.mode, "opening_clarification");
+  assert.equal(turnContext.openingStage, "awaiting_role_clarification");
+  assert.equal(turnContext.answerCategory, null);
+  assert.equal(turnContext.answerMessageId, "clarification-1");
+  assert.equal(turnContext.clarificationAnswer, "前端工程师");
+});
+
 test("recursively authorizes only immutable resume candidate answers and deterministic config", () => {
   const evidence = indexResumeEvidence({
     title: "NestedResumeRole",
@@ -116,6 +153,7 @@ test("recursively authorizes only immutable resume candidate answers and determi
     candidateMessages: [
       { role: "assistant", kind: "question", content: "AssistantHallucination" },
       { role: "user", kind: "answer", content: "CandidateRawAnswer" },
+      { role: "user", kind: "clarification_answer", content: "CandidateRoleClarification" },
     ],
     currentAnswer: "CurrentCandidateAnswer",
   });
@@ -128,6 +166,7 @@ test("recursively authorizes only immutable resume candidate answers and determi
     "DeterministicPreference",
     "DeterministicTargetRole",
     "CandidateRawAnswer",
+    "CandidateRoleClarification",
     "CurrentCandidateAnswer",
   ]) {
     assert.equal(allowed.some((term) => term.includes(permitted)), true, permitted);

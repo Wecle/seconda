@@ -23,6 +23,36 @@ test("executes a persisted trigger once while a lease is active", async () => {
   assert.equal(executions, 1);
 });
 
+test("passes clarification trigger identity to the executor", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const run = await repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "clarification-run",
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "opening_clarification",
+    instruction: "confirm role",
+    answerMessageId: "clarification-answer-1",
+  });
+  const observed: Array<{ mode: string; answerMessageId?: string }> = [];
+
+  await executeClaimedRun({
+    runId: run.id,
+    owner: "worker",
+    repository,
+    executor: {
+      async run(input) {
+        observed.push(input);
+        await repository.completeRun(run.id, "completed");
+        return { exitReason: "completed" };
+      },
+    },
+  });
+
+  assert.equal(observed[0]?.mode, "opening_clarification");
+  assert.equal(observed[0]?.answerMessageId, "clarification-answer-1");
+});
+
 test("does not execute terminal runs", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });

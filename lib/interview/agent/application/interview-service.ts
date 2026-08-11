@@ -130,7 +130,7 @@ export async function retryFailedAgentRun(options: {
   }
 
   let replacementTrigger = source.trigger;
-  if (source.trigger.mode === "answer") {
+  if (source.trigger.mode !== "opening") {
     const answerMessageId = source.trigger.answerMessageId
       ?? (await options.repository.findCandidateAnswerForRun(source.id))?.id;
     if (!answerMessageId) {

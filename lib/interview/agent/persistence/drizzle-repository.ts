@@ -230,7 +230,7 @@ export function createDrizzleInterviewAgentRepository(
         .where(and(
           eq(interviewMessages.runId, runId),
           eq(interviewMessages.role, "user"),
-          eq(interviewMessages.kind, "answer"),
+          inArray(interviewMessages.kind, ["answer", "clarification_answer"]),
         ))
         .orderBy(desc(interviewMessages.sequence))
         .limit(1);

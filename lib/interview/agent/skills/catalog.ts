@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AgentRunMode } from "@/lib/interview/agent/domain/opening-role";
 import {
   interviewToolNames,
   type InterviewToolName,
@@ -53,10 +54,10 @@ export function createSkillCatalog(definitions: unknown[], availableTools: Reado
 
 const catalog = createSkillCatalog(skills, new Set(interviewToolNames));
 
-export function resolveRunSkills(mode: "opening" | "answer") {
-  const names = mode === "opening"
-    ? ["resume-grounding", "coverage-planning"]
-    : ["resume-grounding", "coverage-planning", "answer-planning"];
+export function resolveRunSkills(mode: AgentRunMode) {
+  const names = mode === "answer"
+    ? ["resume-grounding", "coverage-planning", "answer-planning"]
+    : ["resume-grounding", "coverage-planning"];
   const active = names.map((name) => catalog.get(name)!);
   const toolNames = new Set(active.flatMap((skill) => skill.toolNames as InterviewToolName[]));
   if (mode === "opening") toolNames.delete("get_interview_history");

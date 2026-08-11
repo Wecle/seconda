@@ -234,6 +234,11 @@ export type AgentRunPhase =
 
 export type AgentRunTrigger =
   | { mode: "opening"; instruction: string }
+  | {
+      mode: "opening_clarification";
+      instruction: string;
+      answerMessageId: string;
+    }
   | { mode: "answer"; instruction: string; answerMessageId: string };
 
 export const RECOVERABLE_RUN_EXIT_REASONS: AgentExitReason[] = [

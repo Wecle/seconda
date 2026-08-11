@@ -58,9 +58,9 @@ export async function executeClaimedRun(options: {
       interviewId: claimed.run.interviewId,
       runId: claimed.run.id,
       mode: claimed.run.trigger.mode,
-      answerMessageId: claimed.run.trigger.mode === "answer"
-        ? claimed.run.trigger.answerMessageId
-        : undefined,
+      answerMessageId: claimed.run.trigger.mode === "opening"
+        ? undefined
+        : claimed.run.trigger.answerMessageId,
       instruction: claimed.run.trigger.instruction,
       signal: controller.signal,
       lease,

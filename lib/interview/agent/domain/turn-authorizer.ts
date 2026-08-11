@@ -14,6 +14,7 @@ import {
   turnProposalPrefixSchema,
   type TurnProposalPrefix,
 } from "@/lib/interview/agent/domain/turn-proposal";
+import type { AgentRunMode } from "@/lib/interview/agent/domain/opening-role";
 
 export type ProjectedTurnState = {
   consecutiveNoFollowUpAssessments: number;
@@ -41,6 +42,7 @@ export type CoverageConflictDetail = {
 type NonCoverageRejectionReason = Exclude<
   | "OPENING_ASSESSMENT_FORBIDDEN"
   | "OPENING_COVERAGE_FORBIDDEN"
+  | "OPENING_STAGE_MISMATCH"
   | "ANSWER_ASSESSMENT_REQUIRED"
   | "ANSWER_CATEGORY_REQUIRED"
   | "CONTRADICTORY_COVERAGE_CHANGE"
@@ -105,7 +107,7 @@ export function projectAssessmentCoverage(assessment: AnswerAssessment): {
 
 export function authorizeTurnProposal(input: {
   state: InterviewAgentState;
-  mode: "opening" | "answer";
+  mode: AgentRunMode;
   answerCategory: QuestionCategory | null;
   prefix: unknown;
   responseText?: string;
@@ -113,6 +115,10 @@ export function authorizeTurnProposal(input: {
   const parsedPrefix = turnProposalPrefixSchema.safeParse(input.prefix);
   if (!parsedPrefix.success) {
     return { allowed: false, reason: "INVALID_PROPOSAL" };
+  }
+
+  if (input.mode === "opening_clarification") {
+    return { allowed: false, reason: "OPENING_STAGE_MISMATCH" };
   }
 
   if (input.mode === "opening") {

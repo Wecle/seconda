@@ -17,7 +17,14 @@ import {
   interviewPersonaValues,
 } from "@/lib/interview/settings";
 import { z } from "zod";
-import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
+import {
+  questionCategorySchema,
+  type QuestionCategory,
+} from "@/lib/interview/agent/domain/interview";
+import type {
+  AgentRunMode,
+  OpeningStage,
+} from "@/lib/interview/agent/domain/opening-role";
 import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
 import {
   buildPromptPipe,
@@ -25,6 +32,27 @@ import {
 } from "./prompt-pipe";
 
 export const PROMPT_TEMPLATE_VERSION = "interview-agent-v2";
+
+export function assembleTurnRuntimeContext(input: {
+  mode: AgentRunMode;
+  openingStage: OpeningStage;
+  latestAnswer: { id: string; category: QuestionCategory } | null;
+  clarificationAnswer: { id: string; content: string } | null;
+  language: "zh" | "en" | "es" | "de";
+  persona: "friendly" | "standard" | "stressful";
+  allowedTerms: readonly string[];
+}) {
+  return {
+    mode: input.mode,
+    openingStage: input.openingStage,
+    answerCategory: input.latestAnswer?.category ?? null,
+    answerMessageId: input.latestAnswer?.id ?? input.clarificationAnswer?.id ?? null,
+    clarificationAnswer: input.clarificationAnswer?.content ?? null,
+    language: input.language,
+    persona: input.persona,
+    allowedTerms: input.allowedTerms,
+  };
+}
 
 export function assembleAgentContext(input: {
   language: string;
@@ -34,6 +62,7 @@ export function assembleAgentContext(input: {
   targetRoleStatus?: string | null;
   targetRoleConfidence?: string | null;
   targetRoleSourceIds?: string[] | null;
+  openingStage: OpeningStage;
   resumeOverview: string;
   evidenceDirectory: unknown;
   cacheEpoch: number;
@@ -52,6 +81,10 @@ export function assembleAgentContext(input: {
   latestAnswer?: {
     id: string;
     category: string;
+    content: string;
+  } | null;
+  clarificationAnswer?: {
+    id: string;
     content: string;
   } | null;
   priorAssessments?: Array<{
@@ -82,6 +115,7 @@ export function assembleAgentContext(input: {
             targetRoleStatus: input.targetRoleStatus ?? "",
             targetRoleConfidence: input.targetRoleConfidence ?? "",
             targetRoleSourceIds: input.targetRoleSourceIds ?? [],
+            openingStage: input.openingStage,
           }),
         },
         {
@@ -124,6 +158,14 @@ export function assembleAgentContext(input: {
           trimPolicy: "never" as const,
           content: canonicalJson(input.latestAnswer),
         }] : []),
+        ...(input.clarificationAnswer ? [{
+          id: "latest-clarification-answer",
+          version: input.clarificationAnswer.id,
+          priority: 100,
+          cacheScope: "turn" as const,
+          trimPolicy: "never" as const,
+          content: canonicalJson(input.clarificationAnswer),
+        }] : []),
         {
           id: "recent-messages",
           version: "1",
@@ -158,7 +200,7 @@ export async function loadAgentContext(
     interviewId: string;
     runId: string;
     currentInstruction: string;
-    mode: "opening" | "answer";
+    mode: AgentRunMode;
     answerMessageId?: string;
   },
 ) {
@@ -171,6 +213,7 @@ export async function loadAgentContext(
       targetRoleStatus: interviews.targetRoleStatus,
       targetRoleConfidence: interviews.targetRoleConfidence,
       targetRoleSourceIds: interviews.targetRoleSourceIds,
+      openingStage: interviews.openingStage,
       parsedJson: interviewResumeSnapshots.parsedJson,
       extractedText: interviewResumeSnapshots.extractedText,
     }).from(interviews)
@@ -214,14 +257,17 @@ export async function loadAgentContext(
       content: interviewMessages.content,
       category: interviewQuestions.questionType,
     }).from(interviewMessages)
-      .innerJoin(interviewQuestions, eq(interviewQuestions.id, interviewMessages.questionId))
+      .leftJoin(interviewQuestions, eq(interviewQuestions.id, interviewMessages.questionId))
       .where(and(
         eq(interviewMessages.interviewId, input.interviewId),
         input.answerMessageId
           ? eq(interviewMessages.id, input.answerMessageId)
           : eq(interviewMessages.runId, input.runId),
         eq(interviewMessages.role, "user"),
-        eq(interviewMessages.kind, "answer"),
+        eq(
+          interviewMessages.kind,
+          input.mode === "opening_clarification" ? "clarification_answer" : "answer",
+        ),
       ))
       .orderBy(desc(interviewMessages.sequence))
       .limit(1),
@@ -230,14 +276,17 @@ export async function loadAgentContext(
   if (!interview) throw new Error("Interview context not found");
   const evidence = indexResumeEvidence(interview.parsedJson, interview.extractedText ?? "");
   const snapshot = snapshots[0];
-  const latestAnswerRow = input.mode === "answer" ? answerRows[0] : null;
-  if (input.mode === "answer" && !latestAnswerRow) {
-    throw new Error("Current answer context not found");
+  const candidateInputRow = input.mode === "opening" ? null : answerRows[0];
+  if (input.mode !== "opening" && !candidateInputRow) {
+    throw new Error("Current candidate input context not found");
   }
-  const latestAnswer = latestAnswerRow ? {
-    ...latestAnswerRow,
-    category: questionCategorySchema.parse(latestAnswerRow.category),
+  const latestAnswer = input.mode === "answer" && candidateInputRow ? {
+    ...candidateInputRow,
+    category: questionCategorySchema.parse(candidateInputRow.category),
   } : null;
+  const clarificationAnswer = input.mode === "opening_clarification" && candidateInputRow
+    ? { id: candidateInputRow.id, content: candidateInputRow.content }
+    : null;
   const language = z.enum(interviewLanguageValues).parse(interview.language);
   const persona = z.enum(interviewPersonaValues).parse(interview.persona);
   const priorAssessments = assessments.map((assessment) => ({
@@ -254,6 +303,7 @@ export async function loadAgentContext(
     targetRoleStatus: interview.targetRoleStatus,
     targetRoleConfidence: interview.targetRoleConfidence,
     targetRoleSourceIds: interview.targetRoleSourceIds,
+    openingStage: interview.openingStage,
     resumeOverview: evidence.overview,
     evidenceDirectory: evidence.directory,
     cacheEpoch: snapshot?.cacheEpoch ?? 0,
@@ -272,16 +322,18 @@ export async function loadAgentContext(
       category: latestAnswer.category,
       content: latestAnswer.content,
     } : null,
+    clarificationAnswer,
     priorAssessments,
     contextWindow: readPositiveInteger(process.env.INTERVIEW_AGENT_CONTEXT_WINDOW, 128_000),
     outputReserve: readPositiveInteger(process.env.INTERVIEW_AGENT_OUTPUT_RESERVE, 8_000),
   });
   return {
     ...assembled,
-    turnContext: {
+    turnContext: assembleTurnRuntimeContext({
       mode: input.mode,
-      answerCategory: latestAnswer?.category ?? null,
-      answerMessageId: latestAnswer?.id ?? null,
+      openingStage: interview.openingStage,
+      latestAnswer,
+      clarificationAnswer,
       language,
       persona,
       allowedTerms: collectAllowedTerms({
@@ -289,9 +341,9 @@ export async function loadAgentContext(
         preference: interview.preference,
         targetRole: interview.targetRole,
         candidateMessages: messages,
-        currentAnswer: latestAnswer?.content ?? null,
+        currentAnswer: candidateInputRow?.content ?? null,
       }),
-    },
+    }),
   };
 }
 
@@ -320,7 +372,10 @@ export function collectAllowedTerms(input: {
       targetRole: input.targetRole,
     },
     candidateRawMessages: input.candidateMessages
-      .filter((message) => message.role === "user" && message.kind === "answer")
+      .filter((message) => message.role === "user" && [
+        "answer",
+        "clarification_answer",
+      ].includes(message.kind))
       .map((message) => message.content),
     currentAnswer: input.currentAnswer,
   };

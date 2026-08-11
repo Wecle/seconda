@@ -21,6 +21,7 @@ import { agentExitMessage } from "../lib/interview/agent/protocols/exit-messages
 import type { AgentRunTrigger } from "../lib/interview/agent/persistence/repository";
 import {
   ANSWER_RUN_INSTRUCTION,
+  OPENING_CLARIFICATION_RUN_INSTRUCTION,
   buildOpeningInstruction,
 } from "../lib/interview/agent/prompts/turn-instructions";
 
@@ -805,18 +806,26 @@ async function recoverMissingTrigger(
     extractedText: string | null;
   },
 ): Promise<AgentRunTrigger> {
-  const [answer] = await tx.select({ id: interviewMessages.id })
+  const [answer] = await tx.select({
+    id: interviewMessages.id,
+    kind: interviewMessages.kind,
+  })
     .from(interviewMessages)
     .where(and(
       eq(interviewMessages.runId, run.id),
       eq(interviewMessages.role, "user"),
-      eq(interviewMessages.kind, "answer"),
+      inArray(interviewMessages.kind, ["answer", "clarification_answer"]),
     ))
+    .orderBy(desc(interviewMessages.sequence))
     .limit(1);
   if (answer) {
     return {
-      mode: "answer",
-      instruction: ANSWER_RUN_INSTRUCTION,
+      mode: answer.kind === "clarification_answer"
+        ? "opening_clarification"
+        : "answer",
+      instruction: answer.kind === "clarification_answer"
+        ? OPENING_CLARIFICATION_RUN_INSTRUCTION
+        : ANSWER_RUN_INSTRUCTION,
       answerMessageId: answer.id,
     };
   }
@@ -863,12 +872,16 @@ async function buildDiscardEvent(
   };
 }
 
-function isAgentRunTrigger(value: unknown): value is AgentRunTrigger {
+export function isAgentRunTrigger(value: unknown): value is AgentRunTrigger {
   if (typeof value !== "object" || value === null) return false;
   const trigger = value as Record<string, unknown>;
-  return (trigger.mode === "opening" || trigger.mode === "answer")
-    && typeof trigger.instruction === "string"
-    && trigger.instruction.length > 0;
+  if (typeof trigger.instruction !== "string" || trigger.instruction.length === 0) {
+    return false;
+  }
+  if (trigger.mode === "opening") return true;
+  return (trigger.mode === "answer" || trigger.mode === "opening_clarification")
+    && typeof trigger.answerMessageId === "string"
+    && trigger.answerMessageId.length > 0;
 }
 
 async function notifyPublicEvent(

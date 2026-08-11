@@ -92,6 +92,18 @@ function finishPrefix(input: {
   };
 }
 
+test("keeps clarification runs dormant until opening stage policy is activated", () => {
+  assert.deepEqual(authorizeTurnProposal({
+    state: stateWith(),
+    mode: "opening_clarification",
+    answerCategory: null,
+    prefix: askPrefix({ assessment: null, coverageChanges: [] }),
+  }), {
+    allowed: false,
+    reason: "OPENING_STAGE_MISMATCH",
+  });
+});
+
 test("uses the current assessment for low information gain", () => {
   const result = authorizeTurnProposal({
     state: stateWith({

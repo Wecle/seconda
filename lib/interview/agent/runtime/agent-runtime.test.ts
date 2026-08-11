@@ -554,8 +554,12 @@ async function createRuntimeFixture(options?: {
     progressHash: options?.progressHash ?? (() => "progress"),
     turnContext: {
       mode: options?.answerCategory ? "answer" as const : "opening" as const,
+      openingStage: options?.answerCategory
+        ? "formal_interview" as const
+        : "role_resolution" as const,
       answerCategory: options?.answerCategory ?? null,
       answerMessageId,
+      clarificationAnswer: null,
       language: "zh" as const,
       persona: "standard" as const,
       allowedTerms: options?.allowedTerms ?? ["回退机制", "项目经历"],

@@ -70,11 +70,17 @@ import {
   isTerminalTool,
 } from "@/lib/interview/agent/runtime/policy";
 import { agentExitMessage } from "@/lib/interview/agent/protocols/exit-messages";
+import type {
+  AgentRunMode,
+  OpeningStage,
+} from "@/lib/interview/agent/domain/opening-role";
 
 export type TurnRuntimeContext = {
-  mode: "opening" | "answer";
+  mode: AgentRunMode;
+  openingStage: OpeningStage;
   answerCategory: QuestionCategory | null;
   answerMessageId: string | null;
+  clarificationAnswer: string | null;
   language: "zh" | "en" | "es" | "de";
   persona: "friendly" | "standard" | "stressful";
   allowedTerms: readonly string[];

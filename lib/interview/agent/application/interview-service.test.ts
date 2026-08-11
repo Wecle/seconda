@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/persistence/memory-repository";
 import {
@@ -62,7 +63,11 @@ function fixture(options?: { status?: string; configVersion?: number; scheduleFa
 
 async function terminallyFailRun(
   repository: ReturnType<typeof createInMemoryInterviewAgentRepository>,
-  input: { interviewId?: string; key: string; mode: "opening" | "answer" },
+  input: {
+    interviewId?: string;
+    key: string;
+    mode: "opening" | "opening_clarification" | "answer";
+  },
 ) {
   const interviewId = input.interviewId ?? "interview";
   const run = await repository.createRun({
@@ -70,12 +75,12 @@ async function terminallyFailRun(
     idempotencyKey: input.key,
   });
   let answerMessageId: string | null = null;
-  if (input.mode === "answer") {
+  if (input.mode !== "opening") {
     const answer = await repository.appendMessage({
       interviewId,
       runId: run.id,
       role: "user",
-      kind: "answer",
+      kind: input.mode === "answer" ? "answer" : "clarification_answer",
       content: "candidate answer",
     });
     answerMessageId = answer.id;
@@ -83,8 +88,10 @@ async function terminallyFailRun(
   await repository.saveRunTrigger(run.id, input.mode === "opening"
     ? { mode: "opening", instruction: "opening instruction" }
     : {
-        mode: "answer",
-        instruction: "answer instruction",
+        mode: input.mode,
+        instruction: input.mode === "answer"
+          ? "answer instruction"
+          : "clarification instruction",
         answerMessageId: answerMessageId!,
       });
   await repository.failRun(
@@ -133,6 +140,19 @@ test("accepts a candidate answer exactly once for a repeated idempotency key", a
   assert.deepEqual(first.message, second.message);
   assert.equal(f.getRounds(), 1);
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 1);
+});
+
+test("keeps the clarification run producer dormant", async () => {
+  const source = await readFile(
+    new URL("./interview-service.ts", import.meta.url),
+    "utf8",
+  );
+  const submitSource = source.slice(
+    source.indexOf("export async function submitCandidateMessage"),
+    source.indexOf("type RetryFailedRunErrorCode"),
+  );
+  assert.match(submitSource, /mode: "answer"/);
+  assert.doesNotMatch(submitSource, /opening_clarification/);
 });
 
 test("repairs an opening run whose first scheduler handoff failed", async () => {
@@ -284,6 +304,33 @@ test("preserves the original answer message without creating another", async () 
     trigger?.mode === "answer" ? trigger.answerMessageId : null,
     originalAnswer.id,
   );
+});
+
+test("retries clarification runs against the original clarification answer", async () => {
+  const f = fixture();
+  const failedRunId = await terminallyFailRun(f.repository, {
+    key: "clarification-failed",
+    mode: "opening_clarification",
+  });
+  const beforeMessages = f.repository.inspectInterview("interview").messages;
+  const originalAnswer = beforeMessages.find((message) => message.runId === failedRunId);
+  assert.equal(originalAnswer?.kind, "clarification_answer");
+
+  const retried = await retryFailedAgentRun({
+    interviewId: "interview",
+    failedRunId,
+    repository: f.repository,
+    scheduler: f.scheduler,
+    now: new Date(),
+  });
+
+  assert.equal(f.repository.inspectInterview("interview").messages.length, beforeMessages.length);
+  assert.deepEqual((await f.repository.getRun(retried.runId))?.trigger, {
+    mode: "opening_clarification",
+    instruction: "clarification instruction",
+    answerMessageId: originalAnswer?.id,
+  });
+  assert.equal(f.calls.filter((call) => call === "run:opening_clarification").length, 1);
 });
 
 test("rejects a stale failed run when no replacement exists", async () => {
