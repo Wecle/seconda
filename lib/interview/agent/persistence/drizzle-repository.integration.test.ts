@@ -95,7 +95,11 @@ test("real database fences stale workers, notifies durable events and preserves 
     })));
     assert.equal(new Set(runs.map((run) => run.id)).size, 1);
     const runId = runs[0].id;
-    await repository.saveRunTrigger(runId, { mode: "answer", instruction: "resume after crash" });
+    await repository.saveRunTrigger(runId, {
+      mode: "answer",
+      instruction: "resume after crash",
+      answerMessageId: "answer-message-1",
+    });
 
     const startedAt = new Date();
     const firstClaim = await repository.claimRun(runId, "worker-a", startedAt, 1_000);

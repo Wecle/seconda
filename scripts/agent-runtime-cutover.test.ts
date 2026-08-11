@@ -613,6 +613,7 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
     await repository.saveRunTrigger(unfinishedRun.id, {
       mode: "answer",
       instruction: "continue",
+      answerMessageId: "answer-before-cutover",
     });
     await repository.startAttempt(unfinishedRun.id, {
       model: "test-model",
@@ -653,6 +654,7 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
     await repository.saveRunTrigger(authoritativeRun.id, {
       mode: "answer",
       instruction: "continue latest answer",
+      answerMessageId: "latest-answer-before-cutover",
     });
     await database.update(interviewAgentRuns).set({
       leaseOwner: "latest-old-worker",

@@ -3,6 +3,7 @@ import test from "node:test";
 import type { AnswerAssessment } from "@/lib/interview/agent/protocols/events";
 import { createInMemoryInterviewAgentRepository } from "@/lib/interview/agent/persistence/memory-repository";
 import {
+  type AgentRunTrigger,
   type CommitTurnOutcomeInput,
   type RunLeaseToken,
 } from "@/lib/interview/agent/persistence/repository";
@@ -10,6 +11,15 @@ import {
   hashTurnProposalPrefix,
   type TurnProposalPrefix,
 } from "@/lib/interview/agent/domain/turn-proposal";
+
+test("requires an authoritative message ID for answer triggers", () => {
+  const trigger: AgentRunTrigger = {
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: "answer-message-1",
+  };
+  assert.equal(trigger.answerMessageId, "answer-message-1");
+});
 
 test("allocates monotonic event and message sequences", async () => {
   const repository = createInMemoryInterviewAgentRepository();
@@ -217,7 +227,11 @@ test("allows one lease owner and supports stale takeover", async () => {
 test("reopens a retryable failed run with its durable trigger and checkpoint", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "failed-recovery" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue accepted answer" });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue accepted answer",
+    answerMessageId: "answer-message-1",
+  });
   await repository.saveCheckpoint(run.id, {
     turnCount: 2,
     toolCallCount: 1,
@@ -245,7 +259,11 @@ test("reopens a retryable failed run with its durable trigger and checkpoint", a
 test("exhausts Agent recovery after two resumed executions", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "bounded-recovery" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: "answer-message-1",
+  });
   await repository.terminateRun(run.id, { exitReason: "provider_failed" });
   for (let resume = 1; resume <= 2; resume += 1) {
     const failed = await repository.getRun(run.id);

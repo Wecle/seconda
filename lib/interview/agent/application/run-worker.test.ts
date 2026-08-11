@@ -6,7 +6,7 @@ import { executeClaimedRun } from "@/lib/interview/agent/application/run-worker"
 test("executes a persisted trigger once while a lease is active", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
+  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue", answerMessageId: "answer-message-1" });
   let executions = 0;
   const executor = {
     async run() {
@@ -41,7 +41,7 @@ test("does not execute terminal runs", async () => {
 test("renews the lease during long execution", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "run" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
+  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue", answerMessageId: "answer-message-1" });
   let renewals = 0;
   let markRenewed!: () => void;
   const renewed = new Promise<void>((resolve) => {
@@ -79,6 +79,7 @@ test("waits for an in-flight renewal before releasing the lease", async () => {
   await repository.saveRunTrigger(run.id, {
     mode: "answer",
     instruction: "continue",
+    answerMessageId: "answer-message-1",
   });
   let markRenewalStarted!: () => void;
   let releaseRenewal!: () => void;
@@ -135,6 +136,7 @@ test("reports lease_lost when an in-flight renewal fails after the executor retu
   await repository.saveRunTrigger(run.id, {
     mode: "answer",
     instruction: "continue",
+    answerMessageId: "answer-message-1",
   });
   let markRenewalStarted!: () => void;
   let releaseRenewal!: () => void;
@@ -181,6 +183,7 @@ test("keeps a persisted completion when an overlapping renewal reports lease los
   await repository.saveRunTrigger(run.id, {
     mode: "answer",
     instruction: "continue",
+    answerMessageId: "answer-message-1",
   });
   let markRenewalStarted!: () => void;
   let releaseRenewal!: () => void;
@@ -232,6 +235,7 @@ test("reports a lost lease once and leaves the run recoverable", async () => {
   await repository.saveRunTrigger(run.id, {
     mode: "answer",
     instruction: "continue",
+    answerMessageId: "answer-message-1",
   });
   let renewals = 0;
   repository.renewLease = async () => {
@@ -282,7 +286,7 @@ test("fails a running run that has no persisted trigger", async () => {
 test("a stale worker cannot append after a takeover completes the run", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "takeover" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
+  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue", answerMessageId: "answer-message-1" });
   let releaseStale!: () => void;
   let markStaleStarted!: () => void;
   const staleStarted = new Promise<void>((resolve) => { markStaleStarted = resolve; });
@@ -337,7 +341,7 @@ test("a stale worker cannot append after a takeover completes the run", async ()
 test("finalizes a run when the message commit succeeded before executor acknowledgement failed", async () => {
   const repository = createInMemoryInterviewAgentRepository();
   const run = await repository.createRun({ interviewId: "interview", idempotencyKey: "committed-crash" });
-  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue" });
+  await repository.saveRunTrigger(run.id, { mode: "answer", instruction: "continue", answerMessageId: "answer-message-1" });
 
   const result = await executeClaimedRun({
     runId: run.id,

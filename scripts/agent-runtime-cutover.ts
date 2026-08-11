@@ -813,7 +813,13 @@ async function recoverMissingTrigger(
       eq(interviewMessages.kind, "answer"),
     ))
     .limit(1);
-  if (answer) return { mode: "answer", instruction: ANSWER_RUN_INSTRUCTION };
+  if (answer) {
+    return {
+      mode: "answer",
+      instruction: ANSWER_RUN_INSTRUCTION,
+      answerMessageId: answer.id,
+    };
+  }
   const summary = indexResumeEvidence(
     run.parsedJson,
     run.extractedText ?? "",

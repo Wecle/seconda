@@ -17,7 +17,11 @@ const base: AgentRunRecord = {
   resumeCount: 0,
   nextResumeAt: null,
   checkpoint: null,
-  trigger: { mode: "answer", instruction: "continue" },
+  trigger: {
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: "answer-message-1",
+  },
   lastEventSequence: 0,
 };
 
@@ -48,7 +52,11 @@ test("schedules a retryable failed answer run without accepting the answer again
     ...base,
     status: "failed",
     exitReason: "aborted_streaming",
-    trigger: { mode: "answer", instruction: "continue from accepted answer" },
+    trigger: {
+      mode: "answer",
+      instruction: "continue from accepted answer",
+      answerMessageId: "answer-message-1",
+    },
   }, new Date()), "schedule");
 });
 

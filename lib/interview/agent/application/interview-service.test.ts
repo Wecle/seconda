@@ -34,7 +34,6 @@ function fixture(options?: { status?: string; configVersion?: number; scheduleFa
         interviewId: input.interviewId,
         idempotencyKey: input.runIdempotencyKey,
       });
-      await repository.saveRunTrigger(run.id, input.trigger);
       rounds += 1;
       calls.push("acceptCandidateMessage");
       const message = { id: `message-${messages.size + 1}`, runId: run.id, sequence: messages.size + 1, content: input.content, created: true };
@@ -70,19 +69,24 @@ async function terminallyFailRun(
     interviewId,
     idempotencyKey: input.key,
   });
-  await repository.saveRunTrigger(run.id, {
-    mode: input.mode,
-    instruction: input.mode === "opening" ? "opening instruction" : "answer instruction",
-  });
+  let answerMessageId: string | null = null;
   if (input.mode === "answer") {
-    await repository.appendMessage({
+    const answer = await repository.appendMessage({
       interviewId,
       runId: run.id,
       role: "user",
       kind: "answer",
       content: "candidate answer",
     });
+    answerMessageId = answer.id;
   }
+  await repository.saveRunTrigger(run.id, input.mode === "opening"
+    ? { mode: "opening", instruction: "opening instruction" }
+    : {
+        mode: "answer",
+        instruction: "answer instruction",
+        answerMessageId: answerMessageId!,
+      });
   await repository.failRun(
     run.id,
     "terminal_action_failed",
@@ -444,6 +448,7 @@ test("ending an interview invalidates an in-flight answer run", async () => {
   await f.repository.saveRunTrigger(activeRun.id, {
     mode: "answer",
     instruction: "continue",
+    answerMessageId: "answer-message-1",
   });
   await f.repository.claimRun(activeRun.id, "worker-a", new Date(0), 30_000);
   await endAgentInterview({
