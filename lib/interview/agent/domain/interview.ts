@@ -26,6 +26,7 @@ export const interviewMessageKindSchema = z.enum([
   "feedback",
   "finish",
   "clarification",
+  "clarification_answer",
   "tool_result",
 ]);
 
