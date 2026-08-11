@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { interviewQuestions, interviewResumeSnapshots, interviews, questionScores } from "@/lib/db/schema";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { scoreInterviewAnswer } from "@/lib/interview";
+import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { assertCompletionLease } from "./fencing";
 import type { CompletionLeaseToken } from "./repository";
@@ -106,7 +107,7 @@ export async function scorePendingInterviewQuestions(database: Database, intervi
       const result = await scoreInterviewAnswer({
         question: question.question,
         answer: question.answerText!,
-        questionType: question.questionType,
+        questionType: questionCategorySchema.parse(question.questionType),
         level: context.interview.configVersion === 2 ? "adaptive" : context.interview.level,
         persona: context.interview.persona,
         language: context.interview.language,

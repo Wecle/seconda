@@ -345,6 +345,103 @@ async function migrate() {
     )
   `;
 
+  await sql`ALTER TABLE interview_questions ADD COLUMN IF NOT EXISTS purpose TEXT`;
+  await sql`UPDATE interview_questions SET purpose = 'formal' WHERE purpose IS NULL`;
+  await sql`ALTER TABLE interview_questions ALTER COLUMN purpose SET DEFAULT 'formal'`;
+  await sql`ALTER TABLE interview_questions ALTER COLUMN purpose SET NOT NULL`;
+  await sql`ALTER TABLE interview_questions ALTER COLUMN question_type DROP NOT NULL`;
+
+  await sql`ALTER TABLE interviews ADD COLUMN IF NOT EXISTS opening_stage TEXT`;
+  await sql`
+    UPDATE interviews AS interview
+    SET opening_stage = CASE
+      WHEN interview.status = 'active'
+        AND interview.candidate_round_count = 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM interview_questions AS question
+          WHERE question.interview_id = interview.id
+        )
+      THEN 'role_resolution'
+      ELSE 'formal_interview'
+    END
+    WHERE interview.opening_stage IS NULL
+  `;
+  await sql`ALTER TABLE interviews ALTER COLUMN opening_stage SET DEFAULT 'role_resolution'`;
+  await sql`ALTER TABLE interviews ALTER COLUMN opening_stage SET NOT NULL`;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'interview_questions_purpose_check'
+          AND conrelid = 'interview_questions'::regclass
+      ) THEN
+        ALTER TABLE interview_questions
+          ADD CONSTRAINT interview_questions_purpose_check
+          CHECK (purpose IN ('opening_clarification', 'formal'));
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'interview_questions_purpose_category_check'
+          AND conrelid = 'interview_questions'::regclass
+      ) THEN
+        ALTER TABLE interview_questions
+          ADD CONSTRAINT interview_questions_purpose_category_check
+          CHECK (
+            (purpose = 'formal' AND question_type IS NOT NULL)
+            OR (purpose = 'opening_clarification' AND question_type IS NULL)
+          );
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'interviews_opening_stage_check'
+          AND conrelid = 'interviews'::regclass
+      ) THEN
+        ALTER TABLE interviews
+          ADD CONSTRAINT interviews_opening_stage_check
+          CHECK (opening_stage IN (
+            'role_resolution',
+            'awaiting_role_clarification',
+            'formal_interview'
+          ));
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'interviews_target_role_status_check'
+          AND conrelid = 'interviews'::regclass
+      ) THEN
+        ALTER TABLE interviews
+          ADD CONSTRAINT interviews_target_role_status_check
+          CHECK (
+            target_role_status IS NULL
+            OR target_role_status IN (
+              'needs_clarification',
+              'inferred',
+              'confirmed'
+            )
+          );
+      END IF;
+
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'interviews_target_role_confidence_check'
+          AND conrelid = 'interviews'::regclass
+      ) THEN
+        ALTER TABLE interviews
+          ADD CONSTRAINT interviews_target_role_confidence_check
+          CHECK (
+            target_role_confidence IS NULL
+            OR target_role_confidence IN ('low', 'medium', 'high')
+          );
+      END IF;
+    END;
+    $$
+  `;
+
   await sql`
     CREATE TABLE IF NOT EXISTS interview_agent_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -805,6 +902,28 @@ async function migrate() {
       UNIQUE (interview_id, sequence),
       UNIQUE (interview_id, idempotency_key)
     )
+  `;
+  await sql`
+    ALTER TABLE interviews
+    ADD COLUMN IF NOT EXISTS target_role_confirmation_message_id UUID
+  `;
+  await sql`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'interviews_target_role_confirmation_message_id_fkey'
+          AND conrelid = 'interviews'::regclass
+      ) THEN
+        ALTER TABLE interviews
+          ADD CONSTRAINT interviews_target_role_confirmation_message_id_fkey
+          FOREIGN KEY (target_role_confirmation_message_id)
+          REFERENCES interview_messages(id)
+          ON DELETE SET NULL;
+      END IF;
+    END;
+    $$
   `;
 
   await sql`

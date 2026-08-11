@@ -71,6 +71,15 @@ test("conflicting answer replay leaves the accepted transaction unchanged", {
       },
     });
     interviewId = created.interviewId;
+    const [opening] = await db.select({
+      openingStage: interviews.openingStage,
+      targetRoleConfirmationMessageId:
+        interviews.targetRoleConfirmationMessageId,
+    }).from(interviews).where(eq(interviews.id, interviewId));
+    assert.deepEqual(opening, {
+      openingStage: "role_resolution",
+      targetRoleConfirmationMessageId: null,
+    });
     await db.insert(interviewQuestions).values({
       interviewId,
       questionIndex: 1,
@@ -78,6 +87,13 @@ test("conflicting answer replay leaves the accepted transaction unchanged", {
       topic: "reliability",
       question: "你如何保证服务可靠性？",
     });
+    const [insertedQuestion] = await db.select({
+      purpose: interviewQuestions.purpose,
+    }).from(interviewQuestions).where(eq(
+      interviewQuestions.interviewId,
+      interviewId,
+    ));
+    assert.equal(insertedQuestion?.purpose, "formal");
 
     const answerKey = randomUUID();
     await store.acceptCandidateMessage({

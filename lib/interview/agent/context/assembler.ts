@@ -230,10 +230,14 @@ export async function loadAgentContext(
   if (!interview) throw new Error("Interview context not found");
   const evidence = indexResumeEvidence(interview.parsedJson, interview.extractedText ?? "");
   const snapshot = snapshots[0];
-  const latestAnswer = input.mode === "answer" ? answerRows[0] : null;
-  if (input.mode === "answer" && !latestAnswer) {
+  const latestAnswerRow = input.mode === "answer" ? answerRows[0] : null;
+  if (input.mode === "answer" && !latestAnswerRow) {
     throw new Error("Current answer context not found");
   }
+  const latestAnswer = latestAnswerRow ? {
+    ...latestAnswerRow,
+    category: questionCategorySchema.parse(latestAnswerRow.category),
+  } : null;
   const language = z.enum(interviewLanguageValues).parse(interview.language);
   const persona = z.enum(interviewPersonaValues).parse(interview.persona);
   const priorAssessments = assessments.map((assessment) => ({
@@ -276,9 +280,7 @@ export async function loadAgentContext(
     ...assembled,
     turnContext: {
       mode: input.mode,
-      answerCategory: latestAnswer
-        ? questionCategorySchema.parse(latestAnswer.category)
-        : null,
+      answerCategory: latestAnswer?.category ?? null,
       answerMessageId: latestAnswer?.id ?? null,
       language,
       persona,

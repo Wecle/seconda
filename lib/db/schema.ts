@@ -1,5 +1,9 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, check, pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
+import type {
+  OpeningStage,
+  QuestionPurpose,
+} from "@/lib/interview/agent/domain/opening-role";
 import type { StoredInterviewConfig } from "@/lib/interview/settings";
 import type { ResumeSourceType } from "@/lib/resume/types";
 
@@ -85,6 +89,14 @@ export const interviews = pgTable("interviews", {
   targetRoleStatus: text("target_role_status"),
   targetRoleConfidence: text("target_role_confidence"),
   targetRoleSourceIds: jsonb("target_role_source_ids").$type<string[]>(),
+  openingStage: text("opening_stage")
+    .$type<OpeningStage>()
+    .notNull()
+    .default("role_resolution"),
+  targetRoleConfirmationMessageId: uuid("target_role_confirmation_message_id")
+    .references((): AnyPgColumn => interviewMessages.id, {
+      onDelete: "set null",
+    }),
   candidateRoundCount: integer("candidate_round_count").notNull().default(0),
   compactionFailureCount: integer("compaction_failure_count").notNull().default(0),
   status: text("status").notNull().default("active"),
@@ -96,6 +108,18 @@ export const interviews = pgTable("interviews", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique().on(table.creationOwnerUserId, table.creationIdempotencyKey),
+  check(
+    "interviews_opening_stage_check",
+    sql`${table.openingStage} IN ('role_resolution', 'awaiting_role_clarification', 'formal_interview')`,
+  ),
+  check(
+    "interviews_target_role_status_check",
+    sql`${table.targetRoleStatus} IS NULL OR ${table.targetRoleStatus} IN ('needs_clarification', 'inferred', 'confirmed')`,
+  ),
+  check(
+    "interviews_target_role_confidence_check",
+    sql`${table.targetRoleConfidence} IS NULL OR ${table.targetRoleConfidence} IN ('low', 'medium', 'high')`,
+  ),
 ]);
 
 export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
@@ -275,7 +299,11 @@ export const interviewQuestions = pgTable("interview_questions", {
     .notNull()
     .references(() => interviews.id, { onDelete: "cascade" }),
   questionIndex: integer("question_index").notNull(),
-  questionType: text("question_type").notNull(),
+  purpose: text("purpose")
+    .$type<QuestionPurpose>()
+    .notNull()
+    .default("formal"),
+  questionType: text("question_type"),
   topic: text("topic"),
   question: text("question").notNull(),
   tip: text("tip"),
@@ -289,6 +317,14 @@ export const interviewQuestions = pgTable("interview_questions", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique().on(table.interviewId, table.questionIndex),
+  check(
+    "interview_questions_purpose_check",
+    sql`${table.purpose} IN ('opening_clarification', 'formal')`,
+  ),
+  check(
+    "interview_questions_purpose_category_check",
+    sql`(${table.purpose} = 'formal' AND ${table.questionType} IS NOT NULL) OR (${table.purpose} = 'opening_clarification' AND ${table.questionType} IS NULL)`,
+  ),
 ]);
 
 export const questionScores = pgTable("question_scores", {
