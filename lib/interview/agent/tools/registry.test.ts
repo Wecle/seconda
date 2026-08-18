@@ -12,7 +12,7 @@ import {
   createInterviewToolRegistry,
   interviewToolInputSchemas,
   interviewToolNames,
-  providerInterviewToolInputSchemas,
+  providerInterviewToolInputSchema,
 } from "@/lib/interview/agent/tools/registry";
 
 const terminalInput = {
@@ -38,6 +38,62 @@ const terminalInput = {
 const terminalProviderInput = {
   publicAnalysis: "候选人的方向清晰，下一步邀请其介绍最近经历与岗位期待。",
   ...terminalInput,
+};
+
+const formalProposal = {
+  assessment: {
+    completeness: "high" as const,
+    specificity: "medium" as const,
+    evidenceStrength: "strong" as const,
+    reflectionDepth: "surface" as const,
+    followUpNeeded: true,
+    missingPoints: ["触发阈值"],
+    extractedEvidence: ["30 秒后自动降级"],
+    publicSummary: "回答包含明确机制，但触发条件仍需追问。",
+  },
+  coverageChanges: [{
+    category: "technical_depth" as const,
+    topic: "降级机制",
+    status: "partial" as const,
+    resumeEvidenceIds: ["evidence-1"],
+  }],
+  roleResolution: null,
+  decision: {
+    action: "ask" as const,
+    category: "technical_depth" as const,
+    intent: "follow_up" as const,
+    evidenceIds: ["evidence-1"],
+    coverageTarget: "验证自动降级的触发条件",
+    estimatedInformationGain: "high" as const,
+  },
+  responseText: "请说明自动降级的触发条件。",
+};
+
+const confirmedRoleProposal = {
+  ...terminalInput,
+  roleResolution: {
+    status: "confirmed" as const,
+    value: "后端工程师",
+    confidence: "high" as const,
+    resumeEvidenceIds: ["resume:raw"],
+  },
+};
+
+const openingClarificationProposal = {
+  assessment: null,
+  coverageChanges: [],
+  roleResolution: {
+    status: "needs_clarification" as const,
+    confidence: "low" as const,
+    resumeEvidenceIds: ["resume:raw"],
+  },
+  decision: {
+    action: "clarify" as const,
+    subject: "target_role" as const,
+    evidenceIds: ["resume:raw"],
+    estimatedInformationGain: "high" as const,
+  },
+  responseText: "请问你的目标岗位是什么？",
 };
 
 test("exposes exactly three read tools and one terminal tool", () => {
@@ -71,8 +127,9 @@ test("uses the complete interview turn proposal as terminal input", () => {
 });
 
 test("requires provider-only public analysis for every model-visible tool", () => {
-  assert.equal(providerInterviewToolInputSchemas.get_coverage_state.safeParse({}).success, false);
-  assert.equal(providerInterviewToolInputSchemas.get_coverage_state.safeParse({
+  const providerSchema = providerInterviewToolInputSchema("get_coverage_state", "answer");
+  assert.equal(providerSchema.safeParse({}).success, false);
+  assert.equal(providerSchema.safeParse({
     publicAnalysis: "先检查当前能力覆盖情况。",
   }).success, true);
   assert.equal(interviewToolInputSchemas.get_coverage_state.safeParse({}).success, true);
@@ -82,17 +139,43 @@ test("requires provider-only public analysis for every model-visible tool", () =
 });
 
 test("keeps public analysis first and response text last in terminal JSON Schema", () => {
-  const schema = z.toJSONSchema(
-    providerInterviewToolInputSchemas.submit_interview_turn,
-  ) as { properties?: Record<string, unknown> };
-  assert.deepEqual(Object.keys(schema.properties ?? {}), [
-    "publicAnalysis",
-    "assessment",
-    "coverageChanges",
-    "roleResolution",
-    "decision",
-    "responseText",
-  ]);
+  for (const mode of ["opening", "opening_clarification", "answer"] as const) {
+    const schema = z.toJSONSchema(
+      providerInterviewToolInputSchema("submit_interview_turn", mode),
+    ) as {
+      properties?: Record<string, unknown>;
+      anyOf?: Array<{ properties?: Record<string, unknown> }>;
+    };
+    const branches = schema.anyOf ?? [schema];
+    for (const branch of branches) {
+      const keys = Object.keys(branch.properties ?? {});
+      assert.equal(keys[0], "publicAnalysis");
+      assert.equal(keys.at(-1), "responseText");
+    }
+  }
+});
+
+test("exposes only the legal terminal contract for each run mode", () => {
+  const publicAnalysis = "回答提供了方向信息，下一步核实项目证据。";
+  const formal = providerInterviewToolInputSchema("submit_interview_turn", "answer");
+  assert.equal(formal.safeParse({ publicAnalysis, ...formalProposal }).success, true);
+  assert.equal(formal.safeParse({
+    publicAnalysis,
+    ...formalProposal,
+    roleResolution: terminalInput.roleResolution,
+  }).success, false);
+
+  const opening = providerInterviewToolInputSchema("submit_interview_turn", "opening");
+  assert.equal(opening.safeParse(terminalProviderInput).success, true);
+  assert.equal(opening.safeParse({ publicAnalysis, ...openingClarificationProposal }).success, true);
+  assert.equal(opening.safeParse({ publicAnalysis, ...formalProposal }).success, false);
+
+  const confirmation = providerInterviewToolInputSchema(
+    "submit_interview_turn",
+    "opening_clarification",
+  );
+  assert.equal(confirmation.safeParse({ publicAnalysis, ...confirmedRoleProposal }).success, true);
+  assert.equal(confirmation.safeParse(terminalProviderInput).success, false);
 });
 
 test("exposes the candidate response contract in the provider JSON Schema", () => {
@@ -158,9 +241,11 @@ test("exposes the candidate response contract in the provider JSON Schema", () =
 });
 
 test("provider schema accepts only active real tool calls", () => {
+  const coverageSchema = providerInterviewToolInputSchema("get_coverage_state", "opening");
+  const submitSchema = providerInterviewToolInputSchema("submit_interview_turn", "opening");
   const schema = createAgentProviderStepSchema([
-    "get_coverage_state",
-    "submit_interview_turn",
+    { name: "get_coverage_state", description: "coverage", inputSchema: coverageSchema },
+    { name: "submit_interview_turn", description: "submit", inputSchema: submitSchema },
   ]);
   assert.equal(schema.safeParse({
     type: "tool_call",
@@ -184,6 +269,11 @@ test("provider schema accepts only active real tool calls", () => {
     type: "final",
     content: "请介绍一下自己。",
   }).success, false);
+  assert.throws(() => createAgentProviderStepSchema([{
+    name: "finish_interview",
+    description: "unknown",
+    inputSchema: z.object({}),
+  }]), /Unknown Agent tool descriptor/);
 });
 
 test("registry contains only model-visible tools", () => {

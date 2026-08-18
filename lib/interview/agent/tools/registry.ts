@@ -1,12 +1,17 @@
 import { z } from "zod";
 
 import type { AgentModelStep } from "@/lib/interview/agent/protocols/model";
+import type { AgentToolDescriptor } from "@/lib/interview/agent/protocols/model";
+import type { AgentRunMode } from "@/lib/interview/agent/domain/opening-role";
 import type {
   InterviewToolContext,
   InterviewToolDefinition,
 } from "@/lib/interview/agent/tools/pipeline";
 import { withPublicAnalysis } from "@/lib/interview/agent/prompts/public-analysis";
-import { interviewTurnProposalSchema } from "@/lib/interview/agent/domain/turn-proposal";
+import {
+  interviewTurnProposalSchema,
+  turnProposalContractForMode,
+} from "@/lib/interview/agent/domain/turn-proposal";
 
 export const interviewToolNames = [
   "get_resume_evidence",
@@ -47,7 +52,7 @@ export const interviewToolInputSchemas = {
   submit_interview_turn: interviewTurnProposalSchema,
 } satisfies Record<InterviewToolName, z.ZodType>;
 
-export const providerInterviewToolInputSchemas = {
+const providerReadToolInputSchemas = {
   get_resume_evidence: withPublicAnalysis(
     interviewToolInputSchemas.get_resume_evidence,
     "read",
@@ -60,11 +65,17 @@ export const providerInterviewToolInputSchemas = {
     interviewToolInputSchemas.get_coverage_state,
     "read",
   ),
-  submit_interview_turn: withPublicAnalysis(
-    interviewTurnProposalSchema,
-    "terminal",
-  ),
-} satisfies Record<InterviewToolName, z.ZodType>;
+} satisfies Record<Exclude<InterviewToolName, "submit_interview_turn">, z.ZodType>;
+
+export function providerInterviewToolInputSchema(
+  name: InterviewToolName,
+  mode: AgentRunMode,
+): z.ZodType {
+  if (name === "submit_interview_turn") {
+    return withTerminalPublicAnalysis(turnProposalContractForMode(mode).fullSchema);
+  }
+  return providerReadToolInputSchemas[name];
+}
 
 export const publicInterviewToolLabels = {
   get_resume_evidence: "核对简历证据",
@@ -73,18 +84,42 @@ export const publicInterviewToolLabels = {
 } as const;
 
 export function createAgentProviderStepSchema(
-  toolNames: readonly InterviewToolName[],
+  tools: readonly AgentToolDescriptor[],
 ): z.ZodType<AgentModelStep> {
-  if (toolNames.length === 0) throw new Error("Agent requires at least one tool");
-  const branches = toolNames.map((toolName) => z.object({
+  if (tools.length === 0) throw new Error("Agent requires at least one tool");
+  const allowedNames = new Set<string>(interviewToolNames);
+  for (const descriptor of tools) {
+    if (!allowedNames.has(descriptor.name)) {
+      throw new Error("Unknown Agent tool descriptor");
+    }
+  }
+  const branches = tools.map((descriptor) => z.object({
     type: z.literal("tool_call"),
     callId: z.string().min(1),
-    toolName: z.literal(toolName),
-    args: providerInterviewToolInputSchemas[toolName],
+    toolName: z.literal(descriptor.name),
+    args: descriptor.inputSchema,
   }).strict());
   return z.union(
     branches as unknown as [z.ZodObject, ...z.ZodObject[]],
   ) as unknown as z.ZodType<AgentModelStep>;
+}
+
+function withTerminalPublicAnalysis(schema: z.ZodType): z.ZodType {
+  if (schema instanceof z.ZodObject) {
+    return withPublicAnalysis(schema, "terminal");
+  }
+  if (schema instanceof z.ZodUnion) {
+    const branches = schema.options.map((option) => {
+      if (!(option instanceof z.ZodObject)) {
+        throw new Error("Terminal turn contract must contain only object branches");
+      }
+      return withPublicAnalysis(option, "terminal");
+    });
+    return z.union(
+      branches as unknown as [z.ZodObject, z.ZodObject, ...z.ZodObject[]],
+    );
+  }
+  throw new Error("Terminal turn contract must be an object or object union");
 }
 
 export function createInterviewToolRegistry(options: {

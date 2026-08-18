@@ -5,6 +5,7 @@ export {
 } from "@/lib/interview/agent/protocols/events";
 
 import type { AgentModelStep } from "@/lib/interview/agent/protocols/events";
+import type { z } from "zod";
 
 export type AgentRuntimeMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -14,6 +15,7 @@ export type AgentRuntimeMessage = {
 export type AgentToolDescriptor = {
   name: string;
   description: string;
+  inputSchema: z.ZodType;
 };
 
 export type AgentModelStreamEvent =

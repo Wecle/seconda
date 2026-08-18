@@ -6,10 +6,12 @@ import {
   createProviderToolSet,
   createStructuredInterviewAgentModelPort,
   createStreamingInterviewAgentModelPort,
+  type AgentToolDescriptor,
   type AgentModelStreamEvent,
 } from "@/lib/interview/agent/providers/model-port";
 import { AGENT_SYSTEM_PROMPT } from "@/lib/interview/agent/prompts/system";
 import { RESPONSE_TEXT_SCHEMA_DESCRIPTION } from "@/lib/interview/agent/domain/turn-proposal";
+import { providerInterviewToolInputSchema } from "@/lib/interview/agent/tools/registry";
 import {
   AIResourceBudgetError,
   type AIAttemptHandle,
@@ -17,7 +19,15 @@ import {
   type AITelemetryLifecycle,
 } from "@/lib/ai/telemetry/lifecycle";
 
-const submitTool = [{ name: "submit_interview_turn", description: "submit" }];
+const openingSubmitSchema = providerInterviewToolInputSchema(
+  "submit_interview_turn",
+  "opening",
+);
+const submitTool = [{
+  name: "submit_interview_turn",
+  description: "submit",
+  inputSchema: openingSubmitSchema,
+}];
 const openingProposal = {
   publicAnalysis: "候选人的方向清晰，下一步邀请其介绍最近经历与岗位期待。",
   assessment: null,
@@ -123,6 +133,7 @@ test("builds real AI SDK tools without execute handlers", () => {
   assert.deepEqual(Object.keys(tools), ["submit_interview_turn"]);
   assert.equal("inputSchema" in tools.submit_interview_turn, true);
   assert.equal("execute" in tools.submit_interview_turn, false);
+  assert.equal(tools.submit_interview_turn.inputSchema, openingSubmitSchema);
   const inputSchema = tools.submit_interview_turn.inputSchema as {
     safeParse(input: unknown): { success: boolean };
   };
@@ -131,6 +142,41 @@ test("builds real AI SDK tools without execute handlers", () => {
     Object.entries(openingProposal).filter(([key]) => key !== "publicAnalysis"),
   );
   assert.equal(inputSchema.safeParse(businessOnlyProposal).success, false);
+});
+
+test("rejects a formal terminal call with a non-null role resolution", async () => {
+  const formalSchema = providerInterviewToolInputSchema("submit_interview_turn", "answer");
+  const port = createStreamingInterviewAgentModelPort({
+    candidates: [{ model: "fast" }],
+    classifyError: () => "fatal",
+    onAttemptStarted: async () => {},
+    streamCandidate: async () => ({
+      fullStream: (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-formal-role",
+          toolName: "submit_interview_turn",
+          input: openingProposal,
+        } as const;
+      })(),
+    }),
+  });
+
+  await assert.rejects(port.nextStepStream!({
+    runId: "run-formal-role",
+    messages: [],
+    tools: [{
+      name: "submit_interview_turn",
+      description: "submit",
+      inputSchema: formalSchema,
+    }],
+    signal: new AbortController().signal,
+    onProviderProgress: async () => {},
+    onStreamEvent: async () => false,
+  }), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, "MODEL_TOOL_ACTION_INVALID");
+    return true;
+  });
 });
 
 test("production DeepSeek Agent wiring sends a conversational required-tool request", async () => {
@@ -585,7 +631,11 @@ test("accepts a complete final tool call without streamed input", async () => {
 test("rejects conflicting tool stream protocols instead of taking the last call", async () => {
   const activeTools = [
     ...submitTool,
-    { name: "get_coverage_state", description: "coverage" },
+    {
+      name: "get_coverage_state",
+      description: "coverage",
+      inputSchema: providerInterviewToolInputSchema("get_coverage_state", "opening"),
+    },
   ];
   const cases: Array<{
     name: string;
@@ -724,7 +774,11 @@ test("classifies malformed active-tool arguments as a model action error", async
   await assert.rejects(port.nextStepStream!({
     runId: "run",
     messages: [],
-    tools: [{ name: "get_coverage_state", description: "coverage" }],
+    tools: [{
+      name: "get_coverage_state",
+      description: "coverage",
+      inputSchema: providerInterviewToolInputSchema("get_coverage_state", "opening"),
+    }],
     signal: new AbortController().signal,
     onProviderProgress: async () => {},
     onStreamEvent: async () => false,
@@ -1107,7 +1161,7 @@ test("marks a provisionally accepted stream abort as a failed telemetry attempt"
 async function assertProtocolRejected(
   name: string,
   streamParts: unknown[],
-  tools: readonly { name: string; description: string }[],
+  tools: readonly AgentToolDescriptor[],
   events: AgentModelStreamEvent[] = [],
   expectedProtocol?: unknown,
 ) {

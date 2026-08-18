@@ -42,8 +42,6 @@ import {
 import {
   createAgentProviderStepSchema,
   interviewToolNames,
-  providerInterviewToolInputSchemas,
-  type InterviewToolName,
 } from "@/lib/interview/agent/tools/registry";
 
 type CandidateStream = {
@@ -87,7 +85,7 @@ export function createStreamingInterviewAgentModelPort(options: {
       return result.step;
     },
     async nextStepStream(input) {
-      const providerSchema = createAgentProviderStepSchema(activeToolNames(input.tools));
+      const providerSchema = createAgentProviderStepSchema(activeTools(input.tools));
       const messageIds = new Map<string, string>();
       const result = await runAgentAttempts({
         candidates: options.candidates,
@@ -572,16 +570,15 @@ function createProviderAgentStream(
 }
 
 export function createProviderToolSet(tools: readonly AgentToolDescriptor[]) {
-  const names = activeToolNames(tools);
-  return Object.fromEntries(names.map((name, index) => [
-    name,
-    createProviderTool(tools[index].description, providerInterviewToolInputSchemas[name]),
+  return Object.fromEntries(activeTools(tools).map((descriptor) => [
+    descriptor.name,
+    createProviderTool(descriptor.description, descriptor.inputSchema),
   ]));
 }
 
 function createProviderTool(
   description: string,
-  inputSchema: (typeof providerInterviewToolInputSchemas)[InterviewToolName],
+  inputSchema: AgentToolDescriptor["inputSchema"],
 ) {
   return tool<unknown, Record<string, unknown>>({ description, inputSchema });
 }
@@ -797,7 +794,7 @@ function buildPrompt(input: {
   };
 }) {
   const runtimeTail = JSON.stringify({
-    tools: input.tools,
+    tools: input.tools.map(({ name, description }) => ({ name, description })),
     messages: input.messages,
     runId: input.runId,
   });
@@ -806,13 +803,12 @@ function buildPrompt(input: {
     : runtimeTail;
 }
 
-function activeToolNames(tools: readonly AgentToolDescriptor[]) {
+function activeTools(tools: readonly AgentToolDescriptor[]) {
   const available = new Set<string>(interviewToolNames);
-  const names = tools.map((descriptor) => descriptor.name).filter(
-    (name): name is InterviewToolName => available.has(name),
-  );
-  if (names.length !== tools.length) throw new Error("Unknown Agent tool descriptor");
-  return names;
+  if (tools.some((descriptor) => !available.has(descriptor.name))) {
+    throw new Error("Unknown Agent tool descriptor");
+  }
+  return tools;
 }
 
 function readPositiveInteger(value: string | undefined, fallback: number) {
