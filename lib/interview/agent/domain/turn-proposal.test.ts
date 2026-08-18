@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   hashTurnProposalPrefix,
   readTurnProposalProgress,
+  turnProposalContractForMode,
   turnProposalPrefixSchema,
 } from "@/lib/interview/agent/domain/turn-proposal";
 
@@ -59,23 +60,108 @@ function validOpeningPrefix() {
   };
 }
 
+const inferredRoleResolution = {
+  status: "inferred" as const,
+  value: "前端工程师",
+  confidence: "high" as const,
+  resumeEvidenceIds: ["evidence-role"],
+};
+
+const targetRoleClarificationDecision = {
+  action: "clarify" as const,
+  subject: "target_role" as const,
+  evidenceIds: ["evidence-role"],
+  estimatedInformationGain: "high" as const,
+};
+
+const formalAnswerProposal = {
+  ...validQuestionPrefix(),
+  responseText: "请说明自动降级的触发条件。",
+};
+
+const openingInferenceProposal = {
+  assessment: null,
+  coverageChanges: [],
+  roleResolution: inferredRoleResolution,
+  decision: {
+    action: "ask" as const,
+    category: "introduction" as const,
+    intent: "new_topic" as const,
+    evidenceIds: ["evidence-role"],
+    coverageTarget: "自我介绍",
+    estimatedInformationGain: "high" as const,
+  },
+  responseText: "请先做一个简短的自我介绍。",
+};
+
+const openingClarificationProposal = {
+  ...validOpeningPrefix(),
+  responseText: "请问你的目标岗位是什么？",
+};
+
+const confirmedRoleProposal = {
+  ...openingInferenceProposal,
+  roleResolution: {
+    status: "confirmed" as const,
+    value: "前端工程师",
+    confidence: "high" as const,
+    resumeEvidenceIds: ["evidence-role"],
+  },
+};
+
+test("enforces stage-specific turn proposal contracts", () => {
+  const formal = turnProposalContractForMode("answer");
+  assert.equal(formal.fullSchema.safeParse(formalAnswerProposal).success, true);
+  assert.equal(formal.fullSchema.safeParse({
+    ...formalAnswerProposal,
+    roleResolution: inferredRoleResolution,
+  }).success, false);
+  assert.equal(formal.fullSchema.safeParse({
+    ...formalAnswerProposal,
+    assessment: null,
+  }).success, false);
+  assert.equal(formal.fullSchema.safeParse({
+    ...formalAnswerProposal,
+    decision: targetRoleClarificationDecision,
+  }).success, false);
+
+  const opening = turnProposalContractForMode("opening");
+  assert.equal(opening.fullSchema.safeParse(openingInferenceProposal).success, true);
+  assert.equal(opening.fullSchema.safeParse(openingClarificationProposal).success, true);
+  assert.equal(opening.fullSchema.safeParse(formalAnswerProposal).success, false);
+
+  const confirmation = turnProposalContractForMode("opening_clarification");
+  assert.equal(confirmation.fullSchema.safeParse(confirmedRoleProposal).success, true);
+  assert.equal(confirmation.fullSchema.safeParse(openingInferenceProposal).success, false);
+});
+
+test("does not expose a formal prefix with non-null role resolution", () => {
+  const progress = readTurnProposalProgress({
+    ...formalAnswerProposal,
+    roleResolution: inferredRoleResolution,
+  }, turnProposalContractForMode("answer"));
+  assert.notEqual(progress.status, "prefix_ready");
+});
+
 test("requires a complete prefix before response text", () => {
-  assert.deepEqual(readTurnProposalProgress({ responseText: "提前输出" }), {
+  const formal = turnProposalContractForMode("answer");
+  assert.deepEqual(readTurnProposalProgress({ responseText: "提前输出" }, formal), {
     status: "protocol_violation",
     responseText: "提前输出",
   });
 
-  const progress = readTurnProposalProgress(validQuestionPrefix());
+  const progress = readTurnProposalProgress(validQuestionPrefix(), formal);
   assert.equal(progress.status, "prefix_ready");
   assert.equal(progress.responseText, "");
 });
 
 test("keeps accumulating while a prefix is incomplete and response text is empty", () => {
+  const formal = turnProposalContractForMode("answer");
   assert.deepEqual(readTurnProposalProgress({
     assessment: validAssessment(),
     responseText: "",
-  }), { status: "accumulating" });
-  assert.deepEqual(readTurnProposalProgress(undefined), { status: "accumulating" });
+  }, formal), { status: "accumulating" });
+  assert.deepEqual(readTurnProposalProgress(undefined, formal), { status: "accumulating" });
 });
 
 test("rejects response text when a present prefix is invalid", () => {
@@ -84,7 +170,7 @@ test("rejects response text when a present prefix is invalid", () => {
     decision: { ...validQuestionPrefix().decision, evidenceIds: [] },
     unexpected: true,
     responseText: "现在已经开始提问？",
-  }), {
+  }, turnProposalContractForMode("answer")), {
     status: "protocol_violation",
     responseText: "现在已经开始提问？",
   });
@@ -94,7 +180,7 @@ test("treats a non-string response text field as a protocol violation", () => {
   assert.deepEqual(readTurnProposalProgress({
     ...validQuestionPrefix(),
     responseText: { secret: "never echo this" },
-  }), {
+  }, turnProposalContractForMode("answer")), {
     status: "protocol_violation",
     responseText: "[invalid-response-text]",
   });
@@ -112,7 +198,7 @@ test("returns normalized prefix and current response text", () => {
       coverageTarget: "  验证自动降级的触发条件  ",
     },
     responseText: "问题正文",
-  });
+  }, turnProposalContractForMode("answer"));
 
   assert.equal(progress.status, "prefix_ready");
   if (progress.status !== "prefix_ready") return;

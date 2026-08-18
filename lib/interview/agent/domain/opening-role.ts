@@ -20,24 +20,30 @@ export const agentRunModeSchema = z.enum([
 const evidenceIdsSchema = z.array(z.string().min(1)).max(20);
 const roleValueSchema = z.string().trim().min(1).max(200);
 
+export const needsClarificationRoleResolutionSchema = z.object({
+  status: z.literal("needs_clarification"),
+  confidence: z.literal("low"),
+  resumeEvidenceIds: evidenceIdsSchema,
+}).strict();
+
+export const inferredRoleResolutionSchema = z.object({
+  status: z.literal("inferred"),
+  value: roleValueSchema,
+  confidence: z.enum(["medium", "high"]),
+  resumeEvidenceIds: evidenceIdsSchema,
+}).strict();
+
+export const confirmedRoleResolutionSchema = z.object({
+  status: z.literal("confirmed"),
+  value: roleValueSchema,
+  confidence: z.literal("high"),
+  resumeEvidenceIds: evidenceIdsSchema,
+}).strict();
+
 export const roleResolutionSchema = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("needs_clarification"),
-    confidence: z.literal("low"),
-    resumeEvidenceIds: evidenceIdsSchema,
-  }).strict(),
-  z.object({
-    status: z.literal("inferred"),
-    value: roleValueSchema,
-    confidence: z.enum(["medium", "high"]),
-    resumeEvidenceIds: evidenceIdsSchema,
-  }).strict(),
-  z.object({
-    status: z.literal("confirmed"),
-    value: roleValueSchema,
-    confidence: z.literal("high"),
-    resumeEvidenceIds: evidenceIdsSchema,
-  }).strict(),
+  needsClarificationRoleResolutionSchema,
+  inferredRoleResolutionSchema,
+  confirmedRoleResolutionSchema,
 ]);
 
 export type OpeningStage = z.infer<typeof openingStageSchema>;

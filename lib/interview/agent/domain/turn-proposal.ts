@@ -7,7 +7,13 @@ import {
   coverageStatusSchema,
   questionCategorySchema,
 } from "@/lib/interview/agent/domain/interview";
-import { roleResolutionSchema } from "@/lib/interview/agent/domain/opening-role";
+import {
+  type AgentRunMode,
+  confirmedRoleResolutionSchema,
+  inferredRoleResolutionSchema,
+  needsClarificationRoleResolutionSchema,
+  roleResolutionSchema,
+} from "@/lib/interview/agent/domain/opening-role";
 
 export const ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION =
   "回答轮必须提交轻量评估；followUpNeeded=true 时当前回答分类的覆盖状态为 partial，followUpNeeded=false 时为 sufficient；开场必须为 null。";
@@ -59,6 +65,15 @@ const finishDecisionSchema = z.object({
   ]),
 }).strict();
 
+const introductionAskDecisionSchema = z.object({
+  action: z.literal("ask"),
+  category: z.literal("introduction"),
+  intent: z.literal("new_topic"),
+  evidenceIds: z.array(z.string().min(1)).max(20),
+  coverageTarget: z.string().trim().min(1).max(500),
+  estimatedInformationGain: z.enum(["low", "medium", "high"]),
+}).strict();
+
 export const turnProposalPrefixSchema = z.object({
   assessment: turnAnswerAssessmentSchema
     .nullable()
@@ -88,6 +103,86 @@ export const interviewTurnProposalSchema = turnProposalPrefixSchema.extend({
 export type TurnProposalPrefix = z.infer<typeof turnProposalPrefixSchema>;
 export type InterviewTurnProposal = z.infer<typeof interviewTurnProposalSchema>;
 
+const openingInferencePrefixSchema = z.object({
+  assessment: z.null(),
+  coverageChanges: z.tuple([]),
+  roleResolution: inferredRoleResolutionSchema,
+  decision: introductionAskDecisionSchema,
+}).strict();
+
+const openingClarificationPrefixSchema = z.object({
+  assessment: z.null(),
+  coverageChanges: z.tuple([]),
+  roleResolution: needsClarificationRoleResolutionSchema,
+  decision: roleClarificationDecisionSchema,
+}).strict();
+
+const confirmedRolePrefixSchema = z.object({
+  assessment: z.null(),
+  coverageChanges: z.tuple([]),
+  roleResolution: confirmedRoleResolutionSchema,
+  decision: introductionAskDecisionSchema,
+}).strict();
+
+const formalAnswerPrefixSchema = z.object({
+  assessment: turnAnswerAssessmentSchema,
+  coverageChanges: z.array(coverageChangeSchema).max(9),
+  roleResolution: z.null(),
+  decision: z.union([askDecisionSchema, finishDecisionSchema]),
+}).strict();
+
+const openingPrefixSchema = z.union([
+  openingInferencePrefixSchema,
+  openingClarificationPrefixSchema,
+]);
+
+const openingFullSchema = z.union([
+  openingInferencePrefixSchema.extend({
+    responseText: interviewTurnProposalSchema.shape.responseText,
+  }),
+  openingClarificationPrefixSchema.extend({
+    responseText: interviewTurnProposalSchema.shape.responseText,
+  }),
+]);
+
+const confirmedRoleFullSchema = confirmedRolePrefixSchema.extend({
+  responseText: interviewTurnProposalSchema.shape.responseText,
+});
+
+const formalAnswerFullSchema = formalAnswerPrefixSchema.extend({
+  responseText: interviewTurnProposalSchema.shape.responseText,
+});
+
+export type TurnProposalContract = {
+  mode: AgentRunMode;
+  prefixSchema: z.ZodType<TurnProposalPrefix>;
+  fullSchema: z.ZodType<InterviewTurnProposal>;
+};
+
+const turnProposalContracts = {
+  opening: {
+    mode: "opening",
+    prefixSchema: openingPrefixSchema,
+    fullSchema: openingFullSchema,
+  },
+  opening_clarification: {
+    mode: "opening_clarification",
+    prefixSchema: confirmedRolePrefixSchema,
+    fullSchema: confirmedRoleFullSchema,
+  },
+  answer: {
+    mode: "answer",
+    prefixSchema: formalAnswerPrefixSchema,
+    fullSchema: formalAnswerFullSchema,
+  },
+} satisfies Record<AgentRunMode, TurnProposalContract>;
+
+export function turnProposalContractForMode(
+  mode: AgentRunMode,
+): TurnProposalContract {
+  return turnProposalContracts[mode];
+}
+
 export type TurnProposalProgress =
   | { status: "accumulating" }
   | { status: "protocol_violation"; responseText: string }
@@ -97,7 +192,10 @@ export type TurnProposalProgress =
     responseText: string;
   };
 
-export function readTurnProposalProgress(input: unknown): TurnProposalProgress {
+export function readTurnProposalProgress(
+  input: unknown,
+  contract: TurnProposalContract,
+): TurnProposalProgress {
   if (!isRecord(input)) return { status: "accumulating" };
 
   if (Object.hasOwn(input, "responseText") && typeof input.responseText !== "string") {
@@ -112,7 +210,7 @@ export function readTurnProposalProgress(input: unknown): TurnProposalProgress {
     : "";
   const prefixCandidate = { ...input };
   delete prefixCandidate.responseText;
-  const prefixResult = turnProposalPrefixSchema.safeParse(prefixCandidate);
+  const prefixResult = contract.prefixSchema.safeParse(prefixCandidate);
 
   if (!prefixResult.success) {
     return responseText.trim().length > 0
