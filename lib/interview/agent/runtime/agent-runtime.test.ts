@@ -624,6 +624,119 @@ async function createRuntimeFixture(options?: {
   };
 }
 
+test("advertises the active opening and answer terminal contracts", async () => {
+  let openingTerminalSchema: z.ZodType | undefined;
+  const openingFixture = await createRuntimeFixture({
+    model: scriptedModel([async (input, callNumber) => {
+      openingTerminalSchema = input.tools.find((tool) => (
+        tool.name === "submit_interview_turn"
+      ))?.inputSchema;
+      return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+    }]),
+  });
+
+  const openingResult = await runInterviewAgent(openingFixture.runOptions);
+
+  assert.equal(openingResult.exitReason, "completed");
+  assert.ok(openingTerminalSchema);
+  assert.equal(
+    openingTerminalSchema.safeParse(providerTerminalInput(openingProposal())).success,
+    true,
+  );
+  assert.equal(
+    openingTerminalSchema.safeParse(providerTerminalInput(answerProposal({
+      followUpNeeded: false,
+      status: "sufficient",
+    }))).success,
+    false,
+  );
+
+  let answerTerminalSchema: z.ZodType | undefined;
+  const validAnswer = answerProposal({
+    followUpNeeded: false,
+    status: "sufficient",
+  });
+  const answerFixture = await createRuntimeFixture({
+    answerCategory: "introduction",
+    model: scriptedModel([async (input, callNumber) => {
+      answerTerminalSchema = input.tools.find((tool) => (
+        tool.name === "submit_interview_turn"
+      ))?.inputSchema;
+      return streamingTerminalScript({ proposal: validAnswer })(input, callNumber);
+    }]),
+  });
+
+  const answerResult = await runInterviewAgent(answerFixture.runOptions);
+
+  assert.equal(answerResult.exitReason, "completed");
+  assert.ok(answerTerminalSchema);
+  assert.equal(
+    answerTerminalSchema.safeParse(providerTerminalInput(validAnswer)).success,
+    true,
+  );
+  assert.equal(
+    answerTerminalSchema.safeParse(providerTerminalInput({
+      ...validAnswer,
+      roleResolution: openingProposal().roleResolution,
+    })).success,
+    false,
+  );
+});
+
+test("repairs malformed answer actions with formal-stage guidance and one commit", async () => {
+  const correctedProposal = answerProposal({
+    followUpNeeded: false,
+    status: "sufficient",
+  });
+  let repairMessage = "";
+  const malformedThenCorrected = scriptedModel([
+    async (input) => {
+      const attemptNumber = (input.attemptNumberOffset ?? 0) + 1;
+      await input.onAttemptStarted?.({
+        model: "fake",
+        attemptId: `attempt-${attemptNumber}`,
+        attemptNumber,
+        provisionalMessageId: `message-${attemptNumber}`,
+      });
+      const terminalSchema = input.tools.find((tool) => (
+        tool.name === "submit_interview_turn"
+      ))?.inputSchema;
+      assert.ok(terminalSchema);
+      assert.equal(terminalSchema.safeParse(providerTerminalInput({
+        ...correctedProposal,
+        roleResolution: openingProposal().roleResolution,
+      })).success, false);
+      throw Object.assign(new Error("formal tool arguments are invalid"), {
+        code: "MODEL_TOOL_ACTION_INVALID",
+      });
+    },
+    async (input, callNumber) => {
+      repairMessage = input.messages
+        .filter((message) => message.role === "system")
+        .map((message) => message.content)
+        .join("\n");
+      return streamingTerminalScript({ proposal: correctedProposal })(input, callNumber);
+    },
+  ]);
+  const fixture = await createRuntimeFixture({
+    answerCategory: "introduction",
+    model: malformedThenCorrected,
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.match(repairMessage, /formal_interview/);
+  assert.match(repairMessage, /roleResolution=null/);
+  assert.match(repairMessage, /assessment.*非空/);
+  assert.match(repairMessage, /禁止 clarify/);
+  const snapshot = fixture.repository.inspectInterview("interview");
+  assert.equal(snapshot.assessments.length, 1);
+  assert.equal(snapshot.questions.length, 2);
+  assert.equal(snapshot.submitTurnCommits.length, 1);
+  assert.equal(snapshot.questions[1]?.category, "resume_project");
+});
+
 test("streams cumulative tool public analysis once before the read tool lifecycle", async () => {
   const fixture = await createRuntimeFixture({
     model: scriptedModel([

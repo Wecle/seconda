@@ -46,7 +46,12 @@ import {
   type InterviewToolDefinition,
   type ToolPipelineHook,
 } from "@/lib/interview/agent/tools/pipeline";
-import { publicInterviewToolLabels } from "@/lib/interview/agent/tools/registry";
+import {
+  interviewToolNames,
+  providerInterviewToolInputSchema,
+  publicInterviewToolLabels,
+  type InterviewToolName,
+} from "@/lib/interview/agent/tools/registry";
 import {
   authorizeTurnProposal,
   type AuthorizedTurnProposal,
@@ -54,8 +59,8 @@ import {
 } from "@/lib/interview/agent/domain/turn-authorizer";
 import {
   hashTurnProposalPrefix,
-  interviewTurnProposalSchema,
   readTurnProposalProgress,
+  turnProposalContractForMode,
 } from "@/lib/interview/agent/domain/turn-proposal";
 import type { InterviewSkill } from "@/lib/interview/agent/skills/catalog";
 import { renderSkillInstructions } from "@/lib/interview/agent/skills/catalog";
@@ -151,6 +156,7 @@ export async function runInterviewAgent(
   }
 
   const context = options.turnContext;
+  const turnContract = turnProposalContractForMode(context.mode);
   let lastEventSequence = Math.max(
     checkpoint?.lastEventSequence ?? 0,
     persistedRun?.lastEventSequence ?? 0,
@@ -471,7 +477,7 @@ export async function runInterviewAgent(
   }
 
   async function handleTerminalProgress(attempt: AttemptState, partialInput: unknown) {
-    const progress = readTurnProposalProgress(partialInput);
+    const progress = readTurnProposalProgress(partialInput, turnContract);
     if (progress.status === "accumulating") return;
     if (
       !attempt.terminalToolCallId
@@ -657,10 +663,14 @@ export async function runInterviewAgent(
       const streamed = await options.model.nextStepStream({
         runId: options.runId,
         messages,
-        tools: [...availableTools.keys()].map((name) => ({
-          name,
-          description: describeTool(name),
-        })),
+        tools: [...availableTools.keys()].map((name) => {
+          const toolName = parseInterviewToolName(name);
+          return {
+            name: toolName,
+            description: describeTool(toolName),
+            inputSchema: providerInterviewToolInputSchema(toolName, context.mode),
+          };
+        }),
         signal: options.signal,
         attemptNumberOffset,
         promptContext: options.promptContext,
@@ -869,7 +879,7 @@ export async function runInterviewAgent(
     }
     await handleToolPublicAnalysis(attempt, step.callId, step.toolName, step.args);
     const { businessInput } = stripCompletePublicAnalysis(step.args);
-    const finalProposal = interviewTurnProposalSchema.parse(businessInput);
+    const finalProposal = turnContract.fullSchema.parse(businessInput);
     const { responseText, ...finalPrefix } = finalProposal;
     if (hashTurnProposalPrefix(finalPrefix) !== attempt.authorized.proposalHash) {
       throw new AttemptFailure("AUTHORIZED_PREFIX_CHANGED", "最终提案与授权提案不一致。");
@@ -1125,7 +1135,7 @@ export async function runInterviewAgent(
   }
 
   function ensureRepairInstruction(error: unknown) {
-    const content = repairInstruction(error);
+    const content = repairInstruction(error, context.mode);
     if (messages.some((message) => message.role === "system" && message.content === content)) return;
     messages.push({ role: "system", content });
   }
@@ -1340,6 +1350,14 @@ function describeTool(name: string) {
   return descriptions[name] ?? `Seconda interview domain tool: ${name}`;
 }
 
+function parseInterviewToolName(name: string): InterviewToolName {
+  const parsed = interviewToolNames.find((candidate) => candidate === name);
+  if (!parsed) {
+    throw new AttemptFailure("UNKNOWN_TOOL", "运行时工具不在面试工具允许列表中。");
+  }
+  return parsed;
+}
+
 class AttemptFailure extends Error {
   readonly code: string;
   readonly coverageConflict?: CoverageConflictDetail;
@@ -1477,12 +1495,12 @@ function isInjectedProcessCrash(error: unknown) {
   );
 }
 
-function repairInstruction(error: unknown) {
+function repairInstruction(error: unknown, mode: AgentRunMode) {
   const code = classifyAttemptFailure(error);
   const regenerationInstruction = code === "CONTRADICTORY_COVERAGE_CHANGE"
     ? ""
     : "重新生成完整提案；";
-  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error)}${regenerationInstruction}responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error, mode)}${regenerationInstruction}responseText 必须最后输出，且不得修改已生成的文本前缀。`;
 }
 
 const coverageStatusRepairRule =
@@ -1521,7 +1539,7 @@ function readRecoverableRepairCode(
   return null;
 }
 
-function repairGuidance(code: string, error?: unknown) {
+function repairGuidance(code: string, error: unknown, mode: AgentRunMode) {
   if (
     code === "PUBLIC_ANALYSIS_REQUIRED"
     || code === "PUBLIC_ANALYSIS_INVALID"
@@ -1558,6 +1576,24 @@ function repairGuidance(code: string, error?: unknown) {
   }
   if (code === "MODEL_TOOL_CALL_REQUIRED" || code === "TOOL_CALL_REQUIRED") {
     return "必须调用当前可用的面试工具，不得返回普通最终文本。";
+  }
+  if (code === "MODEL_TOOL_ACTION_INVALID" && mode === "answer") {
+    return "当前是 formal_interview 正式回答轮；严格按当前工具 Schema 重新生成，roleResolution=null，assessment 必须为非空轻量评估，并且禁止 clarify。";
+  }
+  if (code === "ROLE_RESOLUTION_FORBIDDEN") {
+    return "当前是 formal_interview 正式回答轮；roleResolution=null，assessment 必须为非空轻量评估，并且禁止 clarify。";
+  }
+  if (code === "ROLE_RESOLUTION_REQUIRED") {
+    return "当前是开场岗位处理轮；提交当前阶段要求的 roleResolution，assessment=null 且 coverageChanges=[]。";
+  }
+  if (code === "OPENING_ASSESSMENT_FORBIDDEN") {
+    return "开场阶段 assessment=null 且 coverageChanges=[]；不要生成正式回答轮评估。";
+  }
+  if (code === "ANSWER_ASSESSMENT_REQUIRED") {
+    return "正式回答轮必须提交非空轻量 assessment，并保持 roleResolution=null。";
+  }
+  if (code === "INVALID_OPENING_DECISION" || code === "OPENING_STAGE_MISMATCH") {
+    return "仅使用当前开场阶段允许的岗位处理组合；不得沿用其他阶段的提案结构。";
   }
   if (code === "MODEL_TOOL_ACTION_INVALID" || code === "INVALID_TOOL_INPUT") {
     return "严格按当前工具 Schema 重新生成参数，不得添加未定义字段。";
