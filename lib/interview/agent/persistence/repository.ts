@@ -157,12 +157,6 @@ export type QuestionOutcomeInput = {
   responseText: string;
   resumeEvidenceIds: string[];
   provisionalMessageId?: string;
-  targetRole?: {
-    value: string;
-    status: "inferred" | "confirmed";
-    confidence: "low" | "medium" | "high";
-    sourceIds: string[];
-  };
 };
 
 export type QuestionOutcome = {

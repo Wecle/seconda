@@ -8,6 +8,11 @@ import type {
   QuestionCategory,
 } from "@/lib/interview/agent/protocols/events";
 import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
+import type {
+  OpeningStage,
+  QuestionPurpose,
+  RoleResolution,
+} from "@/lib/interview/agent/domain/opening-role";
 import {
   authorizeTurnProposal,
   projectAssessmentCoverage,
@@ -67,13 +72,24 @@ type MemoryRun = {
 export function createInMemoryInterviewAgentRepository(
   initialState?: InterviewAgentState,
   authoritativeLanguage: CommitTurnOutcomeInput["language"] = "zh",
+  initialOpening?: {
+    openingStage: OpeningStage;
+    targetRole?: RoleResolution | null;
+    targetRoleConfirmationMessageId?: string | null;
+  },
 ) {
   let id = 0;
   const runs = new Map<string, MemoryRun>();
   const runKeys = new Map<string, string>();
   const messageKeys = new Map<string, { id: string; sequence: number }>();
   const messageSequences = new Map<string, number>();
-  const interviewQuestionsById = new Map<string, Array<{ id: string; category: string; topic: string; question: string }>>();
+  const interviewQuestionsById = new Map<string, Array<{
+    id: string;
+    purpose: QuestionPurpose;
+    category: string | null;
+    topic: string;
+    question: string;
+  }>>();
   const interviewMessagesById = new Map<string, Array<{
     id: string;
     runId: string;
@@ -100,7 +116,11 @@ export function createInMemoryInterviewAgentRepository(
     lastAssessmentId: string | null;
   }>>();
   const categoryCountsByInterview = new Map<string, Record<string, number>>();
-  const targetRoleByInterview = new Map<string, QuestionOutcomeInput["targetRole"]>();
+  const openingStateByInterview = new Map<string, {
+    openingStage: OpeningStage;
+    targetRole: RoleResolution | null;
+    targetRoleConfirmationMessageId: string | null;
+  }>();
   const toolCommits = new Map<string, { toolName: string; result: unknown }>();
   const completingInterviews = new Set<string>();
   const states = new Map<string, InterviewAgentState>();
@@ -113,13 +133,26 @@ export function createInMemoryInterviewAgentRepository(
         ([category, count]) => [category, count ?? 0],
       )),
     );
+    openingStateByInterview.set(initialState.interviewId, {
+      openingStage: initialOpening?.openingStage ?? "role_resolution",
+      targetRole: initialOpening?.targetRole ?? null,
+      targetRoleConfirmationMessageId:
+        initialOpening?.targetRoleConfirmationMessageId ?? null,
+    });
   }
 
   const repository: InterviewAgentRepository & {
     inspectRun(runId: string): MemoryRun | undefined;
     inspectInterview(interviewId: string): {
       status: "active" | "completing";
-      questions: Array<{ id: string; category: string; topic: string; question: string }>;
+      openingStage: OpeningStage;
+      questions: Array<{
+        id: string;
+        purpose: QuestionPurpose;
+        category: string | null;
+        topic: string;
+        question: string;
+      }>;
       messages: Array<{
         id: string;
         runId: string;
@@ -130,7 +163,8 @@ export function createInMemoryInterviewAgentRepository(
         sequence: number;
       }>;
       categoryCounts: Record<string, number>;
-      targetRole: QuestionOutcomeInput["targetRole"];
+      targetRole: RoleResolution | null;
+      targetRoleConfirmationMessageId: string | null;
       assessments: Array<{
         id: string;
         answerMessageId: string;
@@ -493,26 +527,44 @@ export function createInMemoryInterviewAgentRepository(
 
       const messages = interviewMessagesById.get(input.interviewId) ?? [];
       const questions = interviewQuestionsById.get(input.interviewId) ?? [];
+      const openingState = openingStateByInterview.get(input.interviewId) ?? {
+        openingStage: "role_resolution" as const,
+        targetRole: null,
+        targetRoleConfirmationMessageId: null,
+      };
+      const runTrigger = run.trigger;
+      if (!runTrigger) throw new Error("Agent run trigger is missing");
       const answerMessage = input.answerMessageId
         ? messages.find((message) => message.id === input.answerMessageId)
         : null;
       const answerQuestion = answerMessage?.questionId
         ? questions.find((question) => question.id === answerMessage.questionId)
         : null;
-      const answerLinkedByTrigger = run.trigger?.mode === "answer"
-        && run.trigger.answerMessageId === input.answerMessageId;
-      if (input.answerMessageId && (
-        !answerMessage
-        || (answerMessage.runId !== input.runId && !answerLinkedByTrigger)
-        || answerMessage.role !== "user"
-        || answerMessage.kind !== "answer"
-        || !answerQuestion
-      )) {
-        throw new Error("Answer message does not belong to this interview question");
+      if (runTrigger.mode === "opening") {
+        if (input.answerMessageId !== null) {
+          throw new Error("Opening run cannot bind a candidate answer");
+        }
+      } else {
+        const expectedKind = runTrigger.mode === "opening_clarification"
+          ? "clarification_answer"
+          : "answer";
+        const expectedPurpose = runTrigger.mode === "opening_clarification"
+          ? "opening_clarification"
+          : "formal";
+        if (
+          runTrigger.answerMessageId !== input.answerMessageId
+          || !answerMessage
+          || answerMessage.role !== "user"
+          || answerMessage.kind !== expectedKind
+          || !answerQuestion
+          || answerQuestion.purpose !== expectedPurpose
+        ) {
+          throw new Error("Answer message does not match the authoritative run trigger");
+        }
       }
 
-      const mode = input.answerMessageId ? "answer" as const : "opening" as const;
-      const answerCategory = answerQuestion
+      const mode = runTrigger.mode;
+      const answerCategory = mode === "answer" && answerQuestion
         ? questionCategorySchema.parse(answerQuestion.category)
         : null;
       const state = buildMemoryPolicyState({
@@ -526,8 +578,12 @@ export function createInMemoryInterviewAgentRepository(
       });
       const authorization = authorizeTurnProposal({
         state,
+        openingStage: openingState.openingStage,
         mode,
         answerCategory,
+        clarificationAnswer: mode === "opening_clarification"
+          ? answerMessage?.content ?? null
+          : null,
         prefix: proposal,
         responseText,
       });
@@ -547,6 +603,12 @@ export function createInMemoryInterviewAgentRepository(
       ].map((item) => ({ ...item, resumeEvidenceIds: [...item.resumeEvidenceIds] }));
       const nextCounts = {
         ...(categoryCountsByInterview.get(input.interviewId) ?? {}),
+      };
+      let nextOpeningState = {
+        ...openingState,
+        targetRole: openingState.targetRole
+          ? structuredClone(openingState.targetRole)
+          : null,
       };
 
       if (proposal.assessment && answerMessage && answerQuestion && assessmentId) {
@@ -583,21 +645,82 @@ export function createInMemoryInterviewAgentRepository(
 
       let questionId: string | null = null;
       let kind: CommittedTurnOutcome["message"]["kind"];
-      if (proposal.decision.action === "finish") {
+      const roleResolution = authorization.prefix.roleResolution;
+      if (roleResolution?.status === "needs_clarification") {
+        if (openingState.openingStage !== "role_resolution") {
+          throw new Error("OPENING_STAGE_MISMATCH");
+        }
+        nextOpeningState = {
+          openingStage: "awaiting_role_clarification",
+          targetRole: structuredClone(roleResolution),
+          targetRoleConfirmationMessageId: null,
+        };
+        kind = "clarification";
+        questionId = `question-${++id}`;
+        nextQuestions.push({
+          id: questionId,
+          purpose: "opening_clarification",
+          category: null,
+          topic: "target_role",
+          question: responseText,
+        });
+      } else if (roleResolution) {
+        const expectedStage = roleResolution.status === "confirmed"
+          ? "awaiting_role_clarification"
+          : "role_resolution";
+        if (openingState.openingStage !== expectedStage) {
+          throw new Error("OPENING_STAGE_MISMATCH");
+        }
+        const confirmationMessageId = roleResolution.status === "confirmed"
+          ? input.answerMessageId
+          : null;
+        if (roleResolution.status === "confirmed" && !confirmationMessageId) {
+          throw new Error("ROLE_CONFIRMATION_MESSAGE_REQUIRED");
+        }
+        nextOpeningState = {
+          openingStage: "formal_interview",
+          targetRole: structuredClone(roleResolution),
+          targetRoleConfirmationMessageId: confirmationMessageId,
+        };
+        kind = "question";
+        questionId = `question-${++id}`;
+        nextQuestions.push({
+          id: questionId,
+          purpose: "formal",
+          category: "introduction",
+          topic: proposal.decision.action === "ask"
+            ? proposal.decision.coverageTarget
+            : "self_introduction",
+          question: responseText,
+        });
+        if (proposal.decision.action !== "ask") {
+          throw new Error("INVALID_OPENING_DECISION");
+        }
+        nextCounts.introduction = (nextCounts.introduction ?? 0) + 1;
+        incrementMemoryCategoryCoverage(
+          nextCoverage,
+          "introduction",
+          nextCounts.introduction,
+          proposal.decision.evidenceIds,
+        );
+      } else if (proposal.decision.action === "finish") {
         kind = "finish";
-      } else {
-        kind = proposal.decision.action === "clarify" ? "clarification" : "question";
+      } else if (proposal.decision.action === "ask") {
+        kind = "question";
         const category = proposal.decision.category;
         if ((nextCounts[category] ?? 0) >= 3) throw new Error("CATEGORY_LIMIT_REACHED");
         questionId = `question-${++id}`;
         nextQuestions.push({
           id: questionId,
+          purpose: "formal",
           category,
           topic: proposal.decision.coverageTarget,
           question: responseText,
         });
         nextCounts[category] = (nextCounts[category] ?? 0) + 1;
         incrementMemoryCategoryCoverage(nextCoverage, category, nextCounts[category], proposal.decision.evidenceIds);
+      } else {
+        throw new Error("Formal clarification is forbidden");
       }
 
       const messageSequence = (messageSequences.get(input.interviewId) ?? 0) + 1;
@@ -645,6 +768,7 @@ export function createInMemoryInterviewAgentRepository(
       assessmentsByInterview.set(input.interviewId, nextAssessments);
       coverageByInterview.set(input.interviewId, nextCoverage);
       categoryCountsByInterview.set(input.interviewId, nextCounts);
+      openingStateByInterview.set(input.interviewId, nextOpeningState);
       messageSequences.set(input.interviewId, messageSequence);
       run.events.push(event);
       run.phase = "acting";
@@ -672,7 +796,13 @@ export function createInMemoryInterviewAgentRepository(
       };
       interviewQuestionsById.set(input.interviewId, [
         ...(interviewQuestionsById.get(input.interviewId) ?? []),
-        { id: questionId, category: input.category, topic: input.topic, question: input.question },
+        {
+          id: questionId,
+          purpose: "formal",
+          category: input.category,
+          topic: input.topic,
+          question: input.question,
+        },
       ]);
       interviewMessagesById.set(input.interviewId, [
         ...(interviewMessagesById.get(input.interviewId) ?? []),
@@ -688,7 +818,6 @@ export function createInMemoryInterviewAgentRepository(
       ]);
       messageSequences.set(input.interviewId, sequence);
       categoryCountsByInterview.set(input.interviewId, { ...counts, [input.category]: (counts[input.category] ?? 0) + 1 });
-      if (input.targetRole) targetRoleByInterview.set(input.interviewId, input.targetRole);
       toolCommits.set(key, { toolName: "ask_interview_question", result: outcome });
       return outcome;
     },
@@ -755,12 +884,20 @@ export function createInMemoryInterviewAgentRepository(
     },
     inspectInterview(interviewId: string) {
       const runsForInterview = [...runs.values()].filter((run) => run.interviewId === interviewId);
+      const openingState = openingStateByInterview.get(interviewId) ?? {
+        openingStage: "role_resolution" as const,
+        targetRole: null,
+        targetRoleConfirmationMessageId: null,
+      };
       return {
         status: completingInterviews.has(interviewId) ? "completing" : "active",
+        openingStage: openingState.openingStage,
         questions: interviewQuestionsById.get(interviewId) ?? [],
         messages: interviewMessagesById.get(interviewId) ?? [],
         categoryCounts: categoryCountsByInterview.get(interviewId) ?? {},
-        targetRole: targetRoleByInterview.get(interviewId),
+        targetRole: openingState.targetRole,
+        targetRoleConfirmationMessageId:
+          openingState.targetRoleConfirmationMessageId,
         assessments: assessmentsByInterview.get(interviewId) ?? [],
         coverage: coverageByInterview.get(interviewId) ?? [],
         messageCommittedEvents: runsForInterview.flatMap((run) => (
@@ -830,7 +967,8 @@ function buildMemoryPolicyState(input: {
   categoryCountsByInterview: Map<string, Record<string, number>>;
   interviewQuestionsById: Map<string, Array<{
     id: string;
-    category: string;
+    purpose: QuestionPurpose;
+    category: string | null;
     topic: string;
     question: string;
   }>>;
@@ -866,6 +1004,10 @@ function buildMemoryPolicyState(input: {
     recentQuestions: [
       ...(base?.recentQuestions ?? []),
       ...(input.interviewQuestionsById.get(input.interviewId) ?? []).map(
+        (question) => question,
+      ).filter(
+        (question) => question.purpose === "formal",
+      ).map(
         (question) => question.question,
       ),
     ].slice(-10),

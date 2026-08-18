@@ -637,6 +637,7 @@ export function createDrizzleInterviewAgentRepository(
           candidateRoundCount: interviews.candidateRoundCount,
           status: interviews.status,
           language: interviews.language,
+          openingStage: interviews.openingStage,
         }).from(interviews)
           .where(eq(interviews.id, input.interviewId))
           .limit(1);
@@ -645,42 +646,64 @@ export function createDrizzleInterviewAgentRepository(
           throw new Error("Interview language does not match authoritative configuration");
         }
 
-        let mode: "opening" | "answer" = "opening";
+        const runTrigger = run.trigger as AgentRunTrigger | null;
+        if (!runTrigger) throw new Error("Agent run trigger is missing");
+        const mode = runTrigger.mode;
         let answerCategory: QuestionCategory | null = null;
         let answerQuestionId: string | null = null;
-        if (input.answerMessageId) {
+        let clarificationAnswer: string | null = null;
+        if (mode === "opening") {
+          if (input.answerMessageId !== null) {
+            throw new Error("Opening run cannot bind a candidate answer");
+          }
+        } else {
+          if (
+            !input.answerMessageId
+            || runTrigger.answerMessageId !== input.answerMessageId
+          ) {
+            throw new Error("Answer message does not match the authoritative run trigger");
+          }
           const [answer] = await tx.select({
-            runId: interviewMessages.runId,
             role: interviewMessages.role,
             kind: interviewMessages.kind,
             questionId: interviewMessages.questionId,
+            content: interviewMessages.content,
           }).from(interviewMessages).where(and(
             eq(interviewMessages.id, input.answerMessageId),
             eq(interviewMessages.interviewId, input.interviewId),
           )).limit(1);
-          const runTrigger = run.trigger as AgentRunTrigger | null;
-          const answerLinkedByTrigger = runTrigger?.mode === "answer"
-            && runTrigger.answerMessageId === input.answerMessageId;
+          const expectedKind = mode === "opening_clarification"
+            ? "clarification_answer"
+            : "answer";
+          const expectedPurpose = mode === "opening_clarification"
+            ? "opening_clarification"
+            : "formal";
           if (
             !answer
-            || (answer.runId !== input.runId && !answerLinkedByTrigger)
             || answer.role !== "user"
-            || answer.kind !== "answer"
+            || answer.kind !== expectedKind
             || !answer.questionId
           ) {
-            throw new Error("Answer message does not belong to this interview question");
+            throw new Error("Answer message does not match the authoritative run trigger");
           }
           const [question] = await tx.select({
             id: interviewQuestions.id,
             category: interviewQuestions.questionType,
+            purpose: interviewQuestions.purpose,
           }).from(interviewQuestions).where(and(
             eq(interviewQuestions.id, answer.questionId),
             eq(interviewQuestions.interviewId, input.interviewId),
           )).limit(1);
-          if (!question) throw new Error("Answer question does not belong to interview");
-          mode = "answer";
-          answerCategory = questionCategorySchema.parse(question.category);
+          if (!question || question.purpose !== expectedPurpose) {
+            throw new Error("Answer question does not match the authoritative run trigger");
+          }
+          answerCategory = mode === "answer"
+            ? questionCategorySchema.parse(question.category)
+            : null;
           answerQuestionId = question.id;
+          clarificationAnswer = mode === "opening_clarification"
+            ? answer.content
+            : null;
         }
 
         const [coverage, questions, assessments] = await Promise.all([
@@ -697,6 +720,7 @@ export function createDrizzleInterviewAgentRepository(
             .where(and(
               eq(interviewQuestions.interviewId, input.interviewId),
               isNotNull(interviewQuestions.askedAt),
+              eq(interviewQuestions.purpose, "formal"),
             ))
             .orderBy(asc(interviewQuestions.questionIndex)),
           tx.select({ followUpNeeded: interviewAnswerAssessments.followUpNeeded })
@@ -723,8 +747,10 @@ export function createDrizzleInterviewAgentRepository(
         };
         const authorization = authorizeTurnProposal({
           state,
+          openingStage: interview.openingStage,
           mode,
           answerCategory,
+          clarificationAnswer,
           prefix: proposal,
           responseText,
         });
@@ -807,7 +833,103 @@ export function createDrizzleInterviewAgentRepository(
 
         let questionId: string | null = null;
         let messageKind: CommittedTurnOutcome["message"]["kind"];
-        if (proposal.decision.action === "finish") {
+        const roleResolution = authorization.prefix.roleResolution;
+        if (roleResolution?.status === "needs_clarification") {
+          const changed = await tx.update(interviews).set({
+            targetRole: null,
+            targetRoleStatus: "needs_clarification",
+            targetRoleConfidence: "low",
+            targetRoleSourceIds: roleResolution.resumeEvidenceIds,
+            targetRoleConfirmationMessageId: null,
+            openingStage: "awaiting_role_clarification",
+            updatedAt: now,
+          }).where(and(
+            eq(interviews.id, input.interviewId),
+            eq(interviews.status, "active"),
+            eq(interviews.openingStage, "role_resolution"),
+          )).returning({ id: interviews.id });
+          if (changed.length === 0) throw new Error("OPENING_STAGE_MISMATCH");
+          const [indexRow] = await tx.select({
+            next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1`,
+          }).from(interviewQuestions)
+            .where(eq(interviewQuestions.interviewId, input.interviewId));
+          const [question] = await tx.insert(interviewQuestions).values({
+            interviewId: input.interviewId,
+            questionIndex: Number(indexRow.next),
+            purpose: "opening_clarification",
+            questionType: null,
+            topic: "target_role",
+            question: responseText,
+            tip: "",
+          }).returning({ id: interviewQuestions.id });
+          questionId = question.id;
+          messageKind = "clarification";
+        } else if (roleResolution) {
+          const expectedStage = roleResolution.status === "confirmed"
+            ? "awaiting_role_clarification"
+            : "role_resolution";
+          const confirmationMessageId = roleResolution.status === "confirmed"
+            ? input.answerMessageId
+            : null;
+          if (roleResolution.status === "confirmed" && !confirmationMessageId) {
+            throw new Error("ROLE_CONFIRMATION_MESSAGE_REQUIRED");
+          }
+          const changed = await tx.update(interviews).set({
+            targetRole: roleResolution.value,
+            targetRoleStatus: roleResolution.status,
+            targetRoleConfidence: roleResolution.confidence,
+            targetRoleSourceIds: roleResolution.resumeEvidenceIds,
+            targetRoleConfirmationMessageId: confirmationMessageId,
+            openingStage: "formal_interview",
+            updatedAt: now,
+          }).where(and(
+            eq(interviews.id, input.interviewId),
+            eq(interviews.status, "active"),
+            eq(interviews.openingStage, expectedStage),
+          )).returning({ id: interviews.id });
+          if (changed.length === 0) throw new Error("OPENING_STAGE_MISMATCH");
+          const [indexRow] = await tx.select({
+            next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1`,
+          }).from(interviewQuestions)
+            .where(eq(interviewQuestions.interviewId, input.interviewId));
+          const [question] = await tx.insert(interviewQuestions).values({
+            interviewId: input.interviewId,
+            questionIndex: Number(indexRow.next),
+            purpose: "formal",
+            questionType: "introduction",
+            topic: proposal.decision.action === "ask"
+              ? proposal.decision.coverageTarget
+              : "self_introduction",
+            question: responseText,
+            tip: "",
+          }).returning({ id: interviewQuestions.id });
+          questionId = question.id;
+          if (proposal.decision.action !== "ask") {
+            throw new Error("INVALID_OPENING_DECISION");
+          }
+          const [categoryCoverage] = await tx.insert(interviewCoverage).values({
+            interviewId: input.interviewId,
+            category: "introduction",
+            topic: "__category__",
+            resumeEvidenceIds: proposal.decision.evidenceIds,
+            questionCount: 1,
+            status: "partial",
+          }).onConflictDoUpdate({
+            target: [
+              interviewCoverage.interviewId,
+              interviewCoverage.category,
+              interviewCoverage.topic,
+            ],
+            set: {
+              questionCount: sql`${interviewCoverage.questionCount} + 1`,
+              resumeEvidenceIds: proposal.decision.evidenceIds,
+              status: sql`CASE WHEN ${interviewCoverage.questionCount} + 1 >= 3 THEN 'exhausted' ELSE 'partial' END`,
+              updatedAt: now,
+            },
+          }).returning({ count: interviewCoverage.questionCount });
+          if (categoryCoverage.count > 3) throw new Error("CATEGORY_LIMIT_REACHED");
+          messageKind = "question";
+        } else if (proposal.decision.action === "finish") {
           if (interview.status !== "active" && interview.status !== "completing") {
             throw new Error("INTERVIEW_NOT_ACTIVE");
           }
@@ -823,7 +945,7 @@ export function createDrizzleInterviewAgentRepository(
             interviewId: input.interviewId,
           }).onConflictDoNothing({ target: interviewCompletionJobs.interviewId });
           messageKind = "finish";
-        } else {
+        } else if (proposal.decision.action === "ask") {
           const category = proposal.decision.category;
           const [indexRow] = await tx.select({
             next: sql<number>`coalesce(max(${interviewQuestions.questionIndex}), 0) + 1`,
@@ -832,6 +954,7 @@ export function createDrizzleInterviewAgentRepository(
           const [question] = await tx.insert(interviewQuestions).values({
             interviewId: input.interviewId,
             questionIndex: Number(indexRow.next),
+            purpose: "formal",
             questionType: category,
             topic: proposal.decision.coverageTarget,
             question: responseText,
@@ -859,9 +982,9 @@ export function createDrizzleInterviewAgentRepository(
             },
           }).returning({ count: interviewCoverage.questionCount });
           if (categoryCoverage.count > 3) throw new Error("CATEGORY_LIMIT_REACHED");
-          messageKind = proposal.decision.action === "clarify"
-            ? "clarification"
-            : "question";
+          messageKind = "question";
+        } else {
+          throw new Error("Formal clarification is forbidden");
         }
 
         const [sequenceRow] = await tx.select({
@@ -958,18 +1081,6 @@ export function createDrizzleInterviewAgentRepository(
           .where(eq(interviews.id, input.interviewId))
           .limit(1);
         if (interview?.status !== "active") throw new Error("INTERVIEW_NOT_ACTIVE");
-        if (input.targetRole) {
-          await tx.update(interviews).set({
-            targetRole: input.targetRole.value,
-            targetRoleStatus: input.targetRole.status,
-            targetRoleConfidence: input.targetRole.confidence,
-            targetRoleSourceIds: input.targetRole.sourceIds,
-            updatedAt: new Date(),
-          }).where(and(
-            eq(interviews.id, input.interviewId),
-            eq(interviews.status, "active"),
-          ));
-        }
         const [coverage] = await tx.select({ count: interviewCoverage.questionCount })
           .from(interviewCoverage)
           .where(and(
@@ -985,6 +1096,7 @@ export function createDrizzleInterviewAgentRepository(
         const [question] = await tx.insert(interviewQuestions).values({
           interviewId: input.interviewId,
           questionIndex: Number(indexRow.next),
+          purpose: "formal",
           questionType: input.category,
           topic: input.topic,
           question: input.question,

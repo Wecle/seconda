@@ -29,6 +29,7 @@ function validQuestionPrefix() {
       status: "partial" as const,
       resumeEvidenceIds: ["evidence-1"],
     }],
+    roleResolution: null,
     decision: {
       action: "ask" as const,
       category: "technical_depth" as const,
@@ -44,12 +45,15 @@ function validOpeningPrefix() {
   return {
     assessment: null,
     coverageChanges: [],
+    roleResolution: {
+      status: "needs_clarification" as const,
+      confidence: "low" as const,
+      resumeEvidenceIds: ["evidence-role"],
+    },
     decision: {
       action: "clarify" as const,
-      category: "career_motivation" as const,
-      intent: "verify_evidence" as const,
+      subject: "target_role" as const,
       evidenceIds: ["evidence-role"],
-      coverageTarget: "确认目标岗位",
       estimatedInformationGain: "high" as const,
     },
   };
@@ -127,12 +131,51 @@ test("hashes normalized prefixes deterministically", () => {
   assert.equal(
     hashTurnProposalPrefix({
       ...validOpeningPrefix(),
-      decision: {
-        ...validOpeningPrefix().decision,
-        coverageTarget: "  确认目标岗位  ",
+      roleResolution: {
+        status: "needs_clarification",
+        confidence: "low",
+        resumeEvidenceIds: ["evidence-role"],
       },
     }),
     hashTurnProposalPrefix(prefix),
   );
   assert.match(hashTurnProposalPrefix(prefix), /^[a-f0-9]{64}$/);
+});
+
+test("includes the resolved role value in the authorized prefix hash", () => {
+  const base = {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "inferred" as const,
+      value: "前端工程师",
+      confidence: "high" as const,
+      resumeEvidenceIds: ["evidence-role"],
+    },
+    decision: {
+      action: "ask" as const,
+      category: "introduction" as const,
+      intent: "new_topic" as const,
+      evidenceIds: ["evidence-role"],
+      coverageTarget: "自我介绍",
+      estimatedInformationGain: "high" as const,
+    },
+  };
+  assert.notEqual(
+    hashTurnProposalPrefix(turnProposalPrefixSchema.parse(base)),
+    hashTurnProposalPrefix(turnProposalPrefixSchema.parse({
+      ...base,
+      roleResolution: { ...base.roleResolution, value: "后端工程师" },
+    })),
+  );
+});
+
+test("rejects formal fields on a target-role clarification", () => {
+  assert.equal(turnProposalPrefixSchema.safeParse({
+    ...validOpeningPrefix(),
+    decision: {
+      ...validOpeningPrefix().decision,
+      category: "career_motivation",
+    },
+  }).success, false);
 });

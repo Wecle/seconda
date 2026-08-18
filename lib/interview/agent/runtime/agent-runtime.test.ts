@@ -57,6 +57,12 @@ function openingProposal(overrides?: Partial<InterviewTurnProposal>): InterviewT
   return {
     assessment: null,
     coverageChanges: [],
+    roleResolution: {
+      status: "inferred",
+      value: "软件工程师",
+      confidence: "high",
+      resumeEvidenceIds: ["resume:profile"],
+    },
     decision: {
       action: "ask",
       category: "introduction",
@@ -92,6 +98,7 @@ function answerProposal(input: {
       status: input.status,
       resumeEvidenceIds: ["resume:profile"],
     }],
+    roleResolution: null,
     decision: {
       action: "ask",
       category: "resume_project",
@@ -101,6 +108,25 @@ function answerProposal(input: {
       estimatedInformationGain: "high",
     },
     responseText: "请选择一个近期项目，说明你的职责和关键技术取舍。",
+  };
+}
+
+function roleClarificationProposal(): InterviewTurnProposal {
+  return {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "needs_clarification",
+      confidence: "low",
+      resumeEvidenceIds: [],
+    },
+    decision: {
+      action: "clarify",
+      subject: "target_role",
+      evidenceIds: [],
+      estimatedInformationGain: "high",
+    },
+    responseText: "你希望面试什么岗位？",
   };
 }
 
@@ -504,6 +530,8 @@ async function createRuntimeFixture(options?: {
     categoryCounts: {},
     recentQuestions: [],
     requestedUserEnd: false,
+  }, "zh", {
+    openingStage: options?.answerCategory ? "formal_interview" : "role_resolution",
   });
   const run = await repository.createRun({
     interviewId: "interview",
@@ -537,6 +565,16 @@ async function createRuntimeFixture(options?: {
       questionId: asked.questionId,
     });
     answerMessageId = answer.id;
+    await repository.saveRunTrigger(run.id, {
+      mode: "answer",
+      instruction: "continue",
+      answerMessageId,
+    });
+  } else {
+    await repository.saveRunTrigger(run.id, {
+      mode: "opening",
+      instruction: "open",
+    });
   }
   const model = options?.model ?? scriptedModel([
     streamingTerminalScript({ proposal: openingProposal() }),
@@ -3030,4 +3068,75 @@ test("fences a stale response streamer while a takeover discards and commits onc
   const snapshot = fixture.repository.inspectInterview("interview");
   assert.equal(snapshot.messages.filter((message) => message.role === "assistant").length, 1);
   assert.equal(snapshot.submitTurnCommits.length, 1);
+});
+
+test("authorizes and commits a grounded role confirmation without an assessment", async () => {
+  const opening = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({ proposal: roleClarificationProposal() }),
+    ]),
+  });
+  await runInterviewAgent(opening.runOptions);
+  const clarificationQuestion = opening.repository
+    .inspectInterview("interview").questions[0];
+  assert.equal(clarificationQuestion?.purpose, "opening_clarification");
+
+  const run = await opening.repository.createRun({
+    interviewId: "interview",
+    idempotencyKey: "runtime-confirmation",
+  });
+  const answer = await opening.repository.appendMessage({
+    interviewId: "interview",
+    runId: run.id,
+    role: "user",
+    kind: "clarification_answer",
+    content: "前端工程师",
+    questionId: clarificationQuestion.id,
+  });
+  await opening.repository.saveRunTrigger(run.id, {
+    mode: "opening_clarification",
+    instruction: "confirm role",
+    answerMessageId: answer.id,
+  });
+  const claimed = await opening.repository.claimRun(
+    run.id,
+    "confirmation-worker",
+    new Date(),
+    60_000,
+  );
+  const confirmationProposal = openingProposal({
+    roleResolution: {
+      status: "confirmed",
+      value: "前端工程师",
+      confidence: "high",
+      resumeEvidenceIds: [],
+    },
+    responseText: "已确认前端工程师方向，请先做自我介绍。",
+  });
+  await runInterviewAgent({
+    ...opening.runOptions,
+    runId: run.id,
+    lease: {
+      owner: "confirmation-worker",
+      generation: claimed.run!.leaseGeneration,
+    },
+    model: scriptedModel([
+      streamingTerminalScript({ proposal: confirmationProposal }),
+    ]),
+    turnContext: {
+      ...opening.runOptions.turnContext,
+      mode: "opening_clarification",
+      openingStage: "awaiting_role_clarification",
+      answerCategory: null,
+      answerMessageId: answer.id,
+      clarificationAnswer: "前端工程师",
+    },
+  });
+
+  const events = await opening.repository.listEvents(run.id, 0);
+  assert.equal(events.some((event) => event.type === "proposal_authorized"), true);
+  assert.equal(events.some((event) => event.type === "message_committed"), true);
+  const snapshot = opening.repository.inspectInterview("interview");
+  assert.equal(snapshot.assessments.length, 0);
+  assert.equal(snapshot.targetRole?.status, "confirmed");
 });

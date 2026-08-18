@@ -14,7 +14,11 @@ import {
   turnProposalPrefixSchema,
   type TurnProposalPrefix,
 } from "@/lib/interview/agent/domain/turn-proposal";
-import type { AgentRunMode } from "@/lib/interview/agent/domain/opening-role";
+import {
+  isConfirmedRoleGrounded,
+  type AgentRunMode,
+  type OpeningStage,
+} from "@/lib/interview/agent/domain/opening-role";
 
 export type ProjectedTurnState = {
   consecutiveNoFollowUpAssessments: number;
@@ -43,6 +47,10 @@ type NonCoverageRejectionReason = Exclude<
   | "OPENING_ASSESSMENT_FORBIDDEN"
   | "OPENING_COVERAGE_FORBIDDEN"
   | "OPENING_STAGE_MISMATCH"
+  | "ROLE_RESOLUTION_REQUIRED"
+  | "ROLE_RESOLUTION_FORBIDDEN"
+  | "INVALID_OPENING_DECISION"
+  | "ROLE_CONFIRMATION_NOT_GROUNDED"
   | "ANSWER_ASSESSMENT_REQUIRED"
   | "ANSWER_CATEGORY_REQUIRED"
   | "CONTRADICTORY_COVERAGE_CHANGE"
@@ -107,8 +115,10 @@ export function projectAssessmentCoverage(assessment: AnswerAssessment): {
 
 export function authorizeTurnProposal(input: {
   state: InterviewAgentState;
+  openingStage: OpeningStage;
   mode: AgentRunMode;
   answerCategory: QuestionCategory | null;
+  clarificationAnswer: string | null;
   prefix: unknown;
   responseText?: string;
 }): TurnProposalAuthorization {
@@ -117,18 +127,36 @@ export function authorizeTurnProposal(input: {
     return { allowed: false, reason: "INVALID_PROPOSAL" };
   }
 
-  if (input.mode === "opening_clarification") {
+  const expectedMode: AgentRunMode = input.openingStage === "role_resolution"
+    ? "opening"
+    : input.openingStage === "awaiting_role_clarification"
+      ? "opening_clarification"
+      : "answer";
+  if (input.mode !== expectedMode) {
     return { allowed: false, reason: "OPENING_STAGE_MISMATCH" };
   }
 
-  if (input.mode === "opening") {
+  const opening = input.openingStage !== "formal_interview";
+  if (opening) {
     if (parsedPrefix.data.assessment !== null) {
       return { allowed: false, reason: "OPENING_ASSESSMENT_FORBIDDEN" };
     }
     if (parsedPrefix.data.coverageChanges.length > 0) {
       return { allowed: false, reason: "OPENING_COVERAGE_FORBIDDEN" };
     }
+    if (parsedPrefix.data.decision.action === "finish") {
+      return { allowed: false, reason: "OPENING_CANNOT_FINISH" };
+    }
+    if (parsedPrefix.data.roleResolution === null) {
+      return { allowed: false, reason: "ROLE_RESOLUTION_REQUIRED" };
+    }
   } else {
+    if (parsedPrefix.data.roleResolution !== null) {
+      return { allowed: false, reason: "ROLE_RESOLUTION_FORBIDDEN" };
+    }
+    if (parsedPrefix.data.decision.action === "clarify") {
+      return { allowed: false, reason: "INVALID_ACTION" };
+    }
     if (parsedPrefix.data.assessment === null) {
       return { allowed: false, reason: "ANSWER_ASSESSMENT_REQUIRED" };
     }
@@ -155,6 +183,57 @@ export function authorizeTurnProposal(input: {
     coverageChanges: projectedStateResult.normalizedCoverageChanges,
   });
 
+  if (input.openingStage === "role_resolution") {
+    const roleResolution = prefix.roleResolution!;
+    const directInference = roleResolution.status === "inferred"
+      && prefix.decision.action === "ask"
+      && prefix.decision.category === "introduction"
+      && prefix.decision.intent === "new_topic"
+      && roleResolution.resumeEvidenceIds.length > 0
+      && prefix.decision.evidenceIds.length > 0;
+    const clarification = roleResolution.status === "needs_clarification"
+      && prefix.decision.action === "clarify"
+      && prefix.decision.subject === "target_role";
+    if (!directInference && !clarification) {
+      return { allowed: false, reason: directInference === false
+        && roleResolution.status === "inferred"
+        && prefix.decision.action === "ask"
+        && (roleResolution.resumeEvidenceIds.length === 0
+          || prefix.decision.evidenceIds.length === 0)
+        ? "MISSING_EVIDENCE"
+        : "INVALID_OPENING_DECISION" };
+    }
+    return {
+      allowed: true,
+      prefix,
+      proposalHash: hashTurnProposalPrefix(prefix),
+      projectedState: projectedStateResult.projectedState,
+    };
+  }
+
+  if (input.openingStage === "awaiting_role_clarification") {
+    const roleResolution = prefix.roleResolution!;
+    const validConfirmation = roleResolution.status === "confirmed"
+      && prefix.decision.action === "ask"
+      && prefix.decision.category === "introduction"
+      && prefix.decision.intent === "new_topic";
+    if (!validConfirmation) {
+      return { allowed: false, reason: "INVALID_OPENING_DECISION" };
+    }
+    if (
+      !input.clarificationAnswer
+      || !isConfirmedRoleGrounded(roleResolution.value, input.clarificationAnswer)
+    ) {
+      return { allowed: false, reason: "ROLE_CONFIRMATION_NOT_GROUNDED" };
+    }
+    return {
+      allowed: true,
+      prefix,
+      proposalHash: hashTurnProposalPrefix(prefix),
+      projectedState: projectedStateResult.projectedState,
+    };
+  }
+
   const decision = prefix.decision;
   const authorization = authorizeInterviewAction({
     candidateRoundCount: input.state.candidateRoundCount,
@@ -172,11 +251,17 @@ export function authorizeTurnProposal(input: {
           resumeEvidenceIds: [],
           finishReason: decision.completionReason,
         }
-      : {
+      : decision.action === "ask" ? {
           action: decision.action,
           category: decision.category,
           intent: decision.intent,
           question: input.responseText ?? decision.coverageTarget,
+          resumeEvidenceIds: decision.evidenceIds,
+        } : {
+          action: "clarify",
+          category: "career_motivation",
+          intent: "verify_evidence",
+          question: input.responseText,
           resumeEvidenceIds: decision.evidenceIds,
         },
   });

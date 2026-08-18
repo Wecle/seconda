@@ -39,8 +39,8 @@ function fixture(options?: { status?: string; configVersion?: number; scheduleFa
       calls.push("acceptCandidateMessage");
       const message = { id: `message-${messages.size + 1}`, runId: run.id, sequence: messages.size + 1, content: input.content, created: true };
       await repository.saveRunTrigger(run.id, {
-        ...input.trigger,
         mode: "answer",
+        instruction: input.instructions.answer,
         answerMessageId: message.id,
       });
       messages.set(input.idempotencyKey, message);
@@ -126,7 +126,7 @@ test("creates an interview, initializes coverage and starts an opening run", asy
   assert.equal(result.interviewId, "interview");
   assert.deepEqual(f.calls, ["createInterview", "initializeCoverage", "run:opening"]);
   const instruction = (await f.repository.getRun(result.runId))?.trigger?.instruction ?? "";
-  assert.match(instruction, /submit_interview_turn/);
+  assert.match(instruction, /roleResolution\.status=inferred/);
   assert.match(instruction, /clarify/);
   assert.doesNotMatch(instruction, /ask_interview_question|持久化 inferred targetRole/);
 });
@@ -142,7 +142,7 @@ test("accepts a candidate answer exactly once for a repeated idempotency key", a
   assert.equal(f.calls.filter((call) => call === "run:answer").length, 1);
 });
 
-test("keeps the clarification run producer dormant", async () => {
+test("passes stable formal and clarification instructions to candidate acceptance", async () => {
   const source = await readFile(
     new URL("./interview-service.ts", import.meta.url),
     "utf8",
@@ -151,8 +151,8 @@ test("keeps the clarification run producer dormant", async () => {
     source.indexOf("export async function submitCandidateMessage"),
     source.indexOf("type RetryFailedRunErrorCode"),
   );
-  assert.match(submitSource, /mode: "answer"/);
-  assert.doesNotMatch(submitSource, /opening_clarification/);
+  assert.match(submitSource, /answer: ANSWER_RUN_INSTRUCTION/);
+  assert.match(submitSource, /openingClarification: OPENING_CLARIFICATION_RUN_INSTRUCTION/);
 });
 
 test("repairs an opening run whose first scheduler handoff failed", async () => {

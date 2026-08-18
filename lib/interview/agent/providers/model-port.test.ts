@@ -22,6 +22,12 @@ const openingProposal = {
   publicAnalysis: "候选人的方向清晰，下一步邀请其介绍最近经历与岗位期待。",
   assessment: null,
   coverageChanges: [],
+  roleResolution: {
+    status: "inferred" as const,
+    value: "后端工程师",
+    confidence: "high" as const,
+    resumeEvidenceIds: ["resume:raw"],
+  },
   decision: {
     action: "ask" as const,
     category: "introduction" as const,
@@ -89,15 +95,16 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /通常只为当前回答分类提交 coverageChanges/);
   assert.match(
     AGENT_SYSTEM_PROMPT,
-    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*自我介绍邀请/,
+    /role_resolution.*inferred.*introduction\/new_topic ask/,
   );
   assert.match(
     AGENT_SYSTEM_PROMPT,
-    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图.*暂缓.*自我介绍/,
+    /role_resolution.*needs_clarification.*target_role clarify/,
   );
+  assert.match(AGENT_SYSTEM_PROMPT, /awaiting_role_clarification.*confirmed/);
+  assert.match(AGENT_SYSTEM_PROMPT, /formal_interview.*roleResolution 必须为 null/);
   assert.match(AGENT_SYSTEM_PROMPT, /不得枚举或复述简历/);
-  assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*一个核心考察意图/);
-  assert.match(AGENT_SYSTEM_PROMPT, /回答提示.*多个疑问句/);
+  assert.match(AGENT_SYSTEM_PROMPT, /ask 或 clarify.*唯一核心意图/);
   assert.equal(
     AGENT_SYSTEM_PROMPT.includes(["只能包含一个", "疑问句"].join("")),
     false,
@@ -217,7 +224,7 @@ test("production DeepSeek Agent wiring sends a conversational required-tool requ
   );
   assert.match(
     JSON.stringify(body.tools),
-    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图/,
+    /role_resolution.*needs_clarification.*target_role clarify/,
   );
 });
 

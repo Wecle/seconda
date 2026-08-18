@@ -568,12 +568,18 @@ test("PostgreSQL cutover creates openings, fences workers and reconciles committ
       questionType: "introduction",
       question: "请做自我介绍。",
     }).returning({ id: interviewQuestions.id });
+    await database.update(interviews).set({
+      openingStage: "formal_interview",
+    }).where(eq(interviews.id, acceptedInterviewId));
     const accepted = await interviewStore.acceptCandidateMessage({
       interviewId: acceptedInterviewId,
       content: "我是候选人。",
       idempotencyKey: randomUUID(),
       runIdempotencyKey: randomUUID(),
-      trigger: { mode: "answer", instruction: "continue" },
+      instructions: {
+        answer: "continue",
+        openingClarification: "confirm role",
+      },
     });
     assert.ok(acceptedQuestion.id);
     const [acceptedRun] = await database.select({

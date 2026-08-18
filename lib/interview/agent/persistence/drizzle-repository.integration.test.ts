@@ -28,6 +28,11 @@ import {
 import { createDrizzleCompletionJobRepository } from "@/lib/interview/completion/repository";
 import type { AgentEventInput } from "@/lib/interview/agent/protocols/events";
 import { createDrizzleAgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
+import type { AgentRunTrigger } from "@/lib/interview/agent/persistence/repository";
+import {
+  ANSWER_RUN_INSTRUCTION,
+  OPENING_CLARIFICATION_RUN_INSTRUCTION,
+} from "@/lib/interview/agent/prompts/turn-instructions";
 
 import {
   hashTurnProposalPrefix,
@@ -51,6 +56,87 @@ function publicReasoningEvent(
 
 function postgresClockMilliseconds() {
   return sql<number>`FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision`;
+}
+
+async function prepareDatabaseTurn(
+  repository: ReturnType<typeof createDrizzleInterviewAgentRepository>,
+  input: {
+    interviewId: string;
+    runId?: string;
+    trigger: AgentRunTrigger;
+    proposal: TurnProposalPrefix;
+    responseText: string;
+    answerMessageId?: string | null;
+    key: string;
+  },
+) {
+  const run = input.runId
+    ? { id: input.runId }
+    : await repository.createRun({
+        interviewId: input.interviewId,
+        idempotencyKey: input.key,
+      });
+  await repository.saveRunTrigger(run.id, input.trigger);
+  const owner = `${input.key}-worker`;
+  const claimed = await repository.claimRun(run.id, owner, new Date(), 60_000);
+  assert.equal(claimed.claimed, true);
+  const lease = { owner, generation: claimed.run!.leaseGeneration };
+  const attemptId = `${input.key}-attempt`;
+  const logicalMessageId = randomUUID();
+  await repository.startAttempt(run.id, {
+    model: "test-model",
+    attemptId,
+    attemptNumber: 1,
+    provisionalMessageId: logicalMessageId,
+    now: new Date(),
+  }, lease);
+  const proposalHash = hashTurnProposalPrefix(input.proposal);
+  await repository.authorizeProposal({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposal: input.proposal,
+    proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: input.key,
+      activeSkillNames: [],
+    },
+  });
+  await repository.markResponseStarted({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposalHash,
+  });
+  await repository.saveCheckpoint(run.id, {
+    turnCount: 1,
+    toolCallCount: 1,
+    lastEventSequence: 0,
+    progressHash: `${input.key}:committing`,
+    activeSkillNames: [],
+    phase: "committing",
+  }, lease);
+  return {
+    runId: run.id,
+    commitInput: {
+      runId: run.id,
+      interviewId: input.interviewId,
+      toolCallId: `${input.key}-tool`,
+      lease,
+      logicalMessageId,
+      attemptId,
+      answerMessageId: input.answerMessageId ?? null,
+      proposal: input.proposal,
+      proposalHash,
+      responseText: input.responseText,
+      language: "zh" as const,
+    },
+  };
 }
 
 test("real database fences stale workers, notifies durable events and preserves atomic idempotency", {
@@ -385,7 +471,10 @@ test("real database fences stale workers, notifies durable events and preserves 
         content: "A concurrently accepted answer",
         idempotencyKey: randomUUID(),
         runIdempotencyKey: `message:${randomUUID()}`,
-        trigger: { mode: "answer", instruction: "continue from the accepted answer" },
+        instructions: {
+          answer: "continue from the accepted answer",
+          openingClarification: "confirm role",
+        },
       }),
       repository.createReplacementRun({
         interviewId,
@@ -473,12 +562,16 @@ test("real database atomically commits an authorized turn and rolls back policy 
     });
     interviewId = created.interviewId;
     await store.initializeCoverage(interviewId);
-    await db.update(interviews).set({ candidateRoundCount: 1 })
+    await db.update(interviews).set({
+      candidateRoundCount: 1,
+      openingStage: "formal_interview",
+    })
       .where(eq(interviews.id, interviewId));
 
     const [answeredQuestion] = await db.insert(interviewQuestions).values({
       interviewId,
       questionIndex: 1,
+      purpose: "formal",
       questionType: "technical_depth",
       topic: "reliability",
       question: "你如何保证服务可靠性？",
@@ -506,6 +599,11 @@ test("real database atomically commits an authorized turn and rolls back policy 
     const run = await repository.createRun({
       interviewId,
       idempotencyKey: "authorized-turn",
+    });
+    await repository.saveRunTrigger(run.id, {
+      mode: "answer",
+      instruction: "continue",
+      answerMessageId: answerMessage.id,
     });
     await db.update(interviewMessages).set({ runId: run.id })
       .where(eq(interviewMessages.id, answerMessage.id));
@@ -540,6 +638,7 @@ test("real database atomically commits an authorized turn and rolls back policy 
         status: "sufficient",
         resumeEvidenceIds: ["resume:structured"],
       }],
+      roleResolution: null,
       decision: {
         action: "ask",
         category: "technical_depth",
@@ -593,13 +692,15 @@ test("real database atomically commits an authorized turn and rolls back policy 
       responseText: "你在项目中如何验证租约失效后的数据一致性？",
       language: "zh" as const,
     };
-    const otherRun = await repository.createRun({
-      interviewId,
-      idempotencyKey: "other-answer-run",
+    await repository.saveRunTrigger(run.id, {
+      mode: "answer",
+      instruction: "wrong answer identity",
+      answerMessageId: randomUUID(),
     });
-    await db.update(interviewMessages).set({ runId: otherRun.id })
-      .where(eq(interviewMessages.id, answerMessage.id));
-    await assert.rejects(repository.commitTurnOutcome(commitInput), /does not belong/i);
+    await assert.rejects(
+      repository.commitTurnOutcome(commitInput),
+      /authoritative run trigger/i,
+    );
     const [wrongRunAssessments, wrongRunMessages, wrongRunQuestions, wrongRunCommits, wrongRunEvents] = await Promise.all([
       db.select().from(interviewAnswerAssessments)
         .where(eq(interviewAnswerAssessments.interviewId, interviewId)),
@@ -678,8 +779,9 @@ test("real database atomically commits an authorized turn and rolls back policy 
     const secondAttemptId = "attempt-category-limit";
     const secondLogicalMessageId = randomUUID();
     const limitedProposal: TurnProposalPrefix = {
-      assessment: null,
-      coverageChanges: [],
+      assessment: proposal.assessment,
+      coverageChanges: proposal.coverageChanges,
+      roleResolution: null,
       decision: {
         action: "ask",
         category: "technical_depth",
@@ -753,7 +855,7 @@ test("real database atomically commits an authorized turn and rolls back policy 
       lease,
       logicalMessageId: secondLogicalMessageId,
       attemptId: secondAttemptId,
-      answerMessageId: null,
+      answerMessageId: answerMessage.id,
       proposal: limitedProposal,
       proposalHash: limitedHash,
       responseText: "请说明另一个技术主题？",
@@ -766,7 +868,7 @@ test("real database atomically commits an authorized turn and rolls back policy 
       lease,
       logicalMessageId: secondLogicalMessageId,
       attemptId: secondAttemptId,
-      answerMessageId: null,
+      answerMessageId: answerMessage.id,
       proposal: limitedProposal,
       proposalHash: limitedHash,
       responseText: "请说明另一个技术主题？",
@@ -798,6 +900,265 @@ test("real database atomically commits an authorized turn and rolls back policy 
   } finally {
     try {
       if (interviewId) await db.delete(interviews).where(eq(interviews.id, interviewId));
+      await db.delete(resumes).where(eq(resumes.id, resumeId));
+      await db.delete(users).where(eq(users.id, userId));
+    } finally {
+      await client.end();
+    }
+  }
+});
+
+test("real database atomically persists all opening role transitions", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+  const db = drizzle(client, { schema });
+  const userId = randomUUID();
+  const resumeId = randomUUID();
+  const versionId = randomUUID();
+  const interviewIds: string[] = [];
+  try {
+    await db.insert(users).values({ id: userId, email: `${userId}@opening.test` });
+    await db.insert(resumes).values({ id: resumeId, userId, title: "Opening role resume" });
+    await db.insert(resumeVersions).values({
+      id: versionId,
+      resumeId,
+      versionNumber: 1,
+      originalFilename: "resume.pdf",
+      storedPath: `/tmp/${versionId}.pdf`,
+      extractedText: "Frontend TypeScript engineer",
+      parsedJson: { name: "Candidate", title: "Frontend Engineer" },
+      parseStatus: "parsed",
+    });
+    const store = createDrizzleAgentInterviewStore(db);
+    const repository = createDrizzleInterviewAgentRepository(db);
+    const createInterview = async () => {
+      const created = await store.createInterview({
+        ownerUserId: userId,
+        idempotencyKey: randomUUID(),
+        resumeVersionId: versionId,
+        config: {
+          configVersion: 2,
+          language: "zh",
+          persona: "standard",
+          preference: "",
+          preferenceTags: [],
+        },
+      });
+      interviewIds.push(created.interviewId);
+      await store.initializeCoverage(created.interviewId);
+      return created.interviewId;
+    };
+
+    const directInterviewId = await createInterview();
+    const directProposal: TurnProposalPrefix = {
+      assessment: null,
+      coverageChanges: [],
+      roleResolution: {
+        status: "inferred",
+        value: "前端工程师",
+        confidence: "high",
+        resumeEvidenceIds: ["resume:title"],
+      },
+      decision: {
+        action: "ask",
+        category: "introduction",
+        intent: "new_topic",
+        evidenceIds: ["resume:title"],
+        coverageTarget: "自我介绍",
+        estimatedInformationGain: "high",
+      },
+    };
+    const direct = await prepareDatabaseTurn(repository, {
+      interviewId: directInterviewId,
+      trigger: { mode: "opening", instruction: "open" },
+      proposal: directProposal,
+      responseText: "我们将按前端工程师方向进行，请先做自我介绍。",
+      key: "direct-opening",
+    });
+    await repository.commitTurnOutcome(direct.commitInput);
+    const [directInterview, directQuestions, directMessages, directCoverage] = await Promise.all([
+      db.select({
+        openingStage: interviews.openingStage,
+        targetRole: interviews.targetRole,
+        targetRoleStatus: interviews.targetRoleStatus,
+        candidateRoundCount: interviews.candidateRoundCount,
+      }).from(interviews).where(eq(interviews.id, directInterviewId)),
+      db.select({ purpose: interviewQuestions.purpose })
+        .from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, directInterviewId)),
+      db.select({ kind: interviewMessages.kind })
+        .from(interviewMessages)
+        .where(eq(interviewMessages.interviewId, directInterviewId)),
+      db.select({ count: interviewCoverage.questionCount })
+        .from(interviewCoverage)
+        .where(and(
+          eq(interviewCoverage.interviewId, directInterviewId),
+          eq(interviewCoverage.category, "introduction"),
+          eq(interviewCoverage.topic, "__category__"),
+        )),
+    ]);
+    assert.deepEqual(directInterview[0], {
+      openingStage: "formal_interview",
+      targetRole: "前端工程师",
+      targetRoleStatus: "inferred",
+      candidateRoundCount: 0,
+    });
+    assert.deepEqual(directQuestions, [{ purpose: "formal" }]);
+    assert.deepEqual(directMessages, [{ kind: "question" }]);
+    assert.equal(directCoverage[0]?.count, 1);
+
+    const clarificationInterviewId = await createInterview();
+    const clarificationProposal: TurnProposalPrefix = {
+      assessment: null,
+      coverageChanges: [],
+      roleResolution: {
+        status: "needs_clarification",
+        confidence: "low",
+        resumeEvidenceIds: [],
+      },
+      decision: {
+        action: "clarify",
+        subject: "target_role",
+        evidenceIds: [],
+        estimatedInformationGain: "high",
+      },
+    };
+    const clarification = await prepareDatabaseTurn(repository, {
+      interviewId: clarificationInterviewId,
+      trigger: { mode: "opening", instruction: "open" },
+      proposal: clarificationProposal,
+      responseText: "你希望面试什么岗位？",
+      key: "role-clarification",
+    });
+    await repository.commitTurnOutcome(clarification.commitInput);
+    const [clarificationQuestion] = await db.select({
+      id: interviewQuestions.id,
+      purpose: interviewQuestions.purpose,
+    }).from(interviewQuestions)
+      .where(eq(interviewQuestions.interviewId, clarificationInterviewId));
+    const [clarificationState] = await db.select({
+      openingStage: interviews.openingStage,
+      targetRoleStatus: interviews.targetRoleStatus,
+      candidateRoundCount: interviews.candidateRoundCount,
+    }).from(interviews).where(eq(interviews.id, clarificationInterviewId));
+    assert.deepEqual(clarificationState, {
+      openingStage: "awaiting_role_clarification",
+      targetRoleStatus: "needs_clarification",
+      candidateRoundCount: 0,
+    });
+    assert.equal(clarificationQuestion.purpose, "opening_clarification");
+
+    const answerKey = randomUUID();
+    const accepted = await store.acceptCandidateMessage({
+      interviewId: clarificationInterviewId,
+      content: "前端工程师",
+      idempotencyKey: answerKey,
+      runIdempotencyKey: `message:${answerKey}`,
+      instructions: {
+        answer: ANSWER_RUN_INSTRUCTION,
+        openingClarification: OPENING_CLARIFICATION_RUN_INSTRUCTION,
+      },
+    });
+    const confirmedProposal: TurnProposalPrefix = {
+      ...directProposal,
+      roleResolution: {
+        status: "confirmed",
+        value: "前端工程师",
+        confidence: "high",
+        resumeEvidenceIds: [],
+      },
+    };
+    const confirmation = await prepareDatabaseTurn(repository, {
+      interviewId: clarificationInterviewId,
+      runId: accepted.runId,
+      trigger: {
+        mode: "opening_clarification",
+        instruction: OPENING_CLARIFICATION_RUN_INSTRUCTION,
+        answerMessageId: accepted.id,
+      },
+      proposal: confirmedProposal,
+      responseText: "已确认前端工程师方向，请先做自我介绍。",
+      answerMessageId: accepted.id,
+      key: "role-confirmation",
+    });
+    const confirmations = await Promise.all([
+      repository.commitTurnOutcome(confirmation.commitInput),
+      repository.commitTurnOutcome(confirmation.commitInput),
+    ]);
+    assert.deepEqual(confirmations[1], confirmations[0]);
+    const [confirmedInterview, confirmedQuestions, confirmedCoverage, confirmedEvents, confirmedCommits] = await Promise.all([
+      db.select({
+        openingStage: interviews.openingStage,
+        targetRole: interviews.targetRole,
+        targetRoleStatus: interviews.targetRoleStatus,
+        confirmationMessageId: interviews.targetRoleConfirmationMessageId,
+        candidateRoundCount: interviews.candidateRoundCount,
+      }).from(interviews).where(eq(interviews.id, clarificationInterviewId)),
+      db.select({ purpose: interviewQuestions.purpose })
+        .from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, clarificationInterviewId))
+        .orderBy(asc(interviewQuestions.questionIndex)),
+      db.select({ count: interviewCoverage.questionCount })
+        .from(interviewCoverage)
+        .where(and(
+          eq(interviewCoverage.interviewId, clarificationInterviewId),
+          eq(interviewCoverage.category, "introduction"),
+          eq(interviewCoverage.topic, "__category__"),
+        )),
+      db.select({ id: interviewAgentEvents.id })
+        .from(interviewAgentEvents)
+        .where(and(
+          eq(interviewAgentEvents.runId, accepted.runId),
+          eq(interviewAgentEvents.type, "message_committed"),
+        )),
+      db.select({ id: interviewAgentToolCommits.id })
+        .from(interviewAgentToolCommits)
+        .where(and(
+          eq(interviewAgentToolCommits.runId, accepted.runId),
+          eq(interviewAgentToolCommits.toolName, "submit_interview_turn"),
+        )),
+    ]);
+    assert.deepEqual(confirmedInterview[0], {
+      openingStage: "formal_interview",
+      targetRole: "前端工程师",
+      targetRoleStatus: "confirmed",
+      confirmationMessageId: accepted.id,
+      candidateRoundCount: 0,
+    });
+    assert.deepEqual(confirmedQuestions, [
+      { purpose: "opening_clarification" },
+      { purpose: "formal" },
+    ]);
+    assert.equal(confirmedCoverage[0]?.count, 1);
+    assert.equal(confirmedEvents.length, 1);
+    assert.equal(confirmedCommits.length, 1);
+
+    const beforeIllegalReplay = await db.select({ id: interviewQuestions.id })
+      .from(interviewQuestions)
+      .where(eq(interviewQuestions.interviewId, directInterviewId));
+    const illegalReplay = await prepareDatabaseTurn(repository, {
+      interviewId: directInterviewId,
+      trigger: { mode: "opening", instruction: "open again" },
+      proposal: directProposal,
+      responseText: "重复自我介绍。",
+      key: "illegal-opening-replay",
+    });
+    await assert.rejects(
+      repository.commitTurnOutcome(illegalReplay.commitInput),
+      /OPENING_STAGE_MISMATCH/,
+    );
+    assert.deepEqual(
+      await db.select({ id: interviewQuestions.id })
+        .from(interviewQuestions)
+        .where(eq(interviewQuestions.interviewId, directInterviewId)),
+      beforeIllegalReplay,
+    );
+  } finally {
+    try {
+      for (const interviewId of interviewIds) {
+        await db.delete(interviews).where(eq(interviews.id, interviewId));
+      }
       await db.delete(resumes).where(eq(resumes.id, resumeId));
       await db.delete(users).where(eq(users.id, userId));
     } finally {

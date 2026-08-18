@@ -7,7 +7,7 @@ import type {
   QuestionCategory,
 } from "@/lib/interview/agent/domain/interview";
 import {
-  authorizeTurnProposal,
+  authorizeTurnProposal as authorizeTurnProposalImpl,
   projectAssessmentCoverage,
 } from "@/lib/interview/agent/domain/turn-authorizer";
 import type { TurnProposalPrefix } from "@/lib/interview/agent/domain/turn-proposal";
@@ -60,8 +60,9 @@ function askPrefix(input: {
       status: "partial",
       resumeEvidenceIds: ["evidence-1"],
     }],
+    roleResolution: null,
     decision: {
-      action: input.action ?? "ask",
+      action: "ask",
       category: input.category ?? "technical_depth",
       intent: "follow_up",
       evidenceIds: input.evidenceIds ?? ["evidence-1"],
@@ -85,6 +86,7 @@ function finishPrefix(input: {
       status: input.coverageStatus ?? (followUpNeeded ? "partial" : "sufficient"),
       resumeEvidenceIds: ["evidence-1"],
     }],
+    roleResolution: null,
     decision: {
       action: "finish",
       completionReason: input.reason ?? "coverage_sufficient",
@@ -92,16 +94,84 @@ function finishPrefix(input: {
   };
 }
 
-test("keeps clarification runs dormant until opening stage policy is activated", () => {
-  assert.deepEqual(authorizeTurnProposal({
-    state: stateWith(),
+type AuthorizationInput = Parameters<typeof authorizeTurnProposalImpl>[0];
+
+function authorizeTurnProposal(
+  input: Omit<AuthorizationInput, "openingStage" | "clarificationAnswer">
+    & Partial<Pick<AuthorizationInput, "openingStage" | "clarificationAnswer">>,
+) {
+  return authorizeTurnProposalImpl({
+    openingStage: input.mode === "opening"
+      ? "role_resolution"
+      : input.mode === "opening_clarification"
+        ? "awaiting_role_clarification"
+        : "formal_interview",
+    clarificationAnswer: null,
+    ...input,
+  });
+}
+
+function inferredOpeningPrefix(): TurnProposalPrefix {
+  return {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "inferred",
+      value: "前端工程师",
+      confidence: "high",
+      resumeEvidenceIds: ["evidence-role"],
+    },
+    decision: {
+      action: "ask",
+      category: "introduction",
+      intent: "new_topic",
+      evidenceIds: ["evidence-role"],
+      coverageTarget: "自我介绍",
+      estimatedInformationGain: "high",
+    },
+  };
+}
+
+function clarificationOpeningPrefix(): TurnProposalPrefix {
+  return {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "needs_clarification",
+      confidence: "low",
+      resumeEvidenceIds: [],
+    },
+    decision: {
+      action: "clarify",
+      subject: "target_role",
+      evidenceIds: [],
+      estimatedInformationGain: "high",
+    },
+  };
+}
+
+function confirmedOpeningPrefix(): TurnProposalPrefix {
+  return {
+    ...inferredOpeningPrefix(),
+    roleResolution: {
+      status: "confirmed",
+      value: "前端工程师",
+      confidence: "high",
+      resumeEvidenceIds: [],
+    },
+  };
+}
+
+test("authorizes a grounded clarification confirmation", () => {
+  const result = authorizeTurnProposal({
+    state: stateWith({ candidateRoundCount: 0 }),
+    openingStage: "awaiting_role_clarification",
     mode: "opening_clarification",
     answerCategory: null,
-    prefix: askPrefix({ assessment: null, coverageChanges: [] }),
-  }), {
-    allowed: false,
-    reason: "OPENING_STAGE_MISMATCH",
+    clarificationAnswer: "我希望面试前端工程师岗位",
+    prefix: confirmedOpeningPrefix(),
   });
+  assert.equal(result.allowed, true);
 });
 
 test("uses the current assessment for low information gain", () => {
@@ -522,16 +592,30 @@ test("opening clarification is allowed without resume evidence", () => {
     state: stateWith({ candidateRoundCount: 0 }),
     mode: "opening",
     answerCategory: null,
-    prefix: askPrefix({
-      assessment: null,
-      action: "clarify",
-      category: "career_motivation",
-      coverageChanges: [],
-      evidenceIds: [],
-    }),
+    prefix: clarificationOpeningPrefix(),
   });
 
   assert.equal(result.allowed, true);
+});
+
+test("authorizes direct inference and rejects ungrounded confirmation", () => {
+  assert.equal(authorizeTurnProposal({
+    state: stateWith({ candidateRoundCount: 0 }),
+    mode: "opening",
+    answerCategory: null,
+    prefix: inferredOpeningPrefix(),
+  }).allowed, true);
+
+  assert.deepEqual(authorizeTurnProposal({
+    state: stateWith({ candidateRoundCount: 0 }),
+    mode: "opening_clarification",
+    answerCategory: null,
+    clarificationAnswer: "我希望面试后端工程师岗位",
+    prefix: confirmedOpeningPrefix(),
+  }), {
+    allowed: false,
+    reason: "ROLE_CONFIRMATION_NOT_GROUNDED",
+  });
 });
 
 test("rejects a malformed prefix without throwing", () => {

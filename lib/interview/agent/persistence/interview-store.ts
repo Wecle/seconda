@@ -19,6 +19,7 @@ import { createResumeSnapshotPayload } from "@/lib/interview/resume-snapshot";
 import { questionCategorySchema } from "@/lib/interview/agent/domain/interview";
 import { indexResumeEvidence } from "@/lib/interview/agent/domain/resume-evidence";
 import { assertMatchingCandidateAnswer } from "@/lib/interview/agent/persistence/invariants";
+import type { AgentRunTrigger } from "@/lib/interview/agent/persistence/repository";
 import type { InterviewConfigV2 } from "@/lib/interview/settings";
 
 type AgentDatabase = typeof import("@/lib/db").db;
@@ -42,7 +43,10 @@ export interface AgentInterviewStore {
     content: string;
     idempotencyKey: string;
     runIdempotencyKey: string;
-    trigger: { mode: "answer"; instruction: string };
+    instructions: {
+      answer: string;
+      openingClarification: string;
+    };
   }): Promise<{ id: string; runId: string; sequence: number; content: string; created: boolean }>;
 }
 
@@ -172,20 +176,17 @@ export function createDrizzleAgentInterviewStore(
           return { ...existing, runId: existing.runId, created: false };
         }
 
-        const [sequenceRow] = await tx.select({
-          sequence: sql<number>`coalesce(max(${interviewMessages.sequence}), 0) + 1`,
-        }).from(interviewMessages).where(eq(interviewMessages.interviewId, input.interviewId));
-        const updated = await tx.update(interviews).set({
-          candidateRoundCount: sql`${interviews.candidateRoundCount} + 1`,
-          updatedAt: new Date(),
-        }).where(and(
-          eq(interviews.id, input.interviewId),
-          eq(interviews.status, "active"),
-          sql`${interviews.candidateRoundCount} < 20`,
-        )).returning({ id: interviews.id });
-        if (updated.length === 0) throw new Error("Interview round limit reached");
-
-        const [question] = await tx.select({ id: interviewQuestions.id })
+        const [interview] = await tx.select({
+          status: interviews.status,
+          openingStage: interviews.openingStage,
+        }).from(interviews)
+          .where(eq(interviews.id, input.interviewId))
+          .limit(1);
+        if (interview?.status !== "active") throw new Error("INTERVIEW_NOT_ACTIVE");
+        const [question] = await tx.select({
+          id: interviewQuestions.id,
+          purpose: interviewQuestions.purpose,
+        })
           .from(interviewQuestions)
           .where(and(
             eq(interviewQuestions.interviewId, input.interviewId),
@@ -194,12 +195,35 @@ export function createDrizzleAgentInterviewStore(
           .orderBy(desc(interviewQuestions.questionIndex))
           .limit(1);
         if (!question) throw new Error("No unanswered interview question exists");
+        const clarification = question.purpose === "opening_clarification";
+        if (
+          (clarification && interview.openingStage !== "awaiting_role_clarification")
+          || (!clarification && interview.openingStage !== "formal_interview")
+        ) {
+          throw new Error("OPENING_STAGE_MISMATCH");
+        }
+        if (!clarification) {
+          const updated = await tx.update(interviews).set({
+            candidateRoundCount: sql`${interviews.candidateRoundCount} + 1`,
+            updatedAt: new Date(),
+          }).where(and(
+            eq(interviews.id, input.interviewId),
+            eq(interviews.status, "active"),
+            eq(interviews.openingStage, "formal_interview"),
+            sql`${interviews.candidateRoundCount} < 20`,
+          )).returning({ id: interviews.id });
+          if (updated.length === 0) throw new Error("Interview round limit reached");
+        }
+
+        const [sequenceRow] = await tx.select({
+          sequence: sql<number>`coalesce(max(${interviewMessages.sequence}), 0) + 1`,
+        }).from(interviewMessages).where(eq(interviewMessages.interviewId, input.interviewId));
 
         const [createdRun] = await tx.insert(interviewAgentRuns).values({
           interviewId: input.interviewId,
           idempotencyKey: input.runIdempotencyKey,
           streamMode: "durable_provisional",
-          triggerJson: input.trigger,
+          triggerJson: null,
         }).onConflictDoNothing({
           target: [interviewAgentRuns.interviewId, interviewAgentRuns.idempotencyKey],
         }).returning({ id: interviewAgentRuns.id });
@@ -212,26 +236,37 @@ export function createDrizzleAgentInterviewStore(
           .limit(1))[0]?.id;
         if (!runId) throw new Error("Accepted answer Agent run could not be created");
 
-        await tx.update(interviewQuestions).set({
+        const answered = await tx.update(interviewQuestions).set({
           answerText: input.content,
           answeredAt: new Date(),
-        }).where(eq(interviewQuestions.id, question.id));
+        }).where(and(
+          eq(interviewQuestions.id, question.id),
+          isNull(interviewQuestions.answeredAt),
+        )).returning({ id: interviewQuestions.id });
+        if (answered.length === 0) throw new Error("Interview question is already answered");
         const [message] = await tx.insert(interviewMessages).values({
           interviewId: input.interviewId,
           runId,
           sequence: Number(sequenceRow.sequence),
           idempotencyKey: input.idempotencyKey,
           role: "user",
-          kind: "answer",
+          kind: clarification ? "clarification_answer" : "answer",
           content: input.content,
           questionId: question.id,
         }).returning({ id: interviewMessages.id, sequence: interviewMessages.sequence, content: interviewMessages.content });
+        const trigger: AgentRunTrigger = clarification
+          ? {
+              mode: "opening_clarification",
+              instruction: input.instructions.openingClarification,
+              answerMessageId: message.id,
+            }
+          : {
+              mode: "answer",
+              instruction: input.instructions.answer,
+              answerMessageId: message.id,
+            };
         await tx.update(interviewAgentRuns).set({
-          triggerJson: {
-            ...input.trigger,
-            mode: "answer",
-            answerMessageId: message.id,
-          },
+          triggerJson: trigger,
         }).where(eq(interviewAgentRuns.id, runId));
         return { ...message, runId, created: true };
       });

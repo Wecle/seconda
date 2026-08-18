@@ -7,6 +7,7 @@ import {
   coverageStatusSchema,
   questionCategorySchema,
 } from "@/lib/interview/agent/domain/interview";
+import { roleResolutionSchema } from "@/lib/interview/agent/domain/opening-role";
 
 export const ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION =
   "回答轮必须提交轻量评估；followUpNeeded=true 时当前回答分类的覆盖状态为 partial，followUpNeeded=false 时为 sufficient；开场必须为 null。";
@@ -32,13 +33,20 @@ const coverageChangeSchema = z.object({
   resumeEvidenceIds: z.array(z.string().min(1)).max(20),
 }).strict();
 
-const questionDecisionSchema = z.object({
-  action: z.enum(["ask", "clarify"]),
+const askDecisionSchema = z.object({
+  action: z.literal("ask"),
   category: questionCategorySchema,
   intent: z.enum(["new_topic", "follow_up", "verify_evidence"]),
   evidenceIds: z.array(z.string().min(1)).max(20),
   coverageTarget: z.string().trim().min(1).max(500),
   estimatedInformationGain: z.enum(["low", "medium", "high"]),
+}).strict();
+
+const roleClarificationDecisionSchema = z.object({
+  action: z.literal("clarify"),
+  subject: z.literal("target_role"),
+  evidenceIds: z.array(z.string().min(1)).max(20),
+  estimatedInformationGain: z.enum(["medium", "high"]),
 }).strict();
 
 const finishDecisionSchema = z.object({
@@ -58,14 +66,16 @@ export const turnProposalPrefixSchema = z.object({
   coverageChanges: z.array(coverageChangeSchema)
     .max(9)
     .describe(COVERAGE_CHANGES_SCHEMA_DESCRIPTION),
+  roleResolution: roleResolutionSchema.nullable(),
   decision: z.discriminatedUnion("action", [
-    questionDecisionSchema,
+    askDecisionSchema,
+    roleClarificationDecisionSchema,
     finishDecisionSchema,
   ]),
 }).strict();
 
 export const RESPONSE_TEXT_SCHEMA_DESCRIPTION =
-  "候选人可见回复，必须作为最后一个字段生成。decision.action 为 ask/clarify 时，必须围绕 decision 中的一个核心考察意图，可以包含必要解释、回答提示或多个疑问句，但不得切换到无关主题；decision.action 为 finish 时不得邀请候选人继续作答。开场必须简洁并按岗位判断分支处理：岗位方向置信度足够且 decision.action 为 ask 时，包含简短问候、推断的岗位或方向和自我介绍邀请；岗位方向置信度不足或 decision.action 为 clarify 时，只围绕岗位方向澄清这一核心意图，并暂缓自我介绍邀请，待方向确认后再邀请。两种分支均不得枚举或复述简历。";
+  "候选人可见回复，必须作为最后一个字段生成。合法组合：role_resolution 阶段只能是 inferred + introduction ask，或 needs_clarification + target_role clarify；awaiting_role_clarification 阶段只能是 confirmed + introduction ask；formal_interview 阶段 roleResolution 必须为 null 且禁止 clarify。decision.action 为 ask/clarify 时必须围绕唯一核心意图，不得切换主题；finish 时不得邀请继续作答。开场不得枚举或复述简历。";
 
 export const interviewTurnProposalSchema = turnProposalPrefixSchema.extend({
   responseText: z.string()

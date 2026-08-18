@@ -7,6 +7,7 @@ import type {
 import type { AgentInterviewStore } from "@/lib/interview/agent/persistence/interview-store";
 import {
   ANSWER_RUN_INSTRUCTION,
+  OPENING_CLARIFICATION_RUN_INSTRUCTION,
   buildOpeningInstruction,
 } from "@/lib/interview/agent/prompts/turn-instructions";
 import type { InterviewConfigV2 } from "@/lib/interview/settings";
@@ -77,9 +78,9 @@ export async function submitCandidateMessage(options: {
   const accepted = await options.store.acceptCandidateMessage({
     ...options.input,
     runIdempotencyKey: runKey,
-    trigger: {
-      mode: "answer",
-      instruction: ANSWER_RUN_INSTRUCTION,
+    instructions: {
+      answer: ANSWER_RUN_INSTRUCTION,
+      openingClarification: OPENING_CLARIFICATION_RUN_INSTRUCTION,
     },
   });
 

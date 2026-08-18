@@ -16,6 +16,7 @@ function validProposalPrefix(): TurnProposalPrefix {
   return {
     assessment: null,
     coverageChanges: [],
+    roleResolution: null,
     decision: {
       action: "ask",
       category: "introduction",

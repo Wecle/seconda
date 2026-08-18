@@ -355,12 +355,6 @@ test("commits a question, category count and assistant message as one idempotent
     question: "如何保证缓存一致性？",
     responseText: "请说明如何保证缓存一致性？",
     resumeEvidenceIds: ["project:cache"],
-    targetRole: {
-      value: "后端工程师",
-      status: "inferred" as const,
-      confidence: "high" as const,
-      sourceIds: ["project:cache"],
-    },
   };
   const commitQuestionOutcome = repository.commitQuestionOutcome;
   assert.equal(typeof commitQuestionOutcome, "function");
@@ -371,7 +365,7 @@ test("commits a question, category count and assistant message as one idempotent
   assert.equal(snapshot.questions.length, 1);
   assert.equal(snapshot.messages.length, 1);
   assert.equal(snapshot.categoryCounts.technical_depth, 1);
-  assert.deepEqual(snapshot.targetRole, input.targetRole);
+  assert.equal(snapshot.targetRole, null);
 });
 
 test("never commits a fourth question in one category under concurrent attempts or replay", async () => {
@@ -434,6 +428,7 @@ function nextQuestionProposal(
       status: "partial",
       resumeEvidenceIds: ["project:seconda"],
     }],
+    roleResolution: null,
     decision: {
       action: "ask",
       category: "resume_project",
@@ -455,7 +450,7 @@ async function createAnsweredTurnFixture() {
     recentQuestions: [],
     requestedUserEnd: false,
     consecutiveNoFollowUpAssessments: 0,
-  });
+  }, "zh", { openingStage: "formal_interview" });
   const run = await repository.createRun({
     interviewId: "atomic-interview",
     idempotencyKey: "atomic-turn",
@@ -483,6 +478,11 @@ async function createAnsweredTurnFixture() {
     kind: "answer",
     content: "我使用租约与幂等键。",
     questionId: asked.questionId,
+  });
+  await repository.saveRunTrigger(run.id, {
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: answer.id,
   });
   const attemptId = "attempt-1";
   const logicalMessageId = "logical-message-1";
@@ -614,12 +614,15 @@ test("commits assessment coverage message and committed event once", async () =>
 test("rejects an answer from another run without turn writes", async () => {
   const fixture = await createAnsweredTurnFixture();
   const snapshot = fixture.repository.inspectInterview(fixture.input.interviewId);
-  const answer = snapshot.messages.find((message) => message.id === fixture.input.answerMessageId)!;
-  answer.runId = "run-other";
+  await fixture.repository.saveRunTrigger(fixture.run.id, {
+    mode: "answer",
+    instruction: "continue",
+    answerMessageId: "answer-other",
+  });
 
   await assert.rejects(
     fixture.repository.commitTurnOutcome(fixture.input),
-    /does not belong/i,
+    /authoritative run trigger/i,
   );
 
   assert.equal(snapshot.assessments.length, 0);
@@ -722,6 +725,7 @@ test("rejects blank and oversized finish responses without domain writes", async
       status: "partial",
       resumeEvidenceIds: ["project:seconda"],
     }],
+    roleResolution: null,
     decision: {
       action: "finish",
       completionReason: "coverage_sufficient",
@@ -899,4 +903,256 @@ test("rejects model writes to the reserved category aggregate before response st
     fixture.repository.inspectInterview(fixture.input.interviewId).assessments.length,
     0,
   );
+});
+
+async function commitMemoryOpening(
+  repository: ReturnType<typeof createInMemoryInterviewAgentRepository>,
+  input: {
+    interviewId: string;
+    trigger: AgentRunTrigger;
+    proposal: TurnProposalPrefix;
+    responseText: string;
+    answerMessageId?: string | null;
+    key: string;
+  },
+) {
+  const run = await repository.createRun({
+    interviewId: input.interviewId,
+    idempotencyKey: input.key,
+  });
+  await repository.saveRunTrigger(run.id, input.trigger);
+  const claimed = await repository.claimRun(run.id, `${input.key}-worker`, new Date(), 60_000);
+  const lease = {
+    owner: `${input.key}-worker`,
+    generation: claimed.run!.leaseGeneration,
+  };
+  const attemptId = `${input.key}-attempt`;
+  const logicalMessageId = `${input.key}-message`;
+  await repository.startAttempt(run.id, {
+    model: "test-model",
+    attemptId,
+    attemptNumber: 1,
+    provisionalMessageId: logicalMessageId,
+    now: new Date(),
+  }, lease);
+  const proposalHash = hashTurnProposalPrefix(input.proposal);
+  await repository.authorizeProposal({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposal: input.proposal,
+    proposalHash,
+    checkpoint: {
+      turnCount: 1,
+      toolCallCount: 1,
+      lastEventSequence: 0,
+      progressHash: input.key,
+      activeSkillNames: [],
+    },
+  });
+  await repository.markResponseStarted({
+    runId: run.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposalHash,
+  });
+  await repository.saveCheckpoint(run.id, {
+    turnCount: 1,
+    toolCallCount: 1,
+    lastEventSequence: 0,
+    progressHash: `${input.key}:committing`,
+    activeSkillNames: [],
+    phase: "committing",
+  }, lease);
+  const commitInput: CommitTurnOutcomeInput = {
+    runId: run.id,
+    interviewId: input.interviewId,
+    toolCallId: `${input.key}-tool`,
+    lease,
+    logicalMessageId,
+    attemptId,
+    answerMessageId: input.answerMessageId ?? null,
+    proposal: input.proposal,
+    proposalHash,
+    responseText: input.responseText,
+    language: "zh",
+  };
+  return {
+    run,
+    outcome: await repository.commitTurnOutcome(commitInput),
+    commitInput,
+  };
+}
+
+function inferredRoleProposal(): TurnProposalPrefix {
+  return {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "inferred",
+      value: "前端工程师",
+      confidence: "high",
+      resumeEvidenceIds: ["resume:profile"],
+    },
+    decision: {
+      action: "ask",
+      category: "introduction",
+      intent: "new_topic",
+      evidenceIds: ["resume:profile"],
+      coverageTarget: "自我介绍",
+      estimatedInformationGain: "high",
+    },
+  };
+}
+
+function roleClarificationProposal(): TurnProposalPrefix {
+  return {
+    assessment: null,
+    coverageChanges: [],
+    roleResolution: {
+      status: "needs_clarification",
+      confidence: "low",
+      resumeEvidenceIds: [],
+    },
+    decision: {
+      action: "clarify",
+      subject: "target_role",
+      evidenceIds: [],
+      estimatedInformationGain: "high",
+    },
+  };
+}
+
+test("atomically commits direct inference and fences an illegal opening replay", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  const committed = await commitMemoryOpening(repository, {
+    interviewId: "opening-direct",
+    trigger: { mode: "opening", instruction: "open" },
+    proposal: inferredRoleProposal(),
+    responseText: "我们将按前端工程师方向进行，请先做自我介绍。",
+    key: "direct",
+  });
+  const snapshot = repository.inspectInterview("opening-direct");
+  assert.equal(snapshot.openingStage, "formal_interview");
+  assert.equal(snapshot.targetRole?.status, "inferred");
+  assert.deepEqual(snapshot.questions.map((question) => question.purpose), ["formal"]);
+  assert.equal(snapshot.categoryCounts.introduction, 1);
+  assert.deepEqual(
+    await repository.commitTurnOutcome(committed.commitInput),
+    committed.outcome,
+  );
+  assert.equal(repository.inspectInterview("opening-direct").questions.length, 1);
+
+  await assert.rejects(commitMemoryOpening(repository, {
+    interviewId: "opening-direct",
+    trigger: { mode: "opening", instruction: "open again" },
+    proposal: inferredRoleProposal(),
+    responseText: "重复自我介绍。",
+    key: "illegal-replay",
+  }), /OPENING_STAGE_MISMATCH/);
+  assert.equal(repository.inspectInterview("opening-direct").questions.length, 1);
+});
+
+test("isolates role clarification and confirms against its authoritative answer", async () => {
+  const repository = createInMemoryInterviewAgentRepository();
+  await commitMemoryOpening(repository, {
+    interviewId: "opening-confirmation",
+    trigger: { mode: "opening", instruction: "open" },
+    proposal: roleClarificationProposal(),
+    responseText: "你希望面试什么岗位？",
+    key: "clarify",
+  });
+  let snapshot = repository.inspectInterview("opening-confirmation");
+  assert.equal(snapshot.openingStage, "awaiting_role_clarification");
+  assert.equal(snapshot.targetRole?.status, "needs_clarification");
+  assert.deepEqual(snapshot.questions.map((question) => question.purpose), [
+    "opening_clarification",
+  ]);
+  assert.deepEqual(snapshot.categoryCounts, {});
+
+  const confirmationRun = await repository.createRun({
+    interviewId: "opening-confirmation",
+    idempotencyKey: "confirmation",
+  });
+  const clarificationAnswer = await repository.appendMessage({
+    interviewId: "opening-confirmation",
+    runId: confirmationRun.id,
+    role: "user",
+    kind: "clarification_answer",
+    content: "前端工程师",
+    questionId: snapshot.questions[0].id,
+  });
+  await repository.saveRunTrigger(confirmationRun.id, {
+    mode: "opening_clarification",
+    instruction: "confirm",
+    answerMessageId: clarificationAnswer.id,
+  });
+  const proposal: TurnProposalPrefix = {
+    ...inferredRoleProposal(),
+    roleResolution: {
+      status: "confirmed",
+      value: "前端工程师",
+      confidence: "high",
+      resumeEvidenceIds: [],
+    },
+  };
+  const claimed = await repository.claimRun(
+    confirmationRun.id,
+    "confirmation-worker",
+    new Date(),
+    60_000,
+  );
+  const lease = { owner: "confirmation-worker", generation: claimed.run!.leaseGeneration };
+  const attemptId = "confirmation-attempt";
+  const logicalMessageId = "confirmation-message";
+  await repository.startAttempt(confirmationRun.id, {
+    model: "test-model",
+    attemptId,
+    attemptNumber: 1,
+    provisionalMessageId: logicalMessageId,
+    now: new Date(),
+  }, lease);
+  const proposalHash = hashTurnProposalPrefix(proposal);
+  await repository.authorizeProposal({
+    runId: confirmationRun.id,
+    lease,
+    attemptId,
+    logicalMessageId,
+    proposal,
+    proposalHash,
+    checkpoint: { turnCount: 1, toolCallCount: 1, lastEventSequence: 0, progressHash: "confirm", activeSkillNames: [] },
+  });
+  await repository.markResponseStarted({ runId: confirmationRun.id, lease, attemptId, logicalMessageId, proposalHash });
+  await repository.saveCheckpoint(confirmationRun.id, {
+    turnCount: 1,
+    toolCallCount: 1,
+    lastEventSequence: 0,
+    progressHash: "confirm:committing",
+    activeSkillNames: [],
+    phase: "committing",
+  }, lease);
+  await repository.commitTurnOutcome({
+    runId: confirmationRun.id,
+    interviewId: "opening-confirmation",
+    toolCallId: "confirmation-tool",
+    lease,
+    logicalMessageId,
+    attemptId,
+    answerMessageId: clarificationAnswer.id,
+    proposal,
+    proposalHash,
+    responseText: "已确认前端工程师方向，请先做自我介绍。",
+    language: "zh",
+  });
+  snapshot = repository.inspectInterview("opening-confirmation");
+  assert.equal(snapshot.openingStage, "formal_interview");
+  assert.equal(snapshot.targetRole?.status, "confirmed");
+  assert.equal(snapshot.targetRoleConfirmationMessageId, clarificationAnswer.id);
+  assert.deepEqual(snapshot.questions.map((question) => question.purpose), [
+    "opening_clarification",
+    "formal",
+  ]);
+  assert.equal(snapshot.categoryCounts.introduction, 1);
 });

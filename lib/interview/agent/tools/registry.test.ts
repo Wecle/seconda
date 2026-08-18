@@ -18,6 +18,12 @@ import {
 const terminalInput = {
   assessment: null,
   coverageChanges: [],
+  roleResolution: {
+    status: "inferred" as const,
+    value: "后端工程师",
+    confidence: "high" as const,
+    resumeEvidenceIds: ["resume:raw"],
+  },
   decision: {
     action: "ask" as const,
     category: "introduction" as const,
@@ -83,6 +89,7 @@ test("keeps public analysis first and response text last in terminal JSON Schema
     "publicAnalysis",
     "assessment",
     "coverageChanges",
+    "roleResolution",
     "decision",
     "responseText",
   ]);
@@ -125,8 +132,7 @@ test("exposes the candidate response contract in the provider JSON Schema", () =
     schema.properties?.responseText?.description,
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
   );
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*一个核心考察意图/);
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /回答提示.*多个疑问句/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /ask\/clarify.*唯一核心意图/);
   assert.equal(
     RESPONSE_TEXT_SCHEMA_DESCRIPTION.includes(["只能包含一个", "疑问句"].join("")),
     false,
@@ -137,15 +143,17 @@ test("exposes the candidate response contract in the provider JSON Schema", () =
     ),
     false,
   );
-  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得邀请候选人继续作答/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /finish.*不得邀请继续作答/);
   assert.match(
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
-    /岗位方向置信度足够.*decision.action 为 ask.*简短问候.*岗位或方向.*自我介绍邀请/,
+    /role_resolution.*inferred.*introduction ask/,
   );
   assert.match(
     RESPONSE_TEXT_SCHEMA_DESCRIPTION,
-    /岗位方向置信度不足.*decision.action 为 clarify.*围绕岗位方向澄清这一核心意图.*暂缓.*自我介绍/,
+    /role_resolution.*needs_clarification.*target_role clarify/,
   );
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /awaiting_role_clarification.*confirmed/);
+  assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /formal_interview.*roleResolution 必须为 null/);
   assert.match(RESPONSE_TEXT_SCHEMA_DESCRIPTION, /不得枚举或复述简历/);
 });
 

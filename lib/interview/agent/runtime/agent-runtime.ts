@@ -502,8 +502,10 @@ export async function runInterviewAgent(
       const state = await options.repository.loadState(options.interviewId);
       const authorization = authorizeTurnProposal({
         state,
+        openingStage: context.openingStage,
         mode: context.mode,
         answerCategory: context.answerCategory,
+        clarificationAnswer: context.clarificationAnswer,
         prefix: progress.prefix,
       });
       if (!authorization.allowed) {
