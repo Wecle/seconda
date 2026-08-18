@@ -4,6 +4,7 @@ import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import type {
   AgentCheckpoint,
   AgentExitReason,
+  InterviewAgentState,
   AgentModelStep,
   PublicAgentEventType,
   QuestionCategory,
@@ -58,7 +59,6 @@ import {
   type CoverageConflictDetail,
 } from "@/lib/interview/agent/domain/turn-authorizer";
 import {
-  hashTurnProposalPrefix,
   readTurnProposalProgress,
   turnProposalContractForMode,
 } from "@/lib/interview/agent/domain/turn-proposal";
@@ -108,6 +108,7 @@ type AttemptState = {
   terminalToolCallId: string | null;
   terminalSeen: boolean;
   authorized: AuthorizedTurnProposal | null;
+  authorizationState: InterviewAgentState | null;
   responseStarted: boolean;
   observedResponseText: string;
   responseTail: SafeTailBuffer;
@@ -280,6 +281,7 @@ export async function runInterviewAgent(
       terminalToolCallId: null,
       terminalSeen: false,
       authorized: null,
+      authorizationState: null,
       responseStarted: false,
       observedResponseText: "",
       responseTail: createSafeTailBuffer(RESPONSE_SAFE_TAIL_CHARACTERS),
@@ -506,6 +508,7 @@ export async function runInterviewAgent(
         options.lease,
       );
       const state = await options.repository.loadState(options.interviewId);
+      attempt.authorizationState = state;
       const authorization = authorizeTurnProposal({
         state,
         openingStage: context.openingStage,
@@ -547,10 +550,18 @@ export async function runInterviewAgent(
         }, attempt, `reasoning:${attempt.attemptId}:completed`);
       }
       await appendPhase("authorized", attempt);
-    } else if (
-      hashTurnProposalPrefix(progress.prefix) !== attempt.authorized.proposalHash
-    ) {
-      throw new AttemptFailure("AUTHORIZED_PREFIX_CHANGED", "已授权提案字段发生变化。");
+    } else {
+      const authorization = authorizeTurnProposal({
+        state: attempt.authorizationState!,
+        openingStage: context.openingStage,
+        mode: context.mode,
+        answerCategory: context.answerCategory,
+        clarificationAnswer: context.clarificationAnswer,
+        prefix: progress.prefix,
+      });
+      if (!authorization.allowed || authorization.proposalHash !== attempt.authorized.proposalHash) {
+        throw new AttemptFailure("AUTHORIZED_PREFIX_CHANGED", "已授权提案字段发生变化。");
+      }
     }
 
     const responseText = progress.responseText;
@@ -881,9 +892,30 @@ export async function runInterviewAgent(
     const { businessInput } = stripCompletePublicAnalysis(step.args);
     const finalProposal = turnContract.fullSchema.parse(businessInput);
     const { responseText, ...finalPrefix } = finalProposal;
-    if (hashTurnProposalPrefix(finalPrefix) !== attempt.authorized.proposalHash) {
+    const finalAuthorization = authorizeTurnProposal({
+      state: attempt.authorizationState!,
+      openingStage: context.openingStage,
+      mode: context.mode,
+      answerCategory: context.answerCategory,
+      clarificationAnswer: context.clarificationAnswer,
+      prefix: finalPrefix,
+    });
+    if (!finalAuthorization.allowed) {
+      throw new AttemptFailure(
+        finalAuthorization.reason,
+        `最终提案未通过确定性授权：${finalAuthorization.reason}`,
+        finalAuthorization.reason === "CONTRADICTORY_COVERAGE_CHANGE"
+          ? { coverageConflict: finalAuthorization.detail }
+          : undefined,
+      );
+    }
+    if (finalAuthorization.proposalHash !== attempt.authorized.proposalHash) {
       throw new AttemptFailure("AUTHORIZED_PREFIX_CHANGED", "最终提案与授权提案不一致。");
     }
+    const normalizedFinalProposal = {
+      ...finalAuthorization.prefix,
+      responseText,
+    };
     if (responseText !== attempt.observedResponseText) {
       throw new AttemptFailure("RESPONSE_STREAM_INCOMPLETE", "最终回复与已流式回复不一致。");
     }
@@ -894,7 +926,7 @@ export async function runInterviewAgent(
       options.lease,
     );
     const validation = validateFinalResponse({
-      action: finalProposal.decision.action,
+      action: normalizedFinalProposal.decision.action,
       language: context.language,
       text: responseText,
       allowedTerms: context.allowedTerms,
@@ -921,7 +953,7 @@ export async function runInterviewAgent(
     if (!terminalDefinition) {
       throw new AttemptFailure("UNKNOWN_TOOL", "终结工具不在当前授权工具集中。");
     }
-    const parsed = terminalDefinition.inputSchema.safeParse(businessInput);
+    const parsed = terminalDefinition.inputSchema.safeParse(normalizedFinalProposal);
     if (!parsed.success) {
       throw new AttemptFailure("INVALID_TOOL_INPUT", "终结工具参数格式无效。");
     }

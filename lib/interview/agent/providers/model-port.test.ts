@@ -99,10 +99,9 @@ test("system prompt requests public progress without hidden reasoning", () => {
   assert.match(AGENT_SYSTEM_PROMPT, /submit_interview_turn.*2–4 句/);
   assert.match(AGENT_SYSTEM_PROMPT, /publicAnalysis.*先于其他工具字段/);
   assert.match(AGENT_SYSTEM_PROMPT, /responseText.*最后/);
-  assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=true.*partial/);
-  assert.match(AGENT_SYSTEM_PROMPT, /followUpNeeded=false.*sufficient/);
-  assert.match(AGENT_SYSTEM_PROMPT, /第 3 题.*exhausted/);
-  assert.match(AGENT_SYSTEM_PROMPT, /通常只为当前回答分类提交 coverageChanges/);
+  assert.match(AGENT_SYSTEM_PROMPT, /覆盖状态由服务端.*确定/);
+  assert.match(AGENT_SYSTEM_PROMPT, /coverageChanges 只提交当前回答分类/);
+  assert.match(AGENT_SYSTEM_PROMPT, /不得提交下一问题分类或其他分类/);
   assert.match(
     AGENT_SYSTEM_PROMPT,
     /role_resolution.*inferred.*introduction\/new_topic ask/,

@@ -19,10 +19,10 @@ export const ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION =
   "回答轮必须提交轻量评估；followUpNeeded=true 时当前回答分类的覆盖状态为 partial，followUpNeeded=false 时为 sufficient；开场必须为 null。";
 
 export const COVERAGE_CHANGES_SCHEMA_DESCRIPTION =
-  "通常只为当前回答分类提交主题覆盖变化；状态必须与 assessment.followUpNeeded 推导结果一致，其他分类不得改变聚合状态。";
+  "仅当前回答分类的主题变化会被采用；其他分类会被忽略。status 由服务端根据 assessment.followUpNeeded 和题数确定，模型填写值不会成为最终状态。";
 
 export const COVERAGE_STATUS_SCHEMA_DESCRIPTION =
-  "当前回答分类：followUpNeeded=true 使用 partial，false 使用 sufficient；该分类达到第 3 题时使用 exhausted，未达到时不得提前使用 exhausted。";
+  "输入值不授权覆盖状态；服务端按 followUpNeeded=true 得到 partial、false 得到 sufficient，分类达到第 3 题时得到 exhausted。";
 
 const turnAnswerAssessmentSchema = answerAssessmentSchema.describe(
   ANSWER_ASSESSMENT_SCHEMA_DESCRIPTION,

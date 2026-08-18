@@ -327,63 +327,13 @@ function projectTurnState(
 
   const normalizedCoverageChanges: TurnProposalPrefix["coverageChanges"] = [];
   for (const change of input.coverageChanges) {
-    const categoryCount = state.categoryCounts[change.category] ?? 0;
+    if (change.category !== input.answerCategory || !assessmentStatus) continue;
     const categoryIsExhausted =
-      categoryCount >= MAX_QUESTIONS_PER_CATEGORY;
-
-    if (change.status === "exhausted" && !categoryIsExhausted) {
-      return {
-        ok: false,
-        detail: {
-          category: change.category,
-          topic: change.topic,
-          receivedStatus: change.status,
-          expectedStatuses:
-            change.category === input.answerCategory && assessmentStatus
-              ? [assessmentStatus]
-              : [categoryStatuses[change.category] ?? "uncovered"],
-          conflictKind: "premature_exhausted",
-        },
-      };
-    }
-
-    if (change.category === input.answerCategory && assessmentStatus) {
-      const compatibleWithAssessment = change.status === assessmentStatus
-        || (categoryIsExhausted && change.status === "exhausted");
-      if (!compatibleWithAssessment) {
-        return {
-          ok: false,
-          detail: {
-            category: change.category,
-            topic: change.topic,
-            receivedStatus: change.status,
-            expectedStatuses: [assessmentStatus],
-            conflictKind: "assessment_status_mismatch",
-          },
-        };
-      }
-
-      normalizedCoverageChanges.push({
-        ...change,
-        status: categoryIsExhausted ? "exhausted" : assessmentStatus,
-      });
-      continue;
-    }
-
-    const projectedStatus = categoryStatuses[change.category] ?? "uncovered";
-    if (change.status !== projectedStatus) {
-      return {
-        ok: false,
-        detail: {
-          category: change.category,
-          topic: change.topic,
-          receivedStatus: change.status,
-          expectedStatuses: [projectedStatus],
-          conflictKind: "non_answer_category_change",
-        },
-      };
-    }
-    normalizedCoverageChanges.push(change);
+      (state.categoryCounts[change.category] ?? 0) >= MAX_QUESTIONS_PER_CATEGORY;
+    normalizedCoverageChanges.push({
+      ...change,
+      status: categoryIsExhausted ? "exhausted" : assessmentStatus,
+    });
   }
 
   return {

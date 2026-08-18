@@ -21,9 +21,9 @@ test("loads answer planning without formal scoring tools", () => {
   const answerPlanning = resolved.skills.find(
     (skill) => skill.name === "answer-planning",
   );
-  assert.match(answerPlanning?.instructions ?? "", /followUpNeeded=true.*partial/);
-  assert.match(answerPlanning?.instructions ?? "", /followUpNeeded=false.*sufficient/);
-  assert.match(answerPlanning?.instructions ?? "", /第 3 题.*exhausted/);
+  assert.match(answerPlanning?.instructions ?? "", /最终状态由服务端.*确定/);
+  assert.match(answerPlanning?.instructions ?? "", /coverageChanges 只提交当前回答分类/);
+  assert.match(answerPlanning?.instructions ?? "", /其他分类变化会被忽略/);
 });
 
 test("loads clarification-safe base skills without answer planning", () => {

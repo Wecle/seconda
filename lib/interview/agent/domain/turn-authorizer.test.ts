@@ -284,8 +284,8 @@ test("requires an assessment and answer category after an answer", () => {
   }), { allowed: false, reason: "ANSWER_CATEGORY_REQUIRED" });
 });
 
-test("rejects contradictory coverage changes, including assessment conflicts", () => {
-  assert.deepEqual(authorizeTurnProposal({
+test("derives current-category statuses from the assessment", () => {
+  const result = authorizeTurnProposal({
     state: stateWith(),
     mode: "answer",
     answerCategory: "technical_depth",
@@ -305,75 +305,16 @@ test("rejects contradictory coverage changes, including assessment conflicts", (
         },
       ],
     }),
-  }), {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "technical_depth",
-      topic: "降级结果",
-      receivedStatus: "sufficient",
-      expectedStatuses: ["partial"],
-      conflictKind: "assessment_status_mismatch",
-    },
   });
-
-  assert.deepEqual(authorizeTurnProposal({
-    state: stateWith(),
-    mode: "answer",
-    answerCategory: "technical_depth",
-    prefix: askPrefix({
-      assessment: validAssessment({ followUpNeeded: true }),
-      coverageChanges: [{
-        category: "technical_depth",
-        topic: "降级机制",
-        status: "sufficient",
-        resumeEvidenceIds: ["evidence-1"],
-      }],
-    }),
-  }), {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "technical_depth",
-      topic: "降级机制",
-      receivedStatus: "sufficient",
-      expectedStatuses: ["partial"],
-      conflictKind: "assessment_status_mismatch",
-    },
-  });
+  assert.equal(result.allowed, true);
+  if (!result.allowed) return;
+  assert.deepEqual(
+    result.prefix.coverageChanges.map((change) => change.status),
+    ["partial", "partial"],
+  );
 });
 
-test("describes an assessment coverage status mismatch", () => {
-  assert.deepEqual(authorizeTurnProposal({
-    state: stateWith({
-      categoryCounts: { introduction: 1 },
-      categoryStatuses: { introduction: "partial" },
-    }),
-    mode: "answer",
-    answerCategory: "introduction",
-    prefix: askPrefix({
-      assessment: validAssessment({ followUpNeeded: false }),
-      coverageChanges: [{
-        category: "introduction",
-        topic: "自我介绍",
-        status: "partial",
-        resumeEvidenceIds: ["evidence-1"],
-      }],
-    }),
-  }), {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "introduction",
-      topic: "自我介绍",
-      receivedStatus: "partial",
-      expectedStatuses: ["sufficient"],
-      conflictKind: "assessment_status_mismatch",
-    },
-  });
-});
-
-test("rejects a non-answer category aggregate upgrade", () => {
+test("ignores non-answer category changes instead of authorizing them", () => {
   const result = authorizeTurnProposal({
     state: stateWith({
       candidateRoundCount: 6,
@@ -390,10 +331,9 @@ test("rejects a non-answer category aggregate upgrade", () => {
     }),
     mode: "answer",
     answerCategory: "technical_depth",
-    prefix: {
-      ...finishPrefix(),
+    prefix: askPrefix({
       coverageChanges: [
-        ...finishPrefix().coverageChanges,
+        ...askPrefix().coverageChanges,
         {
           category: "introduction",
           topic: "自我介绍",
@@ -401,20 +341,15 @@ test("rejects a non-answer category aggregate upgrade", () => {
           resumeEvidenceIds: ["evidence-2"],
         },
       ],
-    },
+    }),
   });
 
-  assert.deepEqual(result, {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "introduction",
-      topic: "自我介绍",
-      receivedStatus: "exhausted",
-      expectedStatuses: ["partial"],
-      conflictKind: "premature_exhausted",
-    },
-  });
+  assert.equal(result.allowed, true);
+  if (!result.allowed) return;
+  assert.deepEqual(
+    result.prefix.coverageChanges.map((change) => change.category),
+    ["technical_depth"],
+  );
 });
 
 test("projects the current answer category as exhausted at its third question", () => {
@@ -447,7 +382,7 @@ test("projects the current answer category as exhausted at its third question", 
   assert.equal(result.prefix.coverageChanges[0]?.status, "exhausted");
 });
 
-test("describes premature category exhaustion", () => {
+test("normalizes premature exhaustion to the derived current status", () => {
   const result = authorizeTurnProposal({
     state: stateWith({ categoryCounts: { technical_depth: 2 } }),
     mode: "answer",
@@ -463,20 +398,12 @@ test("describes premature category exhaustion", () => {
     }),
   });
 
-  assert.deepEqual(result, {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "technical_depth",
-      topic: "降级机制",
-      receivedStatus: "exhausted",
-      expectedStatuses: ["partial"],
-      conflictKind: "premature_exhausted",
-    },
-  });
+  assert.equal(result.allowed, true);
+  if (!result.allowed) return;
+  assert.equal(result.prefix.coverageChanges[0]?.status, "partial");
 });
 
-test("describes a non-answer category status change", () => {
+test("drops a proposed next-category status before authorization", () => {
   const result = authorizeTurnProposal({
     state: stateWith({
       categoryStatuses: {
@@ -496,17 +423,9 @@ test("describes a non-answer category status change", () => {
     }),
   });
 
-  assert.deepEqual(result, {
-    allowed: false,
-    reason: "CONTRADICTORY_COVERAGE_CHANGE",
-    detail: {
-      category: "introduction",
-      topic: "自我介绍",
-      receivedStatus: "partial",
-      expectedStatuses: ["uncovered"],
-      conflictKind: "non_answer_category_change",
-    },
-  });
+  assert.equal(result.allowed, true);
+  if (!result.allowed) return;
+  assert.deepEqual(result.prefix.coverageChanges, []);
 });
 
 test("uses response text for final duplicate-question authorization", () => {
