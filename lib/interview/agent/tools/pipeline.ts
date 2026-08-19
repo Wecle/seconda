@@ -3,6 +3,14 @@ import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import type { InterviewAgentRepository } from "@/lib/interview/agent/persistence/repository";
 import type { RunLeaseToken } from "@/lib/interview/agent/persistence/repository";
 
+export const interviewToolPipelineErrorCodes = [
+  "INVALID_TOOL_INPUT",
+  "HOOK_STOPPED",
+  "INVALID_HOOK_INPUT",
+  "TOOL_PERMISSION_DENIED",
+  "TOOL_EXECUTION_FAILED",
+] as const;
+
 export type ToolError = {
   code: string;
   message: string;

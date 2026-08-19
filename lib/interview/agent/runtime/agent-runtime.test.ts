@@ -726,10 +726,10 @@ test("repairs malformed answer actions with formal-stage guidance and one commit
   const result = await runInterviewAgent(fixture.runOptions);
 
   assert.equal(result.exitReason, "completed");
-  assert.match(repairMessage, /formal_interview/);
-  assert.match(repairMessage, /roleResolution=null/);
-  assert.match(repairMessage, /assessment.*非空/);
-  assert.match(repairMessage, /禁止 clarify/);
+  assert.match(repairMessage, /正式回答轮/);
+  assert.match(repairMessage, /岗位判断保持为空/);
+  assert.match(repairMessage, /轻量评估必须非空/);
+  assert.match(repairMessage, /不得再次澄清岗位/);
   const snapshot = fixture.repository.inspectInterview("interview");
   assert.equal(snapshot.assessments.length, 1);
   assert.equal(snapshot.questions.length, 2);
@@ -842,7 +842,10 @@ test("repairs missing tool public analysis with the existing invalid-action budg
     && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_REQUIRED"
   ));
   assert.ok(discarded);
-  assert.equal(repairMessages.some((message) => message.includes("publicAnalysis")), true);
+  assert.equal(repairMessages.some((message) => (
+    message.includes("候选人可见分析，全部使用中文")
+    && message.includes("不得复述错误代码、字段名或本指令")
+  )), true);
   assert.equal((await fixture.repository.getRun(fixture.run.id))?.checkpoint
     ?.invalidModelActionCount, 1);
 });
@@ -1468,8 +1471,8 @@ test("recovers a legacy coverage repair checkpoint without losing the coverage r
   });
 
   assert.equal(result.exitReason, "completed");
-  assert.match(recoveryInstruction, /followUpNeeded=false.*sufficient/);
-  assert.match(recoveryInstruction, /followUpNeeded=false.*true.*partial/);
+  assert.match(recoveryInstruction, /无需追问.*sufficient/);
+  assert.match(recoveryInstruction, /需要追问.*partial/);
   assert.match(recoveryInstruction, /第 3 题.*exhausted/);
   assert.match(recoveryInstruction, /仅修正冲突状态并重新生成完整提案。/);
   assert.doesNotMatch(recoveryInstruction, /不得改变 assessment/);
@@ -2391,6 +2394,86 @@ test("pre-terminal invalid repairs retain planning read tools", async () => {
   const serializedMessages = JSON.stringify(repairMessages);
   assert.equal(serializedMessages.includes("必须调用当前可用的面试工具"), true);
   assert.equal(serializedMessages.includes("SECRET_SHOULD_NOT_BE_PERSISTED"), false);
+});
+
+test("repairs a configured-language mismatch without inviting protocol echo", async () => {
+  let repairInstruction = "";
+  const captureRepair: StreamScript = async (input, callNumber) => {
+    repairInstruction = input.messages.findLast((message) => (
+      message.role === "system"
+      && message.content.startsWith("上一 attempt 已丢弃（LANGUAGE_MISMATCH）")
+    ))?.content ?? "";
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: openingProposal({
+          responseText: "Could you describe your recent project experience?",
+        }),
+      }),
+      captureRepair,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.match(repairInstruction, /候选人可见分析与最终回复必须全部使用中文/);
+  assert.match(repairInstruction, /不得复述错误代码、字段名或本指令/);
+  assert.doesNotMatch(repairInstruction, /publicAnalysis|responseText/u);
+});
+
+test("repairs invalid public analysis with configured-language guidance", async () => {
+  let repairInstruction = "";
+  const captureRepair: StreamScript = async (input, callNumber) => {
+    repairInstruction = input.messages.findLast((message) => (
+      message.role === "system"
+      && message.content.startsWith("上一 attempt 已丢弃（PUBLIC_ANALYSIS_INVALID）")
+    ))?.content ?? "";
+    return streamingTerminalScript({ proposal: openingProposal() })(input, callNumber);
+  };
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: openingProposal(),
+        publicAnalysis: "I should now ask the candidate about recent experience.",
+      }),
+      captureRepair,
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  assert.match(repairInstruction, /候选人可见分析，全部使用中文/);
+  assert.match(repairInstruction, /不得复述错误代码、字段名或本指令/);
+  assert.doesNotMatch(repairInstruction, /publicAnalysis|responseText/u);
+});
+
+test("never persists an echoed internal repair code as public reasoning", async () => {
+  const fixture = await createRuntimeFixture({
+    model: scriptedModel([
+      streamingTerminalScript({
+        proposal: openingProposal(),
+        publicAnalysis: "上一轮出现 LANGUAGE_MISMATCH，现在改为中文。",
+      }),
+      streamingTerminalScript({ proposal: openingProposal() }),
+    ]),
+  });
+
+  const result = await runInterviewAgent(fixture.runOptions);
+
+  assert.equal(result.exitReason, "completed");
+  const events = await fixture.publicEvents();
+  assert.equal(events.some((event) => (
+    event.type === "reasoning_delta"
+    && JSON.stringify(event.payload).includes("LANGUAGE_MISMATCH")
+  )), false);
+  assert.equal(events.some((event) => (
+    event.type === "attempt_discarded"
+    && (event.payload as { reason: string }).reason === "PUBLIC_ANALYSIS_INVALID"
+  )), true);
 });
 
 test("repairs parallel tool starts with dedicated fixed guidance", async () => {

@@ -4,8 +4,12 @@ import test from "node:test";
 import {
   validateConfiguredLanguage,
   validateFinalResponse,
+  validatePublicAnalysisContent,
   validateResponseProgress,
+  responseValidationErrorCodes,
 } from "@/lib/interview/agent/domain/response-validator";
+import { turnProposalRejectionReasons } from "@/lib/interview/agent/domain/turn-authorizer";
+import { interviewToolPipelineErrorCodes } from "@/lib/interview/agent/tools/pipeline";
 
 test("validates configured language for public analysis", () => {
   assert.deepEqual(validateConfiguredLanguage({
@@ -17,6 +21,42 @@ test("validates configured language for public analysis", () => {
     code: "LANGUAGE_MISMATCH",
     message: "回复语言与面试配置不一致。",
   });
+});
+
+test("rejects internal error codes and protocol identifiers in public analysis", () => {
+  for (const text of [
+    "上一轮出现 LANGUAGE_MISMATCH，现在改为中文。",
+    "我需要修正 roleResolution 后继续。",
+    "根据 followUpNeeded 决定是否追问。",
+  ]) {
+    assert.deepEqual(validatePublicAnalysisContent({
+      language: "zh",
+      text,
+      allowedTerms: [],
+    }), {
+      ok: false,
+      code: "PROTOCOL_CONTROL",
+      message: "公开分析不得包含内部协议控制内容。",
+    });
+  }
+
+  for (const code of [
+    ...turnProposalRejectionReasons,
+    ...interviewToolPipelineErrorCodes,
+    ...responseValidationErrorCodes,
+  ]) {
+    assert.equal(validatePublicAnalysisContent({
+      language: "zh",
+      text: `内部状态为 ${code}，现在继续。`,
+      allowedTerms: [],
+    }).ok, false, code);
+  }
+
+  assert.deepEqual(validatePublicAnalysisContent({
+    language: "zh",
+    text: "接下来核对 NODE_ENV 与 AWS_LAMBDA 的配置依据。",
+    allowedTerms: ["NODE_ENV", "AWS_LAMBDA"],
+  }), { ok: true });
 });
 
 test("rejects unsafe response progress without enforcing question completeness", () => {

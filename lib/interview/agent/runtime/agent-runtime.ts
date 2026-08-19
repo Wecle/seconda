@@ -1167,7 +1167,7 @@ export async function runInterviewAgent(
   }
 
   function ensureRepairInstruction(error: unknown) {
-    const content = repairInstruction(error, context.mode);
+    const content = repairInstruction(error, context.mode, context.language);
     if (messages.some((message) => message.role === "system" && message.content === content)) return;
     messages.push({ role: "system", content });
   }
@@ -1527,26 +1527,30 @@ function isInjectedProcessCrash(error: unknown) {
   );
 }
 
-function repairInstruction(error: unknown, mode: AgentRunMode) {
+function repairInstruction(
+  error: unknown,
+  mode: AgentRunMode,
+  language: "zh" | "en" | "es" | "de",
+) {
   const code = classifyAttemptFailure(error);
   const regenerationInstruction = code === "CONTRADICTORY_COVERAGE_CHANGE"
     ? ""
     : "重新生成完整提案；";
-  return `上一 attempt 已丢弃（${code}）。${repairGuidance(code, error, mode)}${regenerationInstruction}responseText 必须最后输出，且不得修改已生成的文本前缀。`;
+  return `上一 attempt 已丢弃（${code}）。这是内部修复指令；候选人可见分析只能描述业务判断，不得复述错误代码、字段名或本指令。${repairGuidance(code, error, mode, language)}${regenerationInstruction}最终用户可见回复必须作为最后一个字段生成，且不得修改已生成的文本前缀。`;
 }
 
 const coverageStatusRepairRule =
-  "followUpNeeded=false 时使用 sufficient，true 时使用 partial；分类达到第 3 题时使用 exhausted，未达到时不得提前 exhausted。";
+  "轻量评估判定无需追问时使用 sufficient，需要追问时使用 partial；分类达到第 3 题时使用 exhausted，未达到时不得提前 exhausted。";
 const coverageStatusOnlyRepairRule =
   "仅修正冲突状态并重新生成完整提案。";
 
 function coverageRepairGuidance(detail?: CoverageConflictDetail) {
   if (!detail) {
-    return `${coverageStatusOnlyRepairRule}修正 coverageChanges 状态。${coverageStatusRepairRule}`;
+    return `${coverageStatusOnlyRepairRule}修正覆盖度变化中的状态。${coverageStatusRepairRule}`;
   }
   const expected = detail.expectedStatuses.join(" 或 ");
   const topic = JSON.stringify(detail.topic);
-  return `${coverageStatusOnlyRepairRule}coverageChanges 中分类 ${detail.category}、主题 ${topic} 的状态应为 ${expected}，不能为 ${detail.receivedStatus}。${coverageStatusRepairRule}`;
+  return `${coverageStatusOnlyRepairRule}分类 ${detail.category}、主题 ${topic} 的覆盖状态应为 ${expected}，不能为 ${detail.receivedStatus}。${coverageStatusRepairRule}`;
 }
 
 type RecoverableRepairCode = "CONTRADICTORY_COVERAGE_CHANGE";
@@ -1571,13 +1575,21 @@ function readRecoverableRepairCode(
   return null;
 }
 
-function repairGuidance(code: string, error: unknown, mode: AgentRunMode) {
+function repairGuidance(
+  code: string,
+  error: unknown,
+  mode: AgentRunMode,
+  language: "zh" | "en" | "es" | "de",
+) {
   if (
     code === "PUBLIC_ANALYSIS_REQUIRED"
     || code === "PUBLIC_ANALYSIS_INVALID"
     || code === "PUBLIC_ANALYSIS_REWRITTEN"
   ) {
-    return "先生成非空、可公开且单调追加的 publicAnalysis；只描述业务判断，不得包含隐藏推理、内部规则或私密参数。";
+    return `先生成非空、可公开且单调追加的候选人可见分析，全部使用${repairLanguageName(language)}；只描述业务判断，不得包含隐藏推理、内部规则或私密参数。`;
+  }
+  if (code === "LANGUAGE_MISMATCH") {
+    return `候选人可见分析与最终回复必须全部使用${repairLanguageName(language)}；技术专有名词可以保留原文。`;
   }
   if (code === "CONTRADICTORY_COVERAGE_CHANGE") {
     return coverageRepairGuidance(
@@ -1588,7 +1600,7 @@ function repairGuidance(code: string, error: unknown, mode: AgentRunMode) {
     return "仅使用简历或已提交上下文授权的实体与数字；不确定的表述改为通用描述或询问。";
   }
   if (code === "FINISH_ASKS_QUESTION") {
-    return "finish 不得邀请候选人继续作答。";
+    return "结束行动不得邀请候选人继续作答。";
   }
   if (
     code === "MODEL_STREAM_PROTOCOL_ERROR"
@@ -1604,25 +1616,25 @@ function repairGuidance(code: string, error: unknown, mode: AgentRunMode) {
     || code === "RESPONSE_STREAM_INCOMPLETE"
     || code === "MODEL_STREAM_PROTOCOL_ERROR"
   ) {
-    return "先完整输出且保持结构化提案前缀不变，再按协议增量输出 responseText。";
+    return "先完整输出且保持结构化提案前缀不变，再按协议增量输出最终用户可见回复。";
   }
   if (code === "MODEL_TOOL_CALL_REQUIRED" || code === "TOOL_CALL_REQUIRED") {
     return "必须调用当前可用的面试工具，不得返回普通最终文本。";
   }
   if (code === "MODEL_TOOL_ACTION_INVALID" && mode === "answer") {
-    return "当前是 formal_interview 正式回答轮；严格按当前工具 Schema 重新生成，roleResolution=null，assessment 必须为非空轻量评估，并且禁止 clarify。";
+    return "当前是正式回答轮；严格按当前工具 Schema 重新生成，岗位判断保持为空，轻量评估必须非空，并且不得再次澄清岗位。";
   }
   if (code === "ROLE_RESOLUTION_FORBIDDEN") {
-    return "当前是 formal_interview 正式回答轮；roleResolution=null，assessment 必须为非空轻量评估，并且禁止 clarify。";
+    return "当前是正式回答轮；岗位判断保持为空，轻量评估必须非空，并且不得再次澄清岗位。";
   }
   if (code === "ROLE_RESOLUTION_REQUIRED") {
-    return "当前是开场岗位处理轮；提交当前阶段要求的 roleResolution，assessment=null 且 coverageChanges=[]。";
+    return "当前是开场岗位处理轮；提交当前阶段要求的岗位判断，轻量评估保持为空且不提交覆盖度变化。";
   }
   if (code === "OPENING_ASSESSMENT_FORBIDDEN") {
-    return "开场阶段 assessment=null 且 coverageChanges=[]；不要生成正式回答轮评估。";
+    return "开场阶段的轻量评估保持为空且不提交覆盖度变化；不要生成正式回答轮评估。";
   }
   if (code === "ANSWER_ASSESSMENT_REQUIRED") {
-    return "正式回答轮必须提交非空轻量 assessment，并保持 roleResolution=null。";
+    return "正式回答轮必须提交非空轻量评估，并且不得再次提交岗位判断。";
   }
   if (code === "INVALID_OPENING_DECISION" || code === "OPENING_STAGE_MISMATCH") {
     return "仅使用当前开场阶段允许的岗位处理组合；不得沿用其他阶段的提案结构。";
@@ -1638,6 +1650,15 @@ function repairGuidance(code: string, error: unknown, mode: AgentRunMode) {
     return "仅引用当前简历快照或已提交回答中存在的来源。";
   }
   return "根据失败代码修正结构化行动。";
+}
+
+function repairLanguageName(language: "zh" | "en" | "es" | "de") {
+  return {
+    zh: "中文",
+    en: "英语",
+    es: "西班牙语",
+    de: "德语",
+  }[language];
 }
 
 async function failRun(

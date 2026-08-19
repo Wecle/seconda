@@ -1,15 +1,23 @@
+import { turnProposalRejectionReasons } from "@/lib/interview/agent/domain/turn-authorizer";
+import { interviewToolPipelineErrorCodes } from "@/lib/interview/agent/tools/pipeline";
+
+export const responseValidationErrorCodes = [
+  "FINISH_ASKS_QUESTION",
+  "FORMAL_SCORE",
+  "LANGUAGE_MISMATCH",
+  "UNAUTHORIZED_TERM",
+  "RESPONSE_TOO_LONG",
+  "PROTOCOL_CONTROL",
+  "SENSITIVE_CONTENT",
+] as const;
+
+type ResponseValidationErrorCode = typeof responseValidationErrorCodes[number];
+
 export type ResponseValidationResult =
   | { ok: true }
   | {
     ok: false;
-    code:
-      | "FINISH_ASKS_QUESTION"
-      | "FORMAL_SCORE"
-      | "LANGUAGE_MISMATCH"
-      | "UNAUTHORIZED_TERM"
-      | "RESPONSE_TOO_LONG"
-      | "PROTOCOL_CONTROL"
-      | "SENSITIVE_CONTENT";
+    code: ResponseValidationErrorCode;
     message: string;
   };
 
@@ -75,8 +83,54 @@ const responseProtocolPatterns = [
 
 const publicAnalysisProtocolPatterns = [
   ...responseProtocolPatterns,
-  /\b(?:publicAnalysis|responseText|assessment|coverageChanges|decision|proposalHash|submit_interview_turn)\b/iu,
+  /\b(?:publicAnalysis|responseText|assessment|coverageChanges|decision|proposalHash|roleResolution|followUpNeeded|submit_interview_turn)\b/iu,
 ];
+
+const publicAnalysisInternalErrorCodes = new Set([
+  ...turnProposalRejectionReasons,
+  ...interviewToolPipelineErrorCodes,
+  ...responseValidationErrorCodes,
+  "ANSWER_ASSESSMENT_REQUIRED",
+  "ATTEMPT_FAILED",
+  "AUTHORIZED_PREFIX_CHANGED",
+  "CONTRADICTORY_COVERAGE_CHANGE",
+  "EVIDENCE_NOT_FOUND",
+  "FINISH_ASKS_QUESTION",
+  "INVALID_OPENING_DECISION",
+  "INVALID_TERMINAL_RESULT",
+  "INVALID_TOOL_INPUT",
+  "LANGUAGE_MISMATCH",
+  "MODEL_STREAM_PROTOCOL_ERROR",
+  "MODEL_TOOL_ACTION_INVALID",
+  "MODEL_TOOL_CALL_REQUIRED",
+  "OPENING_ASSESSMENT_FORBIDDEN",
+  "OPENING_STAGE_MISMATCH",
+  "PROVIDER_RETRY",
+  "PROVISIONAL_STREAM_ABORTED",
+  "PUBLIC_ANALYSIS_INVALID",
+  "PUBLIC_ANALYSIS_REQUIRED",
+  "PUBLIC_ANALYSIS_REWRITTEN",
+  "REASONING_LENGTH_LIMIT",
+  "REASONING_SENSITIVE_CONTENT",
+  "RESPONSE_BEFORE_AUTHORIZATION",
+  "RESPONSE_REWRITTEN",
+  "RESPONSE_STREAM_INCOMPLETE",
+  "ROLE_RESOLUTION_FORBIDDEN",
+  "ROLE_RESOLUTION_REQUIRED",
+  "SOURCE_NOT_FOUND",
+  "STALE_MODEL_RESULT",
+  "STALE_STREAM_EVENT",
+  "TERMINAL_CALL_CHANGED",
+  "TERMINAL_STREAM_INCOMPLETE",
+  "TOOL_CALL_REQUIRED",
+  "TOOL_PERMISSION_DENIED",
+  "UNAUTHORIZED_SOURCE",
+  "UNAUTHORIZED_TERM",
+  "UNKNOWN_TOOL",
+  "WORKER_RECOVERY",
+]);
+
+const uppercaseUnderscoreTokenPattern = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b/gu;
 
 const responseSensitivePatterns = [
   /[A-Za-z0-9][A-Za-z0-9._%+-]{29,}[A-Za-z0-9]/u,
@@ -140,16 +194,24 @@ export function validatePublicAnalysisContent(input: {
   text: string;
   allowedTerms: readonly string[];
 }): ResponseValidationResult {
-  if (publicAnalysisProtocolPatterns.some((pattern) => pattern.test(input.text))) {
-    return invalid("PROTOCOL_CONTROL", "公开分析不得包含内部协议控制内容。");
-  }
   if (responseSensitivePatterns.some((pattern) => pattern.test(input.text))) {
     return invalid("SENSITIVE_CONTENT", "公开分析不得包含敏感或内部信息。");
+  }
+  if (
+    publicAnalysisProtocolPatterns.some((pattern) => pattern.test(input.text))
+    || containsInternalErrorCode(input.text)
+  ) {
+    return invalid("PROTOCOL_CONTROL", "公开分析不得包含内部协议控制内容。");
   }
   if (containsFormalScore(input.text)) {
     return invalid("FORMAL_SCORE", "公开分析不得包含正式评分。");
   }
   return validateConfiguredLanguage(input);
+}
+
+function containsInternalErrorCode(text: string) {
+  return [...text.matchAll(uppercaseUnderscoreTokenPattern)]
+    .some((match) => publicAnalysisInternalErrorCodes.has(match[0]));
 }
 
 function validateResponse(input: {
