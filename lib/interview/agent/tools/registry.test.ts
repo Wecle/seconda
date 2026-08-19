@@ -155,6 +155,26 @@ test("keeps public analysis first and response text last in terminal JSON Schema
   }
 });
 
+test("emits provider-compatible empty coverage schemas for opening modes", () => {
+  for (const mode of ["opening", "opening_clarification"] as const) {
+    const schema = z.toJSONSchema(
+      providerInterviewToolInputSchema("submit_interview_turn", mode),
+    ) as {
+      type?: string;
+      properties?: { coverageChanges?: { maxItems?: number } };
+      anyOf?: Array<{
+        properties?: { coverageChanges?: { maxItems?: number } };
+      }>;
+    };
+    assert.equal(schema.type, "object");
+    const branches = schema.anyOf ?? [schema];
+    for (const branch of branches) {
+      assert.equal(branch.properties?.coverageChanges?.maxItems, 0);
+    }
+    assert.equal(JSON.stringify(schema).includes('"prefixItems":[]'), false);
+  }
+});
+
 test("exposes only the legal terminal contract for each run mode", () => {
   const publicAnalysis = "回答提供了方向信息，下一步核实项目证据。";
   const formal = providerInterviewToolInputSchema("submit_interview_turn", "answer");

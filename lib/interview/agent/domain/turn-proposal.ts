@@ -74,6 +74,8 @@ const introductionAskDecisionSchema = z.object({
   estimatedInformationGain: z.enum(["low", "medium", "high"]),
 }).strict();
 
+const emptyCoverageChangesSchema = z.array(coverageChangeSchema).max(0);
+
 export const turnProposalPrefixSchema = z.object({
   assessment: turnAnswerAssessmentSchema
     .nullable()
@@ -103,23 +105,22 @@ export const interviewTurnProposalSchema = turnProposalPrefixSchema.extend({
 export type TurnProposalPrefix = z.infer<typeof turnProposalPrefixSchema>;
 export type InterviewTurnProposal = z.infer<typeof interviewTurnProposalSchema>;
 
-const openingInferencePrefixSchema = z.object({
+const openingPrefixObjectSchema = z.object({
   assessment: z.null(),
-  coverageChanges: z.tuple([]),
-  roleResolution: inferredRoleResolutionSchema,
-  decision: introductionAskDecisionSchema,
-}).strict();
-
-const openingClarificationPrefixSchema = z.object({
-  assessment: z.null(),
-  coverageChanges: z.tuple([]),
-  roleResolution: needsClarificationRoleResolutionSchema,
-  decision: roleClarificationDecisionSchema,
+  coverageChanges: emptyCoverageChangesSchema,
+  roleResolution: z.union([
+    inferredRoleResolutionSchema,
+    needsClarificationRoleResolutionSchema,
+  ]),
+  decision: z.union([
+    introductionAskDecisionSchema,
+    roleClarificationDecisionSchema,
+  ]),
 }).strict();
 
 const confirmedRolePrefixSchema = z.object({
   assessment: z.null(),
-  coverageChanges: z.tuple([]),
+  coverageChanges: emptyCoverageChangesSchema,
   roleResolution: confirmedRoleResolutionSchema,
   decision: introductionAskDecisionSchema,
 }).strict();
@@ -131,19 +132,13 @@ const formalAnswerPrefixSchema = z.object({
   decision: z.union([askDecisionSchema, finishDecisionSchema]),
 }).strict();
 
-const openingPrefixSchema = z.union([
-  openingInferencePrefixSchema,
-  openingClarificationPrefixSchema,
-]);
+const openingPrefixSchema = openingPrefixObjectSchema.superRefine(
+  validateOpeningRoleDecision,
+);
 
-const openingFullSchema = z.union([
-  openingInferencePrefixSchema.extend({
-    responseText: interviewTurnProposalSchema.shape.responseText,
-  }),
-  openingClarificationPrefixSchema.extend({
-    responseText: interviewTurnProposalSchema.shape.responseText,
-  }),
-]);
+const openingFullSchema = openingPrefixObjectSchema.extend({
+  responseText: interviewTurnProposalSchema.shape.responseText,
+}).superRefine(validateOpeningRoleDecision);
 
 const confirmedRoleFullSchema = confirmedRolePrefixSchema.extend({
   responseText: interviewTurnProposalSchema.shape.responseText,
@@ -181,6 +176,22 @@ export function turnProposalContractForMode(
   mode: AgentRunMode,
 ): TurnProposalContract {
   return turnProposalContracts[mode];
+}
+
+function validateOpeningRoleDecision(
+  value: z.infer<typeof openingPrefixObjectSchema>,
+  context: z.RefinementCtx,
+) {
+  const valid = value.roleResolution.status === "inferred"
+    ? value.decision.action === "ask"
+    : value.decision.action === "clarify";
+  if (!valid) {
+    context.addIssue({
+      code: "custom",
+      path: ["decision"],
+      message: "Opening decision must match role resolution",
+    });
+  }
 }
 
 export type TurnProposalProgress =
