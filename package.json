@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "tsx --test lib/ai/*.test.ts lib/ai/telemetry/*.test.ts lib/resume/*.test.ts",
+    "test": "tsx --test lib/agent/*.test.ts lib/ai/*.test.ts lib/ai/telemetry/*.test.ts lib/resume/*.test.ts",
     "test:ai:contract": "tsx --env-file=.env scripts/ai-live-contract.ts",
     "db:migrate": "tsx lib/db/migrate.ts",
     "db:migrate:local": "tsx --env-file=.env lib/db/migrate.ts",
+    "db:migrate:agent": "tsx --env-file=.env lib/agent/migrate.ts",
     "build:vercel": "if [ \"$VERCEL_ENV\" = \"production\" ]; then pnpm db:migrate; fi && pnpm build"
   },
   "dependencies": {

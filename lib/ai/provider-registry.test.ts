@@ -79,7 +79,7 @@ test("DeepSeek uses its direct endpoint, stripped model id, JSON object, disable
   assert.deepEqual(result.output, { value: "ok" });
 });
 
-test("DeepSeek conversational requests omit JSON response format and keep hidden thinking disabled", async () => {
+test("DeepSeek conversational requests enable thinking and expose reasoning chunks", async () => {
   const result = await requestFor(
     "deepseek/deepseek-chat",
     "fast",
@@ -88,8 +88,9 @@ test("DeepSeek conversational requests omit JSON response format and keep hidden
   );
 
   assert.equal("response_format" in result.body, false);
-  assert.deepEqual(result.body.thinking, { type: "disabled" });
+  assert.deepEqual(result.body.thinking, { type: "enabled" });
   assert.equal(result.body.parallel_tool_calls, false);
+  assert.equal(result.provider.metadata.thinking, "enabled");
 });
 
 test("智谱中国区 uses its mandated endpoint, stripped model id, and selected quality key", async () => {

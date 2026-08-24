@@ -5,6 +5,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  serial,
   text,
   timestamp,
   unique,
@@ -126,4 +127,51 @@ export const aiTaskAttempts = pgTable("ai_task_attempts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("idx_ai_task_attempts_run_number").on(table.taskRunId, table.attemptNumber),
+]);
+
+export const agentSessions = pgTable("agent_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull().default("New agent task"),
+  model: text("model").notNull(),
+  systemPrompt: text("system_prompt").notNull(),
+  workspaceRoot: text("workspace_root").notNull(),
+  status: text("status").notNull().default("idle"),
+  nextEventSequence: integer("next_event_sequence").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  check("agent_sessions_status_check", sql`${table.status} IN ('idle', 'running', 'failed')`),
+]);
+
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => agentSessions.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("running"),
+  maxSteps: integer("max_steps").notNull(),
+  inputTokens: bigint("input_tokens", { mode: "number" }),
+  outputTokens: bigint("output_tokens", { mode: "number" }),
+  errorMessage: text("error_message"),
+  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => [
+  check("agent_runs_status_check", sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`),
+]);
+
+export const agentEvents = pgTable("agent_events", {
+  id: serial("id").primaryKey(),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => agentSessions.id, { onDelete: "cascade" }),
+  runId: uuid("run_id").references(() => agentRuns.id, { onDelete: "set null" }),
+  sequence: integer("sequence").notNull(),
+  type: text("type").notNull(),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_agent_events_session_sequence").on(table.sessionId, table.sequence),
 ]);

@@ -1,0 +1,24 @@
+import type { Metadata } from "next";
+import { getCurrentUserId } from "@/lib/auth/session";
+import { listAgentEvents, listAgentSessions } from "@/lib/agent/repository";
+import { AgentWorkspace } from "@/components/agent/agent-workspace";
+
+export const metadata: Metadata = {
+  title: "Agent Workspace",
+  description: "Inspect an event-sourced autonomous agent run in real time.",
+};
+
+export default async function AgentPage() {
+  const userId = await getCurrentUserId();
+  const sessions = userId ? await listAgentSessions(userId) : [];
+  const firstSession = sessions[0] ?? null;
+  const initialEvents = userId && firstSession
+    ? await listAgentEvents(userId, firstSession.id)
+    : [];
+  return (
+    <AgentWorkspace
+      initialSessions={sessions}
+      initialDetail={firstSession && initialEvents ? { session: firstSession, events: initialEvents } : null}
+    />
+  );
+}

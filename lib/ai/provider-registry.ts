@@ -13,7 +13,7 @@ export type ProviderAdapterMetadata = {
   model: string;
   modelId: string;
   structuredOutput: "json-object" | "json-schema";
-  thinking: "disabled" | "not-configured";
+  thinking: "enabled" | "disabled" | "not-configured";
   jsonInstruction?: string;
 };
 
@@ -73,7 +73,7 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
             ...(input.responseMode === "structured"
               ? { response_format: { type: "json_object" } }
               : { parallel_tool_calls: false }),
-            thinking: { type: "disabled" },
+            thinking: { type: input.responseMode === "conversational" ? "enabled" : "disabled" },
           }),
         }
       : {}),
@@ -86,7 +86,9 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
       model: input.model,
       modelId,
       structuredOutput: "json-object",
-      thinking: isDeepSeek ? "disabled" : "not-configured",
+      thinking: isDeepSeek
+        ? input.responseMode === "conversational" ? "enabled" : "disabled"
+        : "not-configured",
       ...(isDeepSeek ? { jsonInstruction: DEEPSEEK_JSON_INSTRUCTION } : {}),
     },
   } satisfies ProviderModel;
