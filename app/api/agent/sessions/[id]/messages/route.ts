@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { DEFAULT_AGENT_MAX_STEPS, DEFAULT_AGENT_TIMEOUT_MS } from "@/lib/agent/prompt";
+import {
+  DEFAULT_AGENT_MAX_STEPS,
+  DEFAULT_AGENT_TIMEOUT_MS,
+} from "@/lib/agent/capabilities/workspace/prompt";
 import {
   appendAgentEvent,
   beginAgentRun,
@@ -9,6 +12,7 @@ import {
 } from "@/lib/agent/repository";
 import { registerActiveRun } from "@/lib/agent/run-registry";
 import { runAgent, safeAgentError } from "@/lib/agent/runtime";
+import { builtInCapabilityRegistry } from "@/lib/agent/capabilities/built-ins";
 import type { AgentEvent, AgentEventSink } from "@/lib/agent/types";
 
 export const runtime = "nodejs";
@@ -88,13 +92,16 @@ export async function POST(
         const usage = await runAgent({
           sessionId,
           runId: run.id,
+          userId,
+          capability: session.capability,
+          promptVersion: session.promptVersion,
           model: session.model,
           systemPrompt: session.systemPrompt,
-          workspaceRoot: session.workspaceRoot,
+          capabilityConfig: { workspaceRoot: session.workspaceRoot },
           maxSteps: run.maxSteps,
           signal,
           events,
-        });
+        }, { capabilities: builtInCapabilityRegistry });
         const event = await settleAgentRun({
           runId: run.id,
           sessionId,

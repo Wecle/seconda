@@ -5,6 +5,8 @@ import { agentEvents, agentRuns, agentSessions } from "@/lib/db/schema";
 import type { AgentEvent, AgentEventType, AgentSessionSummary } from "./types";
 import { projectModelInput } from "./model-input";
 
+export { closeDatabaseConnection as closeAgentRepositoryConnection } from "@/lib/db";
+
 export function toAgentSessionSummary(row: typeof agentSessions.$inferSelect): AgentSessionSummary {
   return {
     id: row.id,
@@ -50,8 +52,10 @@ export async function createAgentSession(input: {
   userId: string;
   title: string;
   model: string;
+  capability: string;
+  promptVersion: string;
   systemPrompt: string;
-  workspaceRoot: string;
+  workspaceRoot: string | null;
 }) {
   const [row] = await db.insert(agentSessions).values(input).returning();
   return row;
@@ -80,6 +84,8 @@ export async function forkAgentSession(userId: string, sourceSessionId: string) 
       userId,
       title: `Fork of ${source.title}`.slice(0, 100),
       model: source.model,
+      capability: source.capability,
+      promptVersion: source.promptVersion,
       systemPrompt: source.systemPrompt,
       workspaceRoot: source.workspaceRoot,
       status: "idle",
@@ -281,8 +287,46 @@ export async function beginAgentRun(input: {
     if (!session) return null;
     const [run] = await transaction
       .insert(agentRuns)
-      .values({ sessionId: input.sessionId, maxSteps: input.maxSteps })
+      .values({ sessionId: input.sessionId, maxSteps: input.maxSteps, status: "queued" })
       .returning();
+    const [claimedRun] = await transaction
+      .update(agentRuns)
+      .set({ status: "running", startedAt: new Date() })
+      .where(and(eq(agentRuns.id, run.id), eq(agentRuns.status, "queued")))
+      .returning();
+    if (!claimedRun) throw new Error("Queued agent run could not be claimed");
+    return { session, run: claimedRun };
+  });
+}
+
+export async function claimQueuedAgentRun(input: { userId: string; runId: string }) {
+  return db.transaction(async (transaction) => {
+    const [candidate] = await transaction
+      .select({ sessionId: agentRuns.sessionId })
+      .from(agentRuns)
+      .innerJoin(agentSessions, eq(agentRuns.sessionId, agentSessions.id))
+      .where(and(
+        eq(agentRuns.id, input.runId),
+        eq(agentRuns.status, "queued"),
+        eq(agentSessions.userId, input.userId),
+      ))
+      .limit(1);
+    if (!candidate) return null;
+    const [session] = await transaction
+      .update(agentSessions)
+      .set({ status: "running", updatedAt: new Date() })
+      .where(and(
+        eq(agentSessions.id, candidate.sessionId),
+        ne(agentSessions.status, "running"),
+      ))
+      .returning();
+    if (!session) return null;
+    const [run] = await transaction
+      .update(agentRuns)
+      .set({ status: "running", startedAt: new Date() })
+      .where(and(eq(agentRuns.id, input.runId), eq(agentRuns.status, "queued")))
+      .returning();
+    if (!run) return null;
     return { session, run };
   });
 }

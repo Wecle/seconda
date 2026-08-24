@@ -2,10 +2,11 @@ import { stepCountIs, streamText, type LanguageModelUsage, type ModelMessage } f
 import { z } from "zod";
 import { createProviderModel } from "@/lib/ai/provider-registry";
 import type { AgentEventSink, AgentRunInput } from "./types";
-import { createWorkspaceToolRegistry } from "./workspace-tools";
-import { createDefaultContextProviders, renderSystemPrompt } from "./context-providers";
+import type { AgentCapabilityRegistry } from "./capabilities/registry";
+import type { CapabilityContext } from "./capabilities/types";
+import { ContextProviderRegistry, renderSystemPrompt } from "./context-providers";
 import { prepareModelContext } from "./context-lifecycle";
-import { isContextOverflowError, shouldContinueAfterStep } from "./runtime-policy";
+import { isContextOverflowError } from "./runtime-policy";
 
 function getQualityApiKey() {
   const key = process.env.QUALITY_MODEL_API_KEY?.trim();
@@ -40,35 +41,49 @@ async function appendModelMessages(events: AgentEventSink, messages: readonly Mo
 }
 
 export type AgentRuntimeDependencies = {
+  capabilities: AgentCapabilityRegistry;
   provider?: ReturnType<typeof createProviderModel>;
   prepareContext?: typeof prepareModelContext;
   stream?: typeof streamText;
 };
 
-export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies = {}) {
+export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies) {
+  const capability = dependencies.capabilities.resolve(input.capability);
   const provider = dependencies.provider ?? createProviderModel({
     model: input.model,
     credentialTier: "quality",
     apiKey: getQualityApiKey(),
     responseMode: "conversational",
   });
-  const registry = createWorkspaceToolRegistry();
-  const tools = registry.toAISDKTools({
-    workspaceRoot: input.workspaceRoot,
+  const capabilityContext: CapabilityContext = {
+    sessionId: input.sessionId,
+    runId: input.runId,
+    userId: input.userId,
+    model: input.model,
+    systemPrompt: input.systemPrompt,
+    promptVersion: input.promptVersion,
+    capabilityConfig: input.capabilityConfig,
     signal: input.signal,
-  });
-
-  const contextProviders = createDefaultContextProviders(input.systemPrompt);
+    events: input.events,
+  };
+  const toolsRegistry = capability.createToolRegistry(capabilityContext);
+  const tools = toolsRegistry.toAISDKTools();
+  const contextProviders = new ContextProviderRegistry();
+  for (const provider of capability.createContextProviders(capabilityContext)) {
+    contextProviders.register(provider);
+  }
   const system = renderSystemPrompt(await contextProviders.assemble({
-    workspaceRoot: input.workspaceRoot,
     model: input.model,
     sessionId: input.sessionId,
   }));
+  const maxSteps = Math.min(input.maxSteps, capability.maxSteps);
 
   await input.events.append("run_started", {
     model: input.model,
-    maxSteps: input.maxSteps,
-    tools: registry.schemas().map(({ name, description }) => ({ name, description })),
+    capability: capability.id,
+    promptVersion: input.promptVersion,
+    maxSteps,
+    tools: toolsRegistry.schemas().map(({ name, description }) => ({ name, description })),
   });
   const prepareContext = (trigger?: "pressure" | "context-overflow") => (dependencies.prepareContext ?? prepareModelContext)({
     sessionId: input.sessionId,
@@ -76,7 +91,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     model: input.model,
     contextWindow: provider.metadata.contextWindow,
     system,
-    toolSchemas: registry.schemas().map(({ name, description, inputSchema }) => ({
+    toolSchemas: toolsRegistry.schemas().map(({ name, description, inputSchema }) => ({
       name,
       description,
       inputSchema: z.toJSONSchema(inputSchema),
@@ -121,9 +136,11 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
   };
   const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let nextContext = prepared;
-  for (let stepIndex = 0; stepIndex < input.maxSteps; stepIndex += 1) {
+  for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+    const beforeStep = await capability.beforeStep?.({ ...capabilityContext, step: stepIndex + 1 });
+    if (beforeStep?.action === "stop") break;
     if (stepIndex > 0) nextContext = await prepareContext();
-    let shouldContinue = false;
+    let stepContent: readonly { type: string }[] = [];
     let overflowRetries = 0;
     while (true) {
       let responseMessages: ModelMessage[] = [];
@@ -135,14 +152,14 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
           system,
           messages: nextContext.messages,
           tools,
-          toolOrder: ["list_files", "search_files", "read_file"],
+          toolOrder: toolsRegistry.toolOrder,
           stopWhen: stepCountIs(1),
           abortSignal: input.signal,
           maxRetries: 0,
           maxOutputTokens: nextContext.maxOutputTokens,
           onStepEnd: (step) => {
             responseMessages = structuredClone(step.response.messages as ModelMessage[]);
-            shouldContinue = shouldContinueAfterStep(step.content);
+            stepContent = step.content;
           },
         });
 
@@ -243,7 +260,12 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
         throw error;
       }
     }
-    if (!shouldContinue) break;
+    const decision = await capability.afterStep?.({
+      ...capabilityContext,
+      step: stepIndex + 1,
+      content: stepContent,
+    }) ?? { action: "stop" as const, reason: "capability-step-complete" };
+    if (decision.action === "stop") break;
   }
   return totalUsage;
 }

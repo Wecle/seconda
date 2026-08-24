@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { isContextOverflowError, shouldContinueAfterStep } from "./runtime-policy";
+import { decideWorkspaceStep } from "./capabilities/workspace/turn-policy";
+import { isContextOverflowError } from "./runtime-policy";
 
 describe("runtime step policy", () => {
   test("continues after successful and failed tool execution", () => {
-    assert.equal(shouldContinueAfterStep([{ type: "tool-result" }]), true);
-    assert.equal(shouldContinueAfterStep([{ type: "tool-error" }]), true);
-    assert.equal(shouldContinueAfterStep([{ type: "text" }]), false);
+    assert.deepEqual(decideWorkspaceStep([{ type: "tool-result" }]), { action: "continue" });
+    assert.deepEqual(decideWorkspaceStep([{ type: "tool-error" }]), { action: "continue" });
+    assert.deepEqual(decideWorkspaceStep([{ type: "text" }]), {
+      action: "stop",
+      reason: "workspace-response-complete",
+    });
   });
 
   test("recognizes provider context overflow errors without classifying ordinary failures", () => {

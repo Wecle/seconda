@@ -2,16 +2,19 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 
 export type AgentToolContext = {
-  workspaceRoot: string;
   signal: AbortSignal;
 };
 
-export type AgentToolDefinition = {
+export type WorkspaceAgentToolContext = AgentToolContext & {
+  workspaceRoot: string;
+};
+
+export type AgentToolDefinition<TContext extends AgentToolContext = AgentToolContext> = {
   name: string;
   description: string;
   inputSchema: z.ZodType;
   outputSchema: z.ZodType;
-  execute(input: unknown, context: AgentToolContext): Promise<unknown>;
+  execute(input: unknown, context: TContext): Promise<unknown>;
 };
 
 function stableSerialize(value: unknown): string {
@@ -32,10 +35,10 @@ export class RepeatedToolCallError extends Error {
   }
 }
 
-export class AgentToolRegistry {
-  private readonly definitions = new Map<string, AgentToolDefinition>();
+export class AgentToolRegistry<TContext extends AgentToolContext = AgentToolContext> {
+  private readonly definitions = new Map<string, AgentToolDefinition<TContext>>();
 
-  register(definition: AgentToolDefinition) {
+  register(definition: AgentToolDefinition<TContext>) {
     if (this.definitions.has(definition.name)) {
       throw new Error(`Tool ${definition.name} is already registered`);
     }
@@ -51,7 +54,7 @@ export class AgentToolRegistry {
     }));
   }
 
-  toAISDKTools(context: AgentToolContext, maxIdenticalCalls = 3): ToolSet {
+  toAISDKTools(context: TContext, maxIdenticalCalls = 3): ToolSet {
     const counts = new Map<string, number>();
     return Object.fromEntries(
       [...this.definitions.values()].map((definition) => [

@@ -28,6 +28,7 @@ import {
   compactAssistantBlocks,
   type AssistantDisplayBlock as AssistantBlock,
 } from "@/lib/agent/chunks";
+import { projectConversationEntries, shouldAttachLiveAssistant } from "@/lib/agent/conversation-projection";
 
 type AgentWorkspaceProps = {
   initialSessions: AgentSessionSummary[];
@@ -43,33 +44,6 @@ type SessionPage = SessionDetail & {
   previousBefore: number | null;
   hasOlder: boolean;
 };
-
-type ConversationMessage = {
-  role: "user" | "assistant";
-  blocks: AssistantBlock[];
-};
-
-function contentBlocks(content: unknown): AssistantBlock[] {
-  if (typeof content === "string") return content ? [{ kind: "text", text: content, active: false }] : [];
-  if (!Array.isArray(content)) return [];
-  return content.flatMap((part) => {
-    if (!part || typeof part !== "object") return [];
-    const item = part as { type?: unknown; text?: unknown };
-    if ((item.type === "text" || item.type === "reasoning") && typeof item.text === "string") {
-      return [{ kind: item.type, text: item.text, active: false } satisfies AssistantBlock];
-    }
-    return [];
-  });
-}
-
-function eventMessage(event: AgentEvent): ConversationMessage | null {
-  const message = event.payload.message;
-  if (!message || typeof message !== "object") return null;
-  const record = message as { role?: unknown; content?: unknown };
-  if (record.role !== "user" && record.role !== "assistant") return null;
-  const blocks = contentBlocks(record.content);
-  return blocks.length > 0 ? { role: record.role, blocks } : null;
-}
 
 function reasoningSummary(text: string, running: boolean) {
   const visible = running ? text.trimEnd() : text;
@@ -181,6 +155,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
   const [loadingSession, setLoadingSession] = useState(false);
   const [creating, setCreating] = useState(false);
   const [running, setRunning] = useState(initialDetail?.session.status === "running");
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [liveBlocks, setLiveBlocks] = useState<AssistantBlock[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [traceOpen, setTraceOpen] = useState(false);
@@ -193,6 +168,18 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
   const loadRequestRef = useRef(0);
   const deferredEvents = useDeferredValue(detail?.events ?? []);
 
+  const clearLiveBlocks = useCallback(() => {
+    if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
+    animationFrameRef.current = null;
+    liveBlocksRef.current = [];
+    setLiveBlocks([]);
+  }, []);
+
+  const resetLiveRun = useCallback(() => {
+    clearLiveBlocks();
+    setActiveRunId(null);
+  }, [clearLiveBlocks]);
+
   const flushLiveBlocks = useCallback(() => {
     if (animationFrameRef.current !== null) return;
     animationFrameRef.current = requestAnimationFrame(() => {
@@ -203,6 +190,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
 
   const loadSession = useCallback(async (id: string) => {
     if (running) return;
+    resetLiveRun();
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
     setSelectedId(id);
@@ -222,7 +210,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
     } finally {
       if (loadRequestRef.current === requestId) setLoadingSession(false);
     }
-  }, [running]);
+  }, [resetLiveRun, running]);
 
   const loadOlderHistory = useCallback(async () => {
     if (!selectedId || historyBefore === null || loadingOlder) return;
@@ -265,6 +253,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
 
   const createSession = useCallback(async () => {
     if (running) return;
+    resetLiveRun();
     loadRequestRef.current += 1;
     setCreating(true);
     setError(null);
@@ -285,7 +274,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
     } finally {
       setCreating(false);
     }
-  }, [running]);
+  }, [resetLiveRun, running]);
 
   const forkSession = useCallback(async () => {
     if (!selectedId || running) return;
@@ -305,6 +294,9 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
   }, [loadSession, running, selectedId]);
 
   const acceptStreamEvent = useCallback((event: AgentEvent) => {
+    if (event.runId !== null && (event.type === "user_message" || event.type === "run_started")) {
+      setActiveRunId(event.runId);
+    }
     if (event.type === "assistant_chunk") {
       liveBlocksRef.current = [...applyAssistantChunk(liveBlocksRef.current, event.payload.chunk)];
       flushLiveBlocks();
@@ -320,24 +312,19 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       flushLiveBlocks();
       return;
     }
-    if (event.type === "model_message" || event.type === "assistant_message") {
-      const committed = eventMessage(event);
-      if (committed?.role === "assistant") {
-        liveBlocksRef.current = [];
-        setLiveBlocks([]);
-      }
+    if (event.type === "assistant_message") {
+      clearLiveBlocks();
     }
     setDetail((current) => current ? { ...current, events: [...current.events, event] } : current);
-  }, [flushLiveBlocks]);
+  }, [clearLiveBlocks, flushLiveBlocks]);
 
   const sendMessage = useCallback(async () => {
     if (!selectedId || !message.trim() || running || loadingSession) return;
     const prompt = message.trim();
     setMessage("");
     setRunning(true);
+    resetLiveRun();
     setError(null);
-    liveBlocksRef.current = [];
-    setLiveBlocks([]);
     try {
       const response = await fetch(`/api/agent/sessions/${selectedId}/messages`, {
         method: "POST",
@@ -370,9 +357,10 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       setError(sendError instanceof Error ? sendError.message : "Agent run failed");
     } finally {
       setRunning(false);
+      resetLiveRun();
       await refreshSessions();
     }
-  }, [acceptStreamEvent, loadingSession, message, refreshSessions, running, selectedId]);
+  }, [acceptStreamEvent, loadingSession, message, refreshSessions, resetLiveRun, running, selectedId]);
 
   const cancelRun = useCallback(async () => {
     if (!selectedId) return;
@@ -383,12 +371,8 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
     }
   }, [selectedId]);
 
-  const messages = useMemo(() => deferredEvents
-    .filter((event) => event.type === "model_message" || event.type === "user_message" || event.type === "assistant_message")
-    .flatMap((event) => {
-      const parsed = eventMessage(event);
-      return parsed ? [{ ...parsed, sequence: event.sequence }] : [];
-    }), [deferredEvents]);
+  const messages = useMemo(() => projectConversationEntries(detail?.events ?? []), [detail?.events]);
+  const liveContinuesAssistant = shouldAttachLiveAssistant(messages, running, activeRunId);
 
   const traceEvents = useMemo(() => deferredEvents.filter((event) =>
     event.type !== "assistant_chunk"
@@ -503,19 +487,28 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
                       </Button>
                     </div>
                   ) : null}
-                  {messages.map((item) => (
-                    <article key={item.sequence} className={cn("flex gap-3", item.role === "user" && "justify-end")}>
-                      {item.role === "assistant" ? <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background"><Bot className="size-4" /></div> : null}
-                      <div className={cn("max-w-[85%]", item.role === "user" ? "rounded-xl bg-muted px-4 py-2.5" : "min-w-0 pt-1")}><AssistantContent blocks={item.blocks} /></div>
-                      {item.role === "user" ? <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border"><UserRound className="size-4" /></div> : null}
-                    </article>
-                  ))}
-                  {liveBlocks.length > 0 ? (
+                  {messages.map((item, itemIndex) => {
+                    const continuesLive = liveContinuesAssistant && itemIndex === messages.length - 1;
+                    return (
+                      <article key={item.key} className={cn("flex gap-3", item.role === "user" && "justify-end")}>
+                        {item.role === "assistant" ? <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background"><Bot className="size-4" /></div> : null}
+                        <div className={cn("max-w-[85%]", item.role === "user" ? "rounded-xl bg-muted px-4 py-2.5" : "min-w-0 space-y-2 pt-1")}>
+                          {item.steps.map((step) => <AssistantContent key={step.sequence} blocks={step.blocks} />)}
+                          {continuesLive && liveBlocks.length > 0 ? <AssistantContent blocks={liveBlocks} running /> : null}
+                          {continuesLive && liveBlocks.length === 0 ? (
+                            <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Thinking and inspecting…</div>
+                          ) : null}
+                        </div>
+                        {item.role === "user" ? <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border"><UserRound className="size-4" /></div> : null}
+                      </article>
+                    );
+                  })}
+                  {!liveContinuesAssistant && running && liveBlocks.length > 0 ? (
                     <article className="flex gap-3">
                       <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background"><Bot className="size-4" /></div>
                       <div className="min-w-0 max-w-[85%] pt-1"><AssistantContent blocks={liveBlocks} running /></div>
                     </article>
-                  ) : running ? (
+                  ) : running && !liveContinuesAssistant ? (
                     <div className="flex items-center gap-3 text-sm text-muted-foreground"><div className="grid size-8 place-items-center rounded-lg bg-foreground text-background"><Bot className="size-4" /></div><Loader2 className="size-4 animate-spin" />Thinking and inspecting…</div>
                   ) : null}
                 </div>

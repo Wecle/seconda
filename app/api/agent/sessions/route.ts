@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { loadModelPolicy } from "@/lib/ai/model-policy";
-import { DEFAULT_AGENT_SYSTEM_PROMPT } from "@/lib/agent/prompt";
+import {
+  DEFAULT_AGENT_SYSTEM_PROMPT,
+  WORKSPACE_AGENT_PROMPT_VERSION,
+} from "@/lib/agent/capabilities/workspace/prompt";
+import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 import { createAgentSession, listAgentSessions, toAgentSessionSummary } from "@/lib/agent/repository";
 
 const createSessionSchema = z.object({
@@ -30,6 +34,8 @@ export async function POST(request: Request) {
       userId,
       title: parsed.data.title ?? "New agent task",
       model: policy.qualityModel,
+      capability: BUILT_IN_CAPABILITIES.workspace,
+      promptVersion: WORKSPACE_AGENT_PROMPT_VERSION,
       systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
       workspaceRoot: process.cwd(),
     });

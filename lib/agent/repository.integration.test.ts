@@ -5,7 +5,65 @@ import { eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
-import { agentEvents, agentSessions, users } from "@/lib/db/schema";
+import { agentEvents, agentRuns, agentSessions, users } from "@/lib/db/schema";
+
+test("capability persistence accepts non-workspace sessions without fake paths and rejects capability mutation", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+  const database = drizzle(client, { schema });
+  const userId = randomUUID();
+  try {
+    await database.insert(users).values({ id: userId, email: `${userId}@example.test` });
+    await assert.rejects(database.insert(agentSessions).values({
+      userId, title: "Invalid workspace", model: "deepseek/deepseek-chat",
+      capability: "workspace", promptVersion: "workspace-agent-v1", systemPrompt: "test", workspaceRoot: null,
+    }));
+    const [session] = await database.insert(agentSessions).values({
+      userId, title: "Isolated capability", model: "deepseek/deepseek-chat",
+      capability: "isolated", promptVersion: "isolated-v1", systemPrompt: "test", workspaceRoot: null,
+    }).returning();
+    await assert.rejects(database.update(agentSessions).set({ capability: "workspace" }).where(eq(agentSessions.id, session.id)));
+  } finally {
+    try {
+      await database.delete(users).where(eq(users.id, userId));
+    } finally {
+      await client.end();
+    }
+  }
+});
+
+test("a queued run can be claimed exactly once", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const client = postgres(process.env.DATABASE_URL!, { prepare: false });
+  const database = drizzle(client, { schema });
+  const { claimQueuedAgentRun } = await import("./repository");
+  const userId = randomUUID();
+  try {
+    await database.insert(users).values({ id: userId, email: `${userId}@example.test` });
+    const [session] = await database.insert(agentSessions).values({
+      userId, title: "Queued claim", model: "deepseek/deepseek-chat",
+      systemPrompt: "test", workspaceRoot: process.cwd(),
+    }).returning();
+    const [queued] = await database.insert(agentRuns).values({ sessionId: session.id, maxSteps: 3 }).returning();
+    assert.equal(queued.status, "queued");
+    assert.equal(queued.startedAt, null);
+    const claims = await Promise.all([
+      claimQueuedAgentRun({ userId, runId: queued.id }),
+      claimQueuedAgentRun({ userId, runId: queued.id }),
+    ]);
+    assert.equal(claims.filter(Boolean).length, 1);
+    assert.equal(claims.find(Boolean)?.run.status, "running");
+    assert.ok(claims.find(Boolean)?.run.startedAt);
+  } finally {
+    try {
+      await database.delete(users).where(eq(users.id, userId));
+    } finally {
+      await client.end();
+    }
+  }
+});
 
 test("atomic compaction commit lands a complete replacement lifecycle", {
   skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
@@ -116,4 +174,11 @@ test("event history paginates without dropping the 1000-row boundary", {
       await client.end();
     }
   }
+});
+
+test("repository integration connection closes cleanly", {
+  skip: process.env.DATABASE_URL ? false : "DATABASE_URL is not configured",
+}, async () => {
+  const { closeAgentRepositoryConnection } = await import("./repository");
+  await closeAgentRepositoryConnection();
 });

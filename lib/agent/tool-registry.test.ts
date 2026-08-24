@@ -32,7 +32,6 @@ test("blocks repeated identical calls and validates canonical output", async () 
   const registry = new AgentToolRegistry();
   registry.register(echoDefinition());
   const tools = registry.toAISDKTools({
-    workspaceRoot: process.cwd(),
     signal: new AbortController().signal,
   });
   const execute = tools.echo.execute;
@@ -51,7 +50,6 @@ test("blocks repeated identical calls and validates canonical output", async () 
     },
   });
   const invalidExecute = invalidRegistry.toAISDKTools({
-    workspaceRoot: process.cwd(),
     signal: new AbortController().signal,
   }).echo.execute;
   assert.ok(invalidExecute);
@@ -64,7 +62,6 @@ test("does not start tools after cancellation", async () => {
   const registry = new AgentToolRegistry();
   registry.register(echoDefinition());
   const execute = registry.toAISDKTools({
-    workspaceRoot: process.cwd(),
     signal: controller.signal,
   }).echo.execute;
   assert.ok(execute);

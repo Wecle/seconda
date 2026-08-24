@@ -56,9 +56,12 @@ export type AgentEventSink = {
 export type AgentRunInput = {
   sessionId: string;
   runId: string;
+  userId: string;
+  capability: string;
+  promptVersion: string;
   model: string;
   systemPrompt: string;
-  workspaceRoot: string;
+  capabilityConfig: unknown;
   maxSteps: number;
   signal: AbortSignal;
   events: AgentEventSink;
@@ -81,7 +84,6 @@ export type ContextSection = {
 };
 
 export type ContextProviderInput = {
-  workspaceRoot: string;
   model: string;
   sessionId: string;
 };

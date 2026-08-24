@@ -137,14 +137,20 @@ export const agentSessions = pgTable("agent_sessions", {
     .references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull().default("New agent task"),
   model: text("model").notNull(),
+  capability: text("capability").notNull().default("workspace"),
+  promptVersion: text("prompt_version").notNull().default("workspace-agent-v1"),
   systemPrompt: text("system_prompt").notNull(),
-  workspaceRoot: text("workspace_root").notNull(),
+  workspaceRoot: text("workspace_root"),
   status: text("status").notNull().default("idle"),
   nextEventSequence: integer("next_event_sequence").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("agent_sessions_status_check", sql`${table.status} IN ('idle', 'running', 'failed')`),
+  check(
+    "agent_sessions_capability_workspace_check",
+    sql`${table.capability} <> 'workspace' OR ${table.workspaceRoot} IS NOT NULL`,
+  ),
 ]);
 
 export const agentRuns = pgTable("agent_runs", {
@@ -152,15 +158,19 @@ export const agentRuns = pgTable("agent_runs", {
   sessionId: uuid("session_id")
     .notNull()
     .references(() => agentSessions.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("running"),
+  status: text("status").notNull().default("queued"),
   maxSteps: integer("max_steps").notNull(),
   inputTokens: bigint("input_tokens", { mode: "number" }),
   outputTokens: bigint("output_tokens", { mode: "number" }),
   errorMessage: text("error_message"),
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
 }, (table) => [
-  check("agent_runs_status_check", sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`),
+  check("agent_runs_status_check", sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'cancelled')`),
+  uniqueIndex("idx_agent_runs_session_active")
+    .on(table.sessionId)
+    .where(sql`${table.status} IN ('queued', 'running')`),
 ]);
 
 export const agentEvents = pgTable("agent_events", {

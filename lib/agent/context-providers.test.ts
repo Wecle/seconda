@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ContextProviderRegistry, renderSystemPrompt } from "./context-providers";
 
-const input = { workspaceRoot: "/workspace", model: "deepseek/test", sessionId: "session" };
+const input = { model: "deepseek/test", sessionId: "session" };
 
 test("context providers compose in deterministic order", async () => {
   const registry = new ContextProviderRegistry();
