@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  AnyPgColumn,
   bigint,
   check,
   index,
@@ -182,8 +183,183 @@ export const agentEvents = pgTable("agent_events", {
   sequence: integer("sequence").notNull(),
   type: text("type").notNull(),
   payload: jsonb("payload").notNull(),
+  dedupeKey: text("dedupe_key"),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  visibility: text("visibility").notNull().default("model"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("idx_agent_events_session_sequence").on(table.sessionId, table.sequence),
+  uniqueIndex("idx_agent_events_session_dedupe_key")
+    .on(table.sessionId, table.dedupeKey)
+    .where(sql`${table.dedupeKey} IS NOT NULL`),
   index("idx_agent_events_session_type_sequence").on(table.sessionId, table.type, table.sequence),
+  check("agent_events_schema_version_check", sql`${table.schemaVersion} > 0`),
+  check(
+    "agent_events_visibility_check",
+    sql`${table.visibility} IN ('model', 'user', 'model_and_user', 'internal')`,
+  ),
+]);
+
+export const interviews = pgTable("interviews", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  creationIdempotencyKey: text("creation_idempotency_key").notNull(),
+  creationRequestHash: text("creation_request_hash").notNull(),
+  agentSessionId: uuid("agent_session_id")
+    .notNull()
+    .references(() => agentSessions.id, { onDelete: "cascade" }),
+  resumeVersionId: uuid("resume_version_id").notNull(),
+  status: text("status").notNull().default("initializing"),
+  language: text("language").notNull(),
+  persona: text("persona").notNull(),
+  interviewType: text("interview_type").notNull(),
+  targetLevel: text("target_level").notNull(),
+  targetRole: text("target_role").notNull(),
+  preference: text("preference").notNull().default(""),
+  preferenceTags: jsonb("preference_tags").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  targetRoundCount: integer("target_round_count").notNull(),
+  answeredRoundCount: integer("answered_round_count").notNull().default(0),
+  version: integer("version").notNull().default(1),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_interviews_owner_creation_key").on(table.userId, table.creationIdempotencyKey),
+  uniqueIndex("idx_interviews_agent_session").on(table.agentSessionId),
+  index("idx_interviews_owner_created").on(table.userId, table.createdAt),
+  check("interviews_status_check", sql`${table.status} IN ('initializing', 'active', 'completing', 'completed')`),
+  check("interviews_language_check", sql`${table.language} IN ('zh', 'en', 'es', 'de')`),
+  check("interviews_persona_check", sql`${table.persona} IN ('friendly', 'standard', 'stressful')`),
+  check("interviews_type_check", sql`${table.interviewType} IN ('behavioral', 'technical', 'mixed')`),
+  check("interviews_target_level_check", sql`${table.targetLevel} IN ('Junior', 'Mid', 'Senior')`),
+  check("interviews_target_round_count_check", sql`${table.targetRoundCount} BETWEEN 1 AND 20`),
+  check(
+    "interviews_answered_round_count_check",
+    sql`${table.answeredRoundCount} >= 0 AND ${table.answeredRoundCount} <= ${table.targetRoundCount}`,
+  ),
+  check("interviews_version_check", sql`${table.version} > 0`),
+  check(
+    "interviews_preference_tags_check",
+    sql`jsonb_typeof(${table.preferenceTags}) = 'array' AND jsonb_array_length(${table.preferenceTags}) <= 3`,
+  ),
+]);
+
+export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  resumeId: uuid("resume_id").notNull(),
+  resumeVersionId: uuid("resume_version_id").notNull(),
+  resumeTitle: text("resume_title").notNull(),
+  versionNumber: integer("version_number").notNull(),
+  sourceType: text("source_type").$type<ResumeSourceType>().notNull(),
+  parsedJson: jsonb("parsed_json").notNull(),
+  canonicalText: text("canonical_text").notNull(),
+  evidenceJson: jsonb("evidence_json").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_interview_resume_snapshots_interview").on(table.interviewId),
+  check("interview_resume_snapshots_version_check", sql`${table.versionNumber} > 0`),
+  check("interview_resume_snapshots_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
+]);
+
+export const interviewQuestions = pgTable("interview_questions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  sourceInterviewRunId: uuid("source_interview_run_id")
+    .notNull()
+    .references((): AnyPgColumn => interviewAgentRuns.id, { onDelete: "restrict" }),
+  sequence: integer("sequence").notNull(),
+  kind: text("kind").notNull(),
+  topic: text("topic").notNull(),
+  question: text("question").notNull(),
+  tip: text("tip"),
+  resumeEvidenceIds: jsonb("resume_evidence_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  status: text("status").notNull().default("awaiting_answer"),
+  askedAt: timestamp("asked_at", { withTimezone: true }).notNull().defaultNow(),
+  closedAt: timestamp("closed_at", { withTimezone: true }),
+}, (table) => [
+  uniqueIndex("idx_interview_questions_sequence").on(table.interviewId, table.sequence),
+  uniqueIndex("idx_interview_questions_source_run").on(table.sourceInterviewRunId),
+  uniqueIndex("idx_interview_questions_one_awaiting")
+    .on(table.interviewId)
+    .where(sql`${table.status} = 'awaiting_answer'`),
+  check("interview_questions_sequence_check", sql`${table.sequence} > 0`),
+  check("interview_questions_kind_check", sql`${table.kind} IN ('main', 'follow_up')`),
+  check(
+    "interview_questions_status_check",
+    sql`${table.status} IN ('awaiting_answer', 'answered', 'skipped', 'abandoned')`,
+  ),
+  check("interview_questions_evidence_check", sql`jsonb_typeof(${table.resumeEvidenceIds}) = 'array'`),
+]);
+
+export const interviewAnswers = pgTable("interview_answers", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => interviewQuestions.id, { onDelete: "restrict" }),
+  submissionKey: text("submission_key").notNull(),
+  submissionRequestHash: text("submission_request_hash").notNull(),
+  content: text("content").notNull().default(""),
+  status: text("status").notNull(),
+  analysisJson: jsonb("analysis_json"),
+  analysisRunId: uuid("analysis_run_id")
+    .references((): AnyPgColumn => interviewAgentRuns.id, { onDelete: "set null" }),
+  submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_interview_answers_question").on(table.questionId),
+  uniqueIndex("idx_interview_answers_submission_key").on(table.interviewId, table.submissionKey),
+  check("interview_answers_status_check", sql`${table.status} IN ('answered', 'skipped')`),
+  check(
+    "interview_answers_content_check",
+    sql`(${table.status} = 'answered' AND length(btrim(${table.content})) > 0) OR (${table.status} = 'skipped' AND ${table.content} = '')`,
+  ),
+]);
+
+export const interviewAgentRuns = pgTable("interview_agent_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  currentAgentRunId: uuid("current_agent_run_id")
+    .references(() => agentRuns.id, { onDelete: "set null" }),
+  triggerType: text("trigger_type").notNull(),
+  triggerKey: text("trigger_key").notNull(),
+  triggerAnswerId: uuid("trigger_answer_id")
+    .references(() => interviewAnswers.id, { onDelete: "restrict" }),
+  status: text("status").notNull().default("queued"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  attemptGeneration: integer("attempt_generation").notNull().default(0),
+  leaseOwner: text("lease_owner"),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => [
+  uniqueIndex("idx_interview_agent_runs_trigger").on(table.interviewId, table.triggerKey),
+  uniqueIndex("idx_interview_agent_runs_current_agent_run")
+    .on(table.currentAgentRunId)
+    .where(sql`${table.currentAgentRunId} IS NOT NULL`),
+  index("idx_interview_agent_runs_status_lease").on(table.status, table.leaseExpiresAt),
+  check("interview_agent_runs_trigger_type_check", sql`${table.triggerType} IN ('opening', 'answer', 'skip')`),
+  check(
+    "interview_agent_runs_status_check",
+    sql`${table.status} IN ('queued', 'running', 'completed', 'failed', 'cancelled')`,
+  ),
+  check("interview_agent_runs_attempt_count_check", sql`${table.attemptCount} >= 0`),
+  check("interview_agent_runs_generation_check", sql`${table.attemptGeneration} >= 0`),
+  check(
+    "interview_agent_runs_trigger_answer_check",
+    sql`(${table.triggerType} = 'opening' AND ${table.triggerAnswerId} IS NULL) OR (${table.triggerType} IN ('answer', 'skip') AND ${table.triggerAnswerId} IS NOT NULL)`,
+  ),
 ]);

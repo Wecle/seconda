@@ -17,6 +17,9 @@ function event(
     sequence,
     type,
     payload: { message: { role, content } },
+    dedupeKey: null,
+    schemaVersion: 1,
+    visibility: "model",
     createdAt: new Date(sequence),
   };
 }

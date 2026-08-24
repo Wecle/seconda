@@ -25,6 +25,12 @@ export const AGENT_EVENT_TYPES = [
   "run_completed",
   "run_failed",
   "run_cancelled",
+  "interview/session_initialized",
+  "interview/question_committed",
+  "interview/answer_submitted",
+  "interview/answer_analyzed",
+  "interview/completion_requested",
+  "interview/completed",
 ] as const;
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number];
@@ -36,8 +42,13 @@ export type AgentEvent = {
   sequence: number;
   type: AgentEventType;
   payload: Record<string, unknown>;
+  dedupeKey: string | null;
+  schemaVersion: number;
+  visibility: AgentEventVisibility;
   createdAt: Date;
 };
+
+export type AgentEventVisibility = "model" | "user" | "model_and_user" | "internal";
 
 export type AgentSessionSummary = {
   id: string;

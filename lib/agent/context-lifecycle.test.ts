@@ -7,12 +7,14 @@ function memoryStore(seed: Array<{ type: AgentEventType; payload: Record<string,
   let nextId = 1;
   const events: AgentEvent[] = seed.map((event, index) => ({
     id: nextId++, sessionId: "session", runId: null, sequence: index + 1,
-    type: event.type, payload: structuredClone(event.payload), createdAt: new Date(0),
+    type: event.type, payload: structuredClone(event.payload),
+    dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0),
   }));
   const makeEvent = (type: AgentEventType, payload: Record<string, unknown>, runId: string | null) => {
     const event: AgentEvent = {
       id: nextId++, sessionId: "session", runId, sequence: events.length + 1,
-      type, payload: structuredClone(payload), createdAt: new Date(0),
+      type, payload: structuredClone(payload),
+      dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0),
     };
     events.push(event);
     return event;

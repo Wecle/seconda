@@ -70,7 +70,7 @@ describe("agent runtime", () => {
       capabilityConfig: null, maxSteps: 5, signal: new AbortController().signal,
       events: {
         async append(type, payload) {
-          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, createdAt: new Date(0) };
+          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0) };
         },
       },
     }, {
@@ -100,7 +100,7 @@ describe("agent runtime", () => {
       capabilityConfig: null, maxSteps: 3, signal: new AbortController().signal,
       events: {
         async append(type, payload) {
-          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, createdAt: new Date(0) };
+          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0) };
         },
       },
     }, {
@@ -156,7 +156,7 @@ describe("agent runtime", () => {
       capabilityConfig: null, maxSteps: 1, signal: new AbortController().signal,
       events: {
         async append(type, payload) {
-          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, createdAt: new Date(0) };
+          return { id: 1, sessionId: "session", runId: "run", sequence: 1, type, payload, dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0) };
         },
       },
     }, {
@@ -220,7 +220,7 @@ describe("agent runtime", () => {
         async append(type: AgentEventType, payload: Record<string, unknown>) {
           const event: AgentEvent = {
             id: events.length + 1, sessionId: "session", runId: "run", sequence: events.length + 1,
-            type, payload, createdAt: new Date(0),
+            type, payload, dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0),
           };
           events.push(event);
           return event;

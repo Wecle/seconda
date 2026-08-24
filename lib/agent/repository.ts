@@ -2,7 +2,12 @@ import { and, asc, desc, eq, lt, ne, notInArray, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { agentEvents, agentRuns, agentSessions } from "@/lib/db/schema";
-import type { AgentEvent, AgentEventType, AgentSessionSummary } from "./types";
+import type {
+  AgentEvent,
+  AgentEventType,
+  AgentEventVisibility,
+  AgentSessionSummary,
+} from "./types";
 import { projectModelInput } from "./model-input";
 
 export { closeDatabaseConnection as closeAgentRepositoryConnection } from "@/lib/db";
@@ -98,6 +103,9 @@ export async function forkAgentSession(userId: string, sourceSessionId: string) 
         sequence: event.sequence,
         type: event.type,
         payload: event.payload,
+        dedupeKey: event.dedupeKey,
+        schemaVersion: event.schemaVersion,
+        visibility: event.visibility,
         createdAt: event.createdAt,
       })));
     }
@@ -203,29 +211,22 @@ export async function appendAgentEvent(input: {
   runId?: string;
   type: AgentEventType;
   payload: Record<string, unknown>;
+  dedupeKey?: string;
+  schemaVersion?: number;
+  visibility?: AgentEventVisibility;
 }) {
-  return db.transaction(async (transaction) => {
-    const [session] = await transaction
-      .update(agentSessions)
-      .set({
-        nextEventSequence: sql`${agentSessions.nextEventSequence} + 1`,
-        updatedAt: new Date(),
-      })
-      .where(eq(agentSessions.id, input.sessionId))
-      .returning({ nextEventSequence: agentSessions.nextEventSequence });
-    if (!session) throw new Error("Agent session not found");
-    const [event] = await transaction
-      .insert(agentEvents)
-      .values({
-        sessionId: input.sessionId,
-        runId: input.runId,
-        sequence: session.nextEventSequence - 1,
-        type: input.type,
-        payload: input.payload,
-      })
-      .returning();
-    return event as AgentEvent;
-  });
+  const [event] = await db.transaction((transaction) => appendAgentEventsInTransaction(transaction, {
+    sessionId: input.sessionId,
+    runId: input.runId,
+    events: [{
+      type: input.type,
+      payload: input.payload,
+      dedupeKey: input.dedupeKey,
+      schemaVersion: input.schemaVersion,
+      visibility: input.visibility,
+    }],
+  }));
+  return event;
 }
 
 export async function beginAgentRun(input: {
@@ -417,24 +418,47 @@ export async function loadAgentEvents(sessionId: string) {
 export async function appendAgentEventsAtomically(input: {
   sessionId: string;
   runId?: string;
-  events: Array<{ type: AgentEventType; payload: Record<string, unknown> }>;
+  events: AgentEventAppendInput[];
 }) {
   if (input.events.length === 0) return [];
-  return db.transaction(async (transaction) => {
-    const [session] = await transaction.update(agentSessions).set({
-      nextEventSequence: sql`${agentSessions.nextEventSequence} + ${input.events.length}`,
-      updatedAt: new Date(),
-    }).where(eq(agentSessions.id, input.sessionId))
-      .returning({ nextEventSequence: agentSessions.nextEventSequence });
-    if (!session) throw new Error("Agent session not found");
-    const firstSequence = session.nextEventSequence - input.events.length;
-    const rows = await transaction.insert(agentEvents).values(input.events.map((event, index) => ({
-      sessionId: input.sessionId,
-      runId: input.runId,
-      sequence: firstSequence + index,
-      type: event.type,
-      payload: event.payload,
-    }))).returning();
-    return (rows as AgentEvent[]).sort((left, right) => left.sequence - right.sequence);
-  });
+  return db.transaction((transaction) => appendAgentEventsInTransaction(transaction, input));
+}
+
+export type AgentEventAppendInput = {
+  type: AgentEventType;
+  payload: Record<string, unknown>;
+  dedupeKey?: string;
+  schemaVersion?: number;
+  visibility?: AgentEventVisibility;
+};
+
+export type AgentRepositoryTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+export async function appendAgentEventsInTransaction(
+  transaction: AgentRepositoryTransaction,
+  input: {
+    sessionId: string;
+    runId?: string;
+    events: AgentEventAppendInput[];
+  },
+) {
+  if (input.events.length === 0) return [];
+  const [session] = await transaction.update(agentSessions).set({
+    nextEventSequence: sql`${agentSessions.nextEventSequence} + ${input.events.length}`,
+    updatedAt: new Date(),
+  }).where(eq(agentSessions.id, input.sessionId))
+    .returning({ nextEventSequence: agentSessions.nextEventSequence });
+  if (!session) throw new Error("Agent session not found");
+  const firstSequence = session.nextEventSequence - input.events.length;
+  const rows = await transaction.insert(agentEvents).values(input.events.map((event, index) => ({
+    sessionId: input.sessionId,
+    runId: input.runId,
+    sequence: firstSequence + index,
+    type: event.type,
+    payload: event.payload,
+    dedupeKey: event.dedupeKey,
+    schemaVersion: event.schemaVersion ?? 1,
+    visibility: event.visibility ?? "model",
+  }))).returning();
+  return (rows as AgentEvent[]).sort((left, right) => left.sequence - right.sequence);
 }

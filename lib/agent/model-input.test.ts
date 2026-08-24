@@ -5,7 +5,10 @@ import { projectModelInput } from "./model-input";
 import type { AgentEvent, AgentEventType } from "./types";
 
 function event(sequence: number, type: AgentEventType, payload: Record<string, unknown>): AgentEvent {
-  return { id: sequence, sessionId: "session", runId: "run", sequence, type, payload, createdAt: new Date(sequence) };
+  return {
+    id: sequence, sessionId: "session", runId: "run", sequence, type, payload,
+    dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(sequence),
+  };
 }
 
 const assistantWithTool = {

@@ -9,64 +9,6 @@ if (!connectionString) {
 const sql = postgres(connectionString, { prepare: false });
 
 async function migrate() {
-  await sql.begin(async (transaction) => {
-    await transaction.unsafe(`
-      DROP VIEW IF EXISTS
-        ai_completion_health,
-        ai_slow_operations,
-        ai_interview_observability
-      CASCADE
-    `);
-    await transaction.unsafe(`
-      DROP TABLE IF EXISTS
-        deep_dive_messages,
-        deep_dive_sessions,
-        interview_answer_assessment_claims,
-        interview_answer_assessments,
-        question_scores,
-        interview_completion_jobs,
-        interview_context_snapshots,
-        interview_agent_tool_commits,
-        interview_agent_events,
-        interview_messages,
-        interview_questions,
-        interview_coverage,
-        interview_shares,
-        interview_resume_snapshots,
-        interview_agent_runs,
-        interviews
-      CASCADE
-    `);
-    await transaction.unsafe(
-      "DROP FUNCTION IF EXISTS reject_interview_resume_snapshot_update()",
-    );
-    await transaction.unsafe(
-      "ALTER TABLE IF EXISTS resumes DROP COLUMN IF EXISTS interview_settings",
-    );
-    await transaction.unsafe(
-      "ALTER TABLE IF EXISTS ai_task_runs DROP COLUMN IF EXISTS interview_id",
-    );
-    await transaction.unsafe(
-      "ALTER TABLE IF EXISTS ai_task_runs DROP COLUMN IF EXISTS agent_run_id",
-    );
-    await transaction.unsafe(
-      "ALTER TABLE IF EXISTS ai_task_runs DROP COLUMN IF EXISTS question_id",
-    );
-    await transaction.unsafe(
-      "ALTER TABLE IF EXISTS ai_task_runs DROP COLUMN IF EXISTS completion_job_id",
-    );
-    await transaction.unsafe(`
-      DO $$
-      BEGIN
-        IF to_regclass('public.ai_task_runs') IS NOT NULL THEN
-          DELETE FROM ai_task_runs
-          WHERE task NOT IN ('resume.parse', 'resume.generate');
-        END IF;
-      END
-      $$
-    `);
-  });
-
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -311,17 +253,253 @@ async function migrate() {
       sequence INTEGER NOT NULL,
       type TEXT NOT NULL,
       payload JSONB NOT NULL,
+      dedupe_key TEXT,
+      schema_version INTEGER NOT NULL DEFAULT 1,
+      visibility TEXT NOT NULL DEFAULT 'model',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+  await sql`
+    ALTER TABLE agent_events
+      ADD COLUMN IF NOT EXISTS dedupe_key TEXT,
+      ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'model'
+  `;
+  await sql`ALTER TABLE agent_events DROP CONSTRAINT IF EXISTS agent_events_schema_version_check`;
+  await sql`
+    ALTER TABLE agent_events
+      ADD CONSTRAINT agent_events_schema_version_check CHECK (schema_version > 0)
+  `;
+  await sql`ALTER TABLE agent_events DROP CONSTRAINT IF EXISTS agent_events_visibility_check`;
+  await sql`
+    ALTER TABLE agent_events
+      ADD CONSTRAINT agent_events_visibility_check CHECK (
+        visibility IN ('model', 'user', 'model_and_user', 'internal')
+      )
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_session_sequence
     ON agent_events(session_id, sequence)
   `;
   await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_session_dedupe_key
+    ON agent_events(session_id, dedupe_key)
+    WHERE dedupe_key IS NOT NULL
+  `;
+  await sql`
     CREATE INDEX IF NOT EXISTS idx_agent_events_session_type_sequence
     ON agent_events(session_id, type, sequence)
   `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interviews (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      creation_idempotency_key TEXT NOT NULL,
+      creation_request_hash TEXT NOT NULL,
+      agent_session_id UUID NOT NULL REFERENCES agent_sessions(id) ON DELETE CASCADE,
+      resume_version_id UUID NOT NULL,
+      status TEXT NOT NULL DEFAULT 'initializing',
+      language TEXT NOT NULL,
+      persona TEXT NOT NULL,
+      interview_type TEXT NOT NULL,
+      target_level TEXT NOT NULL,
+      target_role TEXT NOT NULL,
+      preference TEXT NOT NULL DEFAULT '',
+      preference_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      target_round_count INTEGER NOT NULL,
+      answered_round_count INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 1,
+      started_at TIMESTAMPTZ,
+      completed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT interviews_status_check CHECK (status IN ('initializing', 'active', 'completing', 'completed')),
+      CONSTRAINT interviews_language_check CHECK (language IN ('zh', 'en', 'es', 'de')),
+      CONSTRAINT interviews_persona_check CHECK (persona IN ('friendly', 'standard', 'stressful')),
+      CONSTRAINT interviews_type_check CHECK (interview_type IN ('behavioral', 'technical', 'mixed')),
+      CONSTRAINT interviews_target_level_check CHECK (target_level IN ('Junior', 'Mid', 'Senior')),
+      CONSTRAINT interviews_target_round_count_check CHECK (target_round_count BETWEEN 1 AND 20),
+      CONSTRAINT interviews_answered_round_count_check CHECK (
+        answered_round_count >= 0 AND answered_round_count <= target_round_count
+      ),
+      CONSTRAINT interviews_version_check CHECK (version > 0),
+      CONSTRAINT interviews_preference_tags_check CHECK (
+        jsonb_typeof(preference_tags) = 'array' AND jsonb_array_length(preference_tags) <= 3
+      )
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_owner_creation_key
+    ON interviews(user_id, creation_idempotency_key)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_agent_session
+    ON interviews(agent_session_id)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_interviews_owner_created
+    ON interviews(user_id, created_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_resume_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      resume_id UUID NOT NULL,
+      resume_version_id UUID NOT NULL,
+      resume_title TEXT NOT NULL,
+      version_number INTEGER NOT NULL,
+      source_type TEXT NOT NULL,
+      parsed_json JSONB NOT NULL,
+      canonical_text TEXT NOT NULL,
+      evidence_json JSONB NOT NULL,
+      content_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT interview_resume_snapshots_version_check CHECK (version_number > 0),
+      CONSTRAINT interview_resume_snapshots_source_type_check CHECK (source_type IN ('uploaded', 'generated'))
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_resume_snapshots_interview
+    ON interview_resume_snapshots(interview_id)
+  `;
+  await sql.unsafe(`
+    ALTER TABLE interviews ALTER COLUMN resume_version_id SET NOT NULL;
+    ALTER TABLE interviews DROP CONSTRAINT IF EXISTS interviews_resume_version_id_fkey;
+    ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_id SET NOT NULL;
+    ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_version_id SET NOT NULL;
+    ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_id_fkey;
+    ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_version_id_fkey;
+  `);
+  await sql.unsafe(`
+    CREATE OR REPLACE FUNCTION reject_interview_resume_snapshot_update()
+    RETURNS trigger AS $$
+    BEGIN
+      RAISE EXCEPTION 'interview resume snapshots are immutable';
+    END;
+    $$ LANGUAGE plpgsql
+  `);
+  await sql.unsafe(`
+    DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots;
+    CREATE TRIGGER interview_resume_snapshots_immutable
+    BEFORE UPDATE ON interview_resume_snapshots
+    FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update()
+  `);
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_agent_runs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      current_agent_run_id UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+      trigger_type TEXT NOT NULL,
+      trigger_key TEXT NOT NULL,
+      trigger_answer_id UUID,
+      status TEXT NOT NULL DEFAULT 'queued',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      attempt_generation INTEGER NOT NULL DEFAULT 0,
+      lease_owner TEXT,
+      lease_expires_at TIMESTAMPTZ,
+      error_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ,
+      CONSTRAINT interview_agent_runs_trigger_type_check CHECK (trigger_type IN ('opening', 'answer', 'skip')),
+      CONSTRAINT interview_agent_runs_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+      CONSTRAINT interview_agent_runs_attempt_count_check CHECK (attempt_count >= 0),
+      CONSTRAINT interview_agent_runs_generation_check CHECK (attempt_generation >= 0),
+      CONSTRAINT interview_agent_runs_trigger_answer_check CHECK (
+        (trigger_type = 'opening' AND trigger_answer_id IS NULL)
+        OR (trigger_type IN ('answer', 'skip') AND trigger_answer_id IS NOT NULL)
+      )
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_agent_runs_trigger
+    ON interview_agent_runs(interview_id, trigger_key)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_agent_runs_current_agent_run
+    ON interview_agent_runs(current_agent_run_id)
+    WHERE current_agent_run_id IS NOT NULL
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_interview_agent_runs_status_lease
+    ON interview_agent_runs(status, lease_expires_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_questions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      source_interview_run_id UUID NOT NULL REFERENCES interview_agent_runs(id) ON DELETE RESTRICT,
+      sequence INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      topic TEXT NOT NULL,
+      question TEXT NOT NULL,
+      tip TEXT,
+      resume_evidence_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      status TEXT NOT NULL DEFAULT 'awaiting_answer',
+      asked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      closed_at TIMESTAMPTZ,
+      CONSTRAINT interview_questions_sequence_check CHECK (sequence > 0),
+      CONSTRAINT interview_questions_kind_check CHECK (kind IN ('main', 'follow_up')),
+      CONSTRAINT interview_questions_status_check CHECK (status IN ('awaiting_answer', 'answered', 'skipped', 'abandoned')),
+      CONSTRAINT interview_questions_evidence_check CHECK (jsonb_typeof(resume_evidence_ids) = 'array')
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_questions_sequence
+    ON interview_questions(interview_id, sequence)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_questions_source_run
+    ON interview_questions(source_interview_run_id)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_questions_one_awaiting
+    ON interview_questions(interview_id)
+    WHERE status = 'awaiting_answer'
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_answers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      question_id UUID NOT NULL REFERENCES interview_questions(id) ON DELETE RESTRICT,
+      submission_key TEXT NOT NULL,
+      submission_request_hash TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      analysis_json JSONB,
+      analysis_run_id UUID REFERENCES interview_agent_runs(id) ON DELETE SET NULL,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT interview_answers_status_check CHECK (status IN ('answered', 'skipped')),
+      CONSTRAINT interview_answers_content_check CHECK (
+        (status = 'answered' AND length(btrim(content)) > 0)
+        OR (status = 'skipped' AND content = '')
+      )
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_answers_question
+    ON interview_answers(question_id)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_answers_submission_key
+    ON interview_answers(interview_id, submission_key)
+  `;
+  await sql.unsafe(`
+    ALTER TABLE interview_questions
+      DROP CONSTRAINT IF EXISTS interview_questions_source_interview_run_id_fkey;
+    ALTER TABLE interview_questions
+      ADD CONSTRAINT interview_questions_source_interview_run_id_fkey
+      FOREIGN KEY (source_interview_run_id) REFERENCES interview_agent_runs(id) ON DELETE RESTRICT;
+    ALTER TABLE interview_answers
+      DROP CONSTRAINT IF EXISTS interview_answers_question_id_fkey;
+    ALTER TABLE interview_answers
+      ADD CONSTRAINT interview_answers_question_id_fkey
+      FOREIGN KEY (question_id) REFERENCES interview_questions(id) ON DELETE RESTRICT;
+    ALTER TABLE interview_agent_runs
+      DROP CONSTRAINT IF EXISTS interview_agent_runs_trigger_answer_fk;
+    ALTER TABLE interview_agent_runs
+      ADD CONSTRAINT interview_agent_runs_trigger_answer_fk
+      FOREIGN KEY (trigger_answer_id) REFERENCES interview_answers(id) ON DELETE RESTRICT;
+  `);
   await sql`
     CREATE OR REPLACE VIEW ai_slow_operations AS
     SELECT
