@@ -1,18 +1,12 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { useRouter } from "next/navigation";
 import { FilePlus2, Loader2, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n/context";
-import {
-  defaultInterviewConfigV2,
-  type InterviewConfigV2,
-} from "@/lib/interview/settings";
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
 import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
-import { InterviewSettingsDialog } from "@/components/dashboard/interview-settings-dialog";
-import { InterviewHistoryPanel } from "@/components/dashboard/interview-history-panel";
 import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
 import type { Resume } from "@/components/dashboard/types";
@@ -34,7 +28,6 @@ const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
 };
 
 export default function DashboardPage() {
-  const router = useRouter();
   const { locale, t } = useTranslation();
   const [currentUser, setCurrentUser] = useState<UserAvatarMenuUser | null>(
     null,
@@ -69,14 +62,6 @@ export default function DashboardPage() {
   const [previewMode, setPreviewMode] = useState<"parsed" | "original">(
     "parsed",
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [draftInterviewConfig, setDraftInterviewConfig] =
-    useState<InterviewConfigV2>(defaultInterviewConfigV2);
-  const [interviewConfigByResumeId, setInterviewConfigByResumeId] = useState<
-    Record<string, InterviewConfigV2>
-  >({});
-  const [savingInterviewSettings, setSavingInterviewSettings] = useState(false);
-  const [creatingInterview, setCreatingInterview] = useState(false);
   const [retryingVersionId, setRetryingVersionId] = useState<string | null>(
     null,
   );
@@ -86,7 +71,6 @@ export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const interviewCreationRef = useRef<{ signature: string; key: string } | null>(null);
   const resumeGenerationRef = useRef<{ signature: string; key: string } | null>(
     null,
   );
@@ -97,13 +81,6 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = (await res.json()) as Resume[];
         setResumes(data);
-        const persistedConfigMap: Record<string, InterviewConfigV2> = {};
-        for (const resume of data) {
-          if (resume.interviewSettings?.configVersion === 2) {
-            persistedConfigMap[resume.id] = resume.interviewSettings;
-          }
-        }
-        setInterviewConfigByResumeId(persistedConfigMap);
         const hasSelectedResume = selectedResumeId
           ? data.some((resume: Resume) => resume.id === selectedResumeId)
           : false;
@@ -304,13 +281,6 @@ export default function DashboardPage() {
         next.delete(resumeId);
         return next;
       });
-      setInterviewConfigByResumeId((prev) => {
-        if (!(resumeId in prev)) return prev;
-        const next = { ...prev };
-        delete next[resumeId];
-        return next;
-      });
-
       await fetchResumes();
     } catch (e) {
       console.error("Failed to delete resume:", e);
@@ -321,85 +291,8 @@ export default function DashboardPage() {
     }
   };
 
-  const openSettingsDialog = () => {
-    if (!selectedResumeId) return;
-    setDraftInterviewConfig(
-      interviewConfigByResumeId[selectedResumeId] ?? defaultInterviewConfigV2,
-    );
-    setSettingsOpen(true);
-  };
-
-  const handleSaveInterviewSettings = async () => {
-    if (!selectedResumeId) return;
-    setSavingInterviewSettings(true);
-    try {
-      const res = await fetch(`/api/resumes/${selectedResumeId}/settings`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftInterviewConfig),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.interviewSettings) {
-        setErrorAlertMessage(data?.error ?? "Failed to save interview settings.");
-        return;
-      }
-
-      setInterviewConfigByResumeId((prev) => ({
-        ...prev,
-        [selectedResumeId]: data.interviewSettings as InterviewConfigV2,
-      }));
-      setSettingsOpen(false);
-    } catch (e) {
-      console.error("Failed to save interview settings:", e);
-      setErrorAlertMessage("Failed to save interview settings. Please try again.");
-    } finally {
-      setSavingInterviewSettings(false);
-    }
-  };
-
-  const selectedInterviewConfig = selectedResumeId
-    ? (interviewConfigByResumeId[selectedResumeId] ?? null)
-    : null;
-
-  const handleStartInterview = async () => {
-    if (!selectedVersion || !selectedInterviewConfig || creatingInterview)
-      return;
-
-    const signature = JSON.stringify({
-      resumeVersionId: selectedVersion.id,
-      ...selectedInterviewConfig,
-    });
-    if (interviewCreationRef.current?.signature !== signature) {
-      interviewCreationRef.current = { signature, key: crypto.randomUUID() };
-    }
-    setCreatingInterview(true);
-    try {
-      const res = await fetch("/api/interviews", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          idempotencyKey: interviewCreationRef.current.key,
-          configVersion: 2,
-          language: selectedInterviewConfig.language,
-          persona: selectedInterviewConfig.persona,
-          preference: selectedInterviewConfig.preference,
-          preferenceTags: selectedInterviewConfig.preferenceTags,
-          resumeVersionId: selectedVersion.id,
-        }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) {
-        setErrorAlertMessage(data?.error ?? "Failed to create interview.");
-        return;
-      }
-      interviewCreationRef.current = null;
-      router.push(`/interviews/${data.interviewId}/room`);
-    } catch (e) {
-      console.error("Failed to start interview:", e);
-      setErrorAlertMessage("Failed to create interview. Please try again.");
-    } finally {
-      setCreatingInterview(false);
-    }
+  const handleStartInterview = () => {
+    toast.info(t.dashboard.interviewMaintenance);
   };
 
   const handleRetryParse = async () => {
@@ -475,8 +368,6 @@ export default function DashboardPage() {
   const selectedVersion = selectedResume?.versions.find(
     (v) => v.id === selectedVersionId,
   );
-  const showInterviewHistoryPanel =
-    (selectedVersion?.interviews.length ?? 0) > 0;
   const parsed = selectedVersion?.parsedData;
   const hasParsedPreview =
     selectedVersion?.parseStatus === "parsed" && Boolean(parsed);
@@ -549,9 +440,6 @@ export default function DashboardPage() {
               retryingParse={retryingVersionId === selectedVersion.id}
               onPreviewModeChange={setPreviewMode}
               onRetryParse={handleRetryParse}
-              selectedInterviewConfig={selectedInterviewConfig}
-              creatingInterview={creatingInterview}
-              onOpenSettings={openSettingsDialog}
               onStartInterview={handleStartInterview}
               editing={editing}
               savingEdit={savingEdit}
@@ -588,27 +476,7 @@ export default function DashboardPage() {
             </div>
           )}
         </main>
-
-        {showInterviewHistoryPanel ? (
-          <InterviewHistoryPanel
-            selectedVersion={selectedVersion ?? null}
-          />
-        ) : null}
       </div>
-
-      <InterviewSettingsDialog
-        open={settingsOpen}
-        saving={savingInterviewSettings}
-        value={draftInterviewConfig}
-        onOpenChange={(open) => {
-          if (!savingInterviewSettings) {
-            setSettingsOpen(open);
-          }
-        }}
-        onChange={setDraftInterviewConfig}
-        onCancel={() => setSettingsOpen(false)}
-        onSave={handleSaveInterviewSettings}
-      />
 
       <NewResumeDialog
         open={uploadOpen}

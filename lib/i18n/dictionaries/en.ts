@@ -193,7 +193,7 @@ export const en = {
       "This resume was generated from information you provided and has no original file.",
     deleteResume: "Delete Resume?",
     deleteResumeConfirm:
-      'Are you sure you want to delete "{title}"? This will also delete its versions and related interviews. This action cannot be undone.',
+      'Are you sure you want to delete "{title}"? This will also delete all of its versions. This action cannot be undone.',
     deleteResumeGeneric: "This action cannot be undone.",
     parsedSuccessfully: "Parsed Successfully",
     parsingFailed: "Parsing Failed",
@@ -212,6 +212,7 @@ export const en = {
     resumeNotReady: "Resume Not Ready for Interview",
     startingInterview: "Starting Interview...",
     startInterview: "Start Interview with this Version",
+    interviewMaintenance: "The interview system is under maintenance. Please try again later.",
     configureFirst: "Configure Settings First",
     interviewHistory: "Interview History",
     noInterviews: "No interviews yet",

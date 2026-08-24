@@ -187,7 +187,7 @@ export const zh = {
       "此简历由 AI 根据你提供的信息生成，没有原始文件。",
     deleteResume: "删除简历？",
     deleteResumeConfirm:
-      '确定要删除"{title}"吗？这将同时删除其版本和相关面试记录。此操作不可撤销。',
+      '确定要删除"{title}"吗？这将同时删除其全部版本。此操作不可撤销。',
     deleteResumeGeneric: "此操作不可撤销。",
     parsedSuccessfully: "解析成功",
     parsingFailed: "解析失败",
@@ -204,6 +204,7 @@ export const zh = {
     resumeNotReady: "简历未就绪",
     startingInterview: "正在创建面试...",
     startInterview: "使用此版本开始面试",
+    interviewMaintenance: "面试系统正在维护中，请稍后再试。",
     configureFirst: "请先配置面试设置",
     interviewHistory: "面试记录",
     noInterviews: "暂无面试记录",

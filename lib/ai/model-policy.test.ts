@@ -20,14 +20,6 @@ const validEnv = {
 const expectedTiers: Record<AITask, AIModelTier> = {
   "resume.parse": "fast",
   "resume.generate": "fast",
-  "interview.agent": "fast",
-  "context.compact": "quality",
-  "question.generate": "fast",
-  "question.follow-up": "fast",
-  "answer.score": "quality",
-  "report.generate": "quality",
-  "coach.generate": "quality",
-  "coach.evaluate": "quality",
 };
 
 test("maps every task to its fixed first-phase tier", () => {
@@ -43,17 +35,6 @@ test("builds fast candidates in escalation order", () => {
     candidates: [
       { model: "deepseek/fast", credentialTier: "fast" },
       { model: "deepseek/fast-backup", credentialTier: "fast" },
-      { model: "zhipu/quality", credentialTier: "quality" },
-      { model: "zhipu/quality-backup", credentialTier: "quality" },
-    ],
-  });
-});
-
-test("quality candidates never contain fast models", () => {
-  const policy = loadModelPolicy(validEnv);
-  assert.deepEqual(resolveModelCandidates("answer.score", policy), {
-    tier: "quality",
-    candidates: [
       { model: "zhipu/quality", credentialTier: "quality" },
       { model: "zhipu/quality-backup", credentialTier: "quality" },
     ],
@@ -155,7 +136,7 @@ test("trims optional fallback values", () => {
     AI_MODEL_FAST_FALLBACK: " ",
     AI_APPROVED_MODELS: "deepseek/fast,zhipu/quality",
   });
-  assert.deepEqual(resolveModelCandidates("question.generate", policy), {
+  assert.deepEqual(resolveModelCandidates("resume.generate", policy), {
     tier: "fast",
     candidates: [
       { model: "deepseek/fast", credentialTier: "fast" },

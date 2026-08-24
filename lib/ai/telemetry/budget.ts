@@ -4,8 +4,7 @@ export type BudgetMode = "off" | "observe" | "enforce";
 
 export type BudgetPolicy = Readonly<{
   mode: BudgetMode;
-  agentRunTokenLimit: number;
-  completionTokenLimit: number;
+  taskTokenLimit: number;
 }>;
 
 export type BudgetDecision =
@@ -35,8 +34,7 @@ export function loadAIResourcePolicy(
       .parse(env.AI_BUDGET_MODE?.trim() || "observe");
     return {
       mode,
-      agentRunTokenLimit: parseLimit(env.AI_AGENT_RUN_TOKEN_LIMIT, 500_000),
-      completionTokenLimit: parseLimit(env.AI_COMPLETION_TOKEN_LIMIT, 1_500_000),
+      taskTokenLimit: parseLimit(env.AI_TASK_TOKEN_LIMIT, 500_000),
     };
   } catch {
     throw new Error("AI resource policy is invalid");

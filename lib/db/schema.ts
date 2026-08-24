@@ -1,10 +1,16 @@
 import { sql } from "drizzle-orm";
-import { bigint, check, pgTable, text, integer, timestamp, uuid, jsonb, numeric, unique, uniqueIndex, type AnyPgColumn } from "drizzle-orm/pg-core";
-import type {
-  OpeningStage,
-  QuestionPurpose,
-} from "@/lib/interview/agent/domain/opening-role";
-import type { StoredInterviewConfig } from "@/lib/interview/settings";
+import {
+  bigint,
+  check,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  unique,
+  uniqueIndex,
+  uuid,
+} from "drizzle-orm/pg-core";
 import type { ResumeSourceType } from "@/lib/resume/types";
 
 export const users = pgTable("users", {
@@ -25,9 +31,7 @@ export const oauthAccounts = pgTable("oauth_accounts", {
   provider: text("provider").notNull(),
   providerAccountId: text("provider_account_id").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.provider, table.providerAccountId),
-]);
+}, (table) => [unique().on(table.provider, table.providerAccountId)]);
 
 export const resumes = pgTable("resumes", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -35,7 +39,6 @@ export const resumes = pgTable("resumes", {
   title: text("title").notNull(),
   currentVersionId: uuid("current_version_id"),
   creationIdempotencyKey: text("creation_idempotency_key"),
-  interviewSettings: jsonb("interview_settings").$type<StoredInterviewConfig>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -70,322 +73,6 @@ export const resumeVersions = pgTable("resume_versions", {
   ),
 ]);
 
-export const interviews = pgTable("interviews", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  creationIdempotencyKey: text("creation_idempotency_key"),
-  creationOwnerUserId: uuid("creation_owner_user_id")
-    .references(() => users.id, { onDelete: "set null" }),
-  resumeVersionId: uuid("resume_version_id")
-    .references(() => resumeVersions.id, { onDelete: "set null" }),
-  level: text("level").notNull(),
-  type: text("type").notNull(),
-  language: text("language").notNull(),
-  questionCount: integer("question_count").notNull(),
-  persona: text("persona").notNull(),
-  configVersion: integer("config_version").notNull().default(1),
-  preference: text("preference"),
-  preferenceTags: jsonb("preference_tags").$type<string[]>(),
-  targetRole: text("target_role"),
-  targetRoleStatus: text("target_role_status"),
-  targetRoleConfidence: text("target_role_confidence"),
-  targetRoleSourceIds: jsonb("target_role_source_ids").$type<string[]>(),
-  openingStage: text("opening_stage")
-    .$type<OpeningStage>()
-    .notNull()
-    .default("role_resolution"),
-  targetRoleConfirmationMessageId: uuid("target_role_confirmation_message_id")
-    .references((): AnyPgColumn => interviewMessages.id, {
-      onDelete: "set null",
-    }),
-  candidateRoundCount: integer("candidate_round_count").notNull().default(0),
-  compactionFailureCount: integer("compaction_failure_count").notNull().default(0),
-  status: text("status").notNull().default("active"),
-  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-  overallScore: integer("overall_score"),
-  reportJson: jsonb("report_json"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.creationOwnerUserId, table.creationIdempotencyKey),
-  check(
-    "interviews_opening_stage_check",
-    sql`${table.openingStage} IN ('role_resolution', 'awaiting_role_clarification', 'formal_interview')`,
-  ),
-  check(
-    "interviews_target_role_status_check",
-    sql`${table.targetRoleStatus} IS NULL OR ${table.targetRoleStatus} IN ('needs_clarification', 'inferred', 'confirmed')`,
-  ),
-  check(
-    "interviews_target_role_confidence_check",
-    sql`${table.targetRoleConfidence} IS NULL OR ${table.targetRoleConfidence} IN ('low', 'medium', 'high')`,
-  ),
-]);
-
-export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .unique()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
-  resumeTitle: text("resume_title").notNull(),
-  versionNumber: integer("version_number").notNull(),
-  sourceType: text("source_type").$type<ResumeSourceType>().notNull().default("uploaded"),
-  originalFilename: text("original_filename"),
-  storedPath: text("stored_path"),
-  mimeType: text("mime_type"),
-  fileSize: integer("file_size"),
-  extractedText: text("extracted_text"),
-  parsedJson: jsonb("parsed_json"),
-  parseStatus: text("parse_status").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  check("interview_resume_snapshots_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
-  check(
-    "interview_resume_snapshots_generated_attachment_check",
-    sql`${table.sourceType} <> 'generated' OR (${table.originalFilename} IS NULL AND ${table.storedPath} IS NULL AND ${table.mimeType} IS NULL AND ${table.fileSize} IS NULL)`,
-  ),
-]);
-
-export const interviewAgentRuns = pgTable("interview_agent_runs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  idempotencyKey: text("idempotency_key").notNull(),
-  status: text("status").notNull().default("running"),
-  phase: text("phase").notNull().default("accepted"),
-  exitReason: text("exit_reason"),
-  model: text("model"),
-  streamMode: text("stream_mode").notNull().default("non_streaming"),
-  turnCount: integer("turn_count").notNull().default(0),
-  inputTokens: integer("input_tokens").notNull().default(0),
-  outputTokens: integer("output_tokens").notNull().default(0),
-  cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
-  cacheWriteTokens: integer("cache_write_tokens").notNull().default(0),
-  cacheMetricsAvailable: integer("cache_metrics_available").notNull().default(0),
-  leaseOwner: text("lease_owner"),
-  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
-  leaseGeneration: integer("lease_generation").notNull().default(0),
-  attemptId: text("attempt_id"),
-  attemptNumber: integer("attempt_number").notNull().default(0),
-  provisionalMessageId: text("provisional_message_id"),
-  lastProviderProgressAt: timestamp("last_provider_progress_at", { withTimezone: true }),
-  resumeCount: integer("resume_count").notNull().default(0),
-  nextResumeAt: timestamp("next_resume_at", { withTimezone: true }),
-  promptTemplateVersion: text("prompt_template_version"),
-  cacheEpoch: integer("cache_epoch").notNull().default(0),
-  contextInputTokens: integer("context_input_tokens").notNull().default(0),
-  compactionInputTokens: integer("compaction_input_tokens").notNull().default(0),
-  compactionOutputTokens: integer("compaction_output_tokens").notNull().default(0),
-  lastEventSequence: integer("last_event_sequence").notNull().default(0),
-  checkpointJson: jsonb("checkpoint_json"),
-  authorizedProposalJson: jsonb("authorized_proposal_json"),
-  authorizedProposalHash: text("authorized_proposal_hash"),
-  proposalAuthorizedAt: timestamp("proposal_authorized_at", { withTimezone: true }),
-  responseStartedAt: timestamp("response_started_at", { withTimezone: true }),
-  triggerJson: jsonb("trigger_json"),
-  errorJson: jsonb("error_json"),
-  startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.interviewId, table.idempotencyKey),
-]);
-
-export const interviewAgentEvents = pgTable("interview_agent_events", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  runId: uuid("run_id")
-    .notNull()
-    .references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
-  sequence: integer("sequence").notNull(),
-  dedupeKey: text("dedupe_key"),
-  attemptId: text("attempt_id"),
-  logicalMessageId: text("logical_message_id"),
-  visibility: text("visibility").notNull().default("internal"),
-  type: text("type").notNull(),
-  payload: jsonb("payload"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.runId, table.sequence),
-  unique().on(table.runId, table.dedupeKey),
-]);
-
-export const interviewAgentToolCommits = pgTable("interview_agent_tool_commits", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  runId: uuid("run_id")
-    .notNull()
-    .references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
-  toolCallId: text("tool_call_id").notNull(),
-  toolName: text("tool_name").notNull(),
-  resultJson: jsonb("result_json").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.runId, table.toolCallId),
-]);
-
-export const interviewMessages = pgTable("interview_messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  runId: uuid("run_id").references(() => interviewAgentRuns.id, { onDelete: "set null" }),
-  sequence: integer("sequence").notNull(),
-  idempotencyKey: text("idempotency_key"),
-  role: text("role").notNull(),
-  kind: text("kind").notNull(),
-  content: text("content").notNull(),
-  questionId: uuid("question_id").references(() => interviewQuestions.id, { onDelete: "set null" }),
-  metadata: jsonb("metadata"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.interviewId, table.sequence),
-  unique().on(table.interviewId, table.idempotencyKey),
-]);
-
-export const interviewCoverage = pgTable("interview_coverage", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  category: text("category").notNull(),
-  topic: text("topic").notNull(),
-  resumeEvidenceIds: jsonb("resume_evidence_ids").$type<string[]>().notNull(),
-  questionCount: integer("question_count").notNull().default(0),
-  depth: integer("depth").notNull().default(0),
-  evidenceQuality: integer("evidence_quality").notNull().default(0),
-  status: text("status").notNull().default("uncovered"),
-  lastAssessmentId: uuid("last_assessment_id"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.interviewId, table.category, table.topic),
-]);
-
-export const interviewShares = pgTable("interview_shares", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .unique()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  nonce: text("nonce").notNull(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  revokedAt: timestamp("revoked_at", { withTimezone: true }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const interviewContextSnapshots = pgTable("interview_context_snapshots", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  cacheEpoch: integer("cache_epoch").notNull(),
-  throughMessageSequence: integer("through_message_sequence").notNull(),
-  tokenEstimate: integer("token_estimate").notNull(),
-  compactionLevel: integer("compaction_level").notNull(),
-  summary: text("summary").notNull(),
-  snapshotJson: jsonb("snapshot_json").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.interviewId, table.cacheEpoch),
-]);
-
-export const interviewQuestions = pgTable("interview_questions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id")
-    .notNull()
-    .references(() => interviews.id, { onDelete: "cascade" }),
-  questionIndex: integer("question_index").notNull(),
-  purpose: text("purpose")
-    .$type<QuestionPurpose>()
-    .notNull()
-    .default("formal"),
-  questionType: text("question_type"),
-  topic: text("topic"),
-  question: text("question").notNull(),
-  tip: text("tip"),
-  askedAt: timestamp("asked_at", { withTimezone: true }).defaultNow(),
-  answerText: text("answer_text"),
-  answeredAt: timestamp("answered_at", { withTimezone: true }),
-  feedbackJson: jsonb("feedback_json"),
-  scoreStatus: text("score_status").notNull().default("pending"),
-  scoreAttemptCount: integer("score_attempt_count").notNull().default(0),
-  scoreErrorJson: jsonb("score_error_json"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.interviewId, table.questionIndex),
-  check(
-    "interview_questions_purpose_check",
-    sql`${table.purpose} IN ('opening_clarification', 'formal')`,
-  ),
-  check(
-    "interview_questions_purpose_category_check",
-    sql`(${table.purpose} = 'formal' AND ${table.questionType} IS NOT NULL) OR (${table.purpose} = 'opening_clarification' AND ${table.questionType} IS NULL)`,
-  ),
-]);
-
-export const questionScores = pgTable("question_scores", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  questionId: uuid("question_id")
-    .notNull()
-    .unique()
-    .references(() => interviewQuestions.id, { onDelete: "cascade" }),
-  understanding: integer("understanding").notNull(),
-  expression: integer("expression").notNull(),
-  logic: integer("logic").notNull(),
-  depth: integer("depth").notNull(),
-  authenticity: integer("authenticity").notNull(),
-  reflection: integer("reflection").notNull(),
-  overall: numeric("overall", { precision: 3, scale: 1, mode: "number" }).notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const interviewAnswerAssessments = pgTable("interview_answer_assessments", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id").notNull().references(() => interviews.id, { onDelete: "cascade" }),
-  questionId: uuid("question_id").notNull().references(() => interviewQuestions.id, { onDelete: "cascade" }),
-  answerMessageId: uuid("answer_message_id").notNull().unique().references(() => interviewMessages.id, { onDelete: "cascade" }),
-  completeness: text("completeness").notNull(),
-  specificity: text("specificity").notNull(),
-  evidenceStrength: text("evidence_strength").notNull(),
-  reflectionDepth: text("reflection_depth").notNull(),
-  followUpNeeded: integer("follow_up_needed").notNull(),
-  missingPoints: jsonb("missing_points").$type<string[]>().notNull(),
-  extractedEvidence: jsonb("extracted_evidence").$type<string[]>().notNull(),
-  publicSummary: text("public_summary").notNull(),
-  model: text("model"),
-  inputTokens: integer("input_tokens").notNull().default(0),
-  outputTokens: integer("output_tokens").notNull().default(0),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const interviewAnswerAssessmentClaims = pgTable("interview_answer_assessment_claims", {
-  answerMessageId: uuid("answer_message_id").primaryKey().references(() => interviewMessages.id, { onDelete: "cascade" }),
-  runId: uuid("run_id").notNull().references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
-  leaseOwner: text("lease_owner").notNull(),
-  leaseGeneration: integer("lease_generation").notNull(),
-  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }).notNull(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-});
-
-export const interviewCompletionJobs = pgTable("interview_completion_jobs", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  interviewId: uuid("interview_id").notNull().unique().references(() => interviews.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("pending"),
-  leaseOwner: text("lease_owner"),
-  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
-  leaseGeneration: integer("lease_generation").notNull().default(0),
-  attemptCount: integer("attempt_count").notNull().default(0),
-  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-  errorJson: jsonb("error_json"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-});
-
 export const aiTaskRuns = pgTable("ai_task_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   operationKey: text("operation_key").notNull(),
@@ -402,23 +89,19 @@ export const aiTaskRuns = pgTable("ai_task_runs", {
   usageUnavailableAttempts: integer("usage_unavailable_attempts").notNull().default(0),
   estimatedCostMicros: bigint("estimated_cost_micros", { mode: "number" }),
   unpricedAttempts: integer("unpriced_attempts").notNull().default(0),
-  interviewId: uuid("interview_id").references(() => interviews.id, { onDelete: "cascade" }),
-  agentRunId: uuid("agent_run_id").references(() => interviewAgentRuns.id, { onDelete: "cascade" }),
-  questionId: uuid("question_id").references(() => interviewQuestions.id, { onDelete: "cascade" }),
-  completionJobId: uuid("completion_job_id").references(() => interviewCompletionJobs.id, { onDelete: "cascade" }),
   promptTemplateVersion: text("prompt_template_version"),
   errorJson: jsonb("error_json"),
   startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  uniqueIndex("idx_ai_task_runs_operation_key").on(table.operationKey),
-]);
+}, (table) => [uniqueIndex("idx_ai_task_runs_operation_key").on(table.operationKey)]);
 
 export const aiTaskAttempts = pgTable("ai_task_attempts", {
   id: uuid("id").primaryKey().defaultRandom(),
-  taskRunId: uuid("task_run_id").notNull().references(() => aiTaskRuns.id, { onDelete: "cascade" }),
+  taskRunId: uuid("task_run_id")
+    .notNull()
+    .references(() => aiTaskRuns.id, { onDelete: "cascade" }),
   attemptNumber: integer("attempt_number").notNull(),
   provider: text("provider").notNull(),
   model: text("model").notNull(),
@@ -444,27 +127,3 @@ export const aiTaskAttempts = pgTable("ai_task_attempts", {
 }, (table) => [
   uniqueIndex("idx_ai_task_attempts_run_number").on(table.taskRunId, table.attemptNumber),
 ]);
-
-export const deepDiveSessions = pgTable("deep_dive_sessions", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  questionId: uuid("question_id")
-    .notNull()
-    .references(() => interviewQuestions.id, { onDelete: "cascade" }),
-  mode: text("mode").notNull(),
-  status: text("status").notNull().default("active"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-}, (table) => [
-  unique().on(table.questionId, table.mode),
-]);
-
-export const deepDiveMessages = pgTable("deep_dive_messages", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  sessionId: uuid("session_id")
-    .notNull()
-    .references(() => deepDiveSessions.id, { onDelete: "cascade" }),
-  role: text("role").notNull(),
-  content: text("content"),
-  payload: jsonb("payload"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});

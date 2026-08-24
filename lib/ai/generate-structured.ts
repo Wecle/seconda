@@ -17,7 +17,7 @@ import {
 } from "./provider-registry";
 import { createProductionAITelemetryLifecycle, type AITelemetryLifecycle } from "./telemetry/lifecycle";
 import type { AITaskTelemetryContext, AITaskUsage } from "./telemetry/types";
-import { normalizeModelUsage } from "@/lib/interview/agent/providers/usage-telemetry";
+import { normalizeModelUsage } from "./telemetry/usage";
 
 const REPAIR_INSTRUCTION = "上一轮输出未能通过结构化校验。请只返回符合既定 Schema 的严格 JSON，不要添加说明或 Markdown。";
 const REPAIR_OUTPUT_LIMIT = 4_000;

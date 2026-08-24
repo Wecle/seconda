@@ -22,8 +22,7 @@ test("accepts valid pricing and explicit resource budgets", () => {
   assert.doesNotThrow(() => register({
     ...validEnv,
     AI_BUDGET_MODE: "enforce",
-    AI_AGENT_RUN_TOKEN_LIMIT: "600000",
-    AI_COMPLETION_TOKEN_LIMIT: "1700000",
+    AI_TASK_TOKEN_LIMIT: "600000",
     AI_MODEL_PRICING_JSON: JSON.stringify({
       version: 1,
       models: {
@@ -42,7 +41,7 @@ test("rejects invalid resource budget modes and limits", () => {
     /AI resource policy is invalid/,
   );
   assert.throws(
-    () => register({ ...validEnv, AI_AGENT_RUN_TOKEN_LIMIT: "0" }),
+    () => register({ ...validEnv, AI_TASK_TOKEN_LIMIT: "0" }),
     /AI resource policy is invalid/,
   );
 });

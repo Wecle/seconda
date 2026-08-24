@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { del } from "@vercel/blob";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { resumes, resumeVersions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { deleteResumePreservingSnapshots } from "@/lib/interview/resume-snapshot";
 
 export async function DELETE(
   _request: NextRequest,
@@ -16,14 +17,20 @@ export async function DELETE(
 
     const { id } = await params;
 
-    const deletion = await deleteResumePreservingSnapshots(db, {
-      resumeId: id,
-      ownerUserId: userId,
+    const ownedResume = await db.query.resumes.findFirst({
+      where: and(eq(resumes.id, id), eq(resumes.userId, userId)),
     });
-
-    if (!deletion) {
+    if (!ownedResume) {
       return NextResponse.json({ error: "Resume not found" }, { status: 404 });
     }
+
+    const versions = await db
+      .select({ storedPath: resumeVersions.storedPath })
+      .from(resumeVersions)
+      .where(eq(resumeVersions.resumeId, id));
+    const deletion = versions.flatMap(({ storedPath }) => storedPath ? [storedPath] : []);
+
+    await db.delete(resumes).where(eq(resumes.id, id));
 
     if (deletion.length > 0) {
       try {

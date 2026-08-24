@@ -2,11 +2,7 @@ import type { AITask, AIModelTier, ModelProvider } from "../model-policy";
 
 export type AITaskTelemetryContext = {
   operationKey: string;
-  interviewId?: string;
-  agentRunId?: string;
-  questionId?: string;
-  completionJobId?: string;
-  budgetScope?: `agent_run:${string}` | `completion:${string}`;
+  budgetScope?: string;
   promptTemplateVersion?: string;
 };
 

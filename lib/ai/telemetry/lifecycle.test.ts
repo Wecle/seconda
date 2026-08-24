@@ -50,14 +50,14 @@ function repository(overrides: Partial<AITelemetryRepository> = {}) {
 
 const context = {
   operationKey: "lifecycle-test-operation",
-  budgetScope: "agent_run:00000000-0000-0000-0000-000000000001" as const,
+  budgetScope: "resume:00000000-0000-0000-0000-000000000001",
 };
 
 test("records a priced task and provider attempt without content fields", async () => {
   const repo = repository();
   const lifecycle = createAITelemetryLifecycle({
     repository: repo.value,
-    policy: { mode: "observe", agentRunTokenLimit: 123, completionTokenLimit: 456 },
+    policy: { mode: "observe", taskTokenLimit: 123 },
     pricing: {
       version: 1,
       models: {
@@ -69,7 +69,7 @@ test("records a priced task and provider attempt without content fields", async 
     },
     now: () => 10,
   });
-  const task = await lifecycle.startTask({ task: "interview.agent", context });
+  const task = await lifecycle.startTask({ task: "resume.parse", context });
   const attempt = await lifecycle.beforeAttempt({
     task,
     attemptNumber: 1,
@@ -94,7 +94,7 @@ test("records a priced task and provider attempt without content fields", async 
   assert.equal(repo.calls.starts.length, 1);
   assert.equal(repo.calls.attempts.length, 1);
   assert.equal(repo.calls.completions[0].estimatedCostMicros, 120);
-  assert.doesNotMatch(JSON.stringify(repo.calls), /prompt|response|answer|resume/i);
+  assert.doesNotMatch(JSON.stringify(repo.calls), /prompt|response|answer|candidate/i);
 });
 
 test("observe mode turns start persistence failures into no-op handles", async (t) => {
@@ -106,9 +106,9 @@ test("observe mode turns start persistence failures into no-op handles", async (
   });
   const lifecycle = createAITelemetryLifecycle({
     repository: repo.value,
-    policy: { mode: "observe", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "observe", taskTokenLimit: 10 },
   });
-  const task = await lifecycle.startTask({ task: "interview.agent", context });
+  const task = await lifecycle.startTask({ task: "resume.parse", context });
   const attempt = await lifecycle.beforeAttempt({
     task,
     attemptNumber: 1,
@@ -123,7 +123,7 @@ test("observe mode turns start persistence failures into no-op handles", async (
   assert.equal(logged[0], "AI telemetry operation failed");
   assert.deepEqual(logged[1], {
     operation: "start_task",
-    task: "interview.agent",
+    task: "resume.parse",
     category: "unknown",
   });
 });
@@ -140,7 +140,7 @@ test("attempt and task completion persistence failures never replace business er
   });
   const lifecycle = createAITelemetryLifecycle({
     repository: repo.value,
-    policy: { mode: "observe", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "observe", taskTokenLimit: 10 },
   });
   const task = await lifecycle.startTask({ task: "resume.parse", context: {
     operationKey: "failure-isolation",
@@ -175,10 +175,10 @@ test("enforce mode fails closed when task start or budget read is unavailable", 
   });
   const startLifecycle = createAITelemetryLifecycle({
     repository: unavailableStart.value,
-    policy: { mode: "enforce", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "enforce", taskTokenLimit: 10 },
   });
   await assert.rejects(
-    startLifecycle.startTask({ task: "interview.agent", context }),
+    startLifecycle.startTask({ task: "resume.parse", context }),
     (error) => error instanceof AIResourceBudgetError
       && error.code === "AI_RESOURCE_BUDGET_UNAVAILABLE",
   );
@@ -190,9 +190,9 @@ test("enforce mode fails closed when task start or budget read is unavailable", 
   });
   const attemptLifecycle = createAITelemetryLifecycle({
     repository: unavailableBudget.value,
-    policy: { mode: "enforce", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "enforce", taskTokenLimit: 10 },
   });
-  const task = await attemptLifecycle.startTask({ task: "interview.agent", context });
+  const task = await attemptLifecycle.startTask({ task: "resume.parse", context });
   await assert.rejects(
     attemptLifecycle.beforeAttempt({
       task,
@@ -221,9 +221,9 @@ test("enforce mode blocks the next attempt after terminal Usage persistence fail
     });
     const lifecycle = createAITelemetryLifecycle({
       repository: repo.value,
-      policy: { mode: "enforce", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+      policy: { mode: "enforce", taskTokenLimit: 10 },
     });
-    const task = await lifecycle.startTask({ task: "interview.agent", context });
+    const task = await lifecycle.startTask({ task: "resume.parse", context });
     const attempt = await lifecycle.beforeAttempt({
       task,
       attemptNumber: 1,
@@ -270,9 +270,9 @@ test("budget rejection exposes only the stable exceeded error code", async () =>
   });
   const lifecycle = createAITelemetryLifecycle({
     repository: repo.value,
-    policy: { mode: "enforce", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "enforce", taskTokenLimit: 10 },
   });
-  const task = await lifecycle.startTask({ task: "interview.agent", context });
+  const task = await lifecycle.startTask({ task: "resume.parse", context });
   await assert.rejects(
     lifecycle.beforeAttempt({
       task,
@@ -290,7 +290,7 @@ test("off mode records telemetry while disabling budget decisions", async () => 
   const repo = repository();
   const lifecycle = createAITelemetryLifecycle({
     repository: repo.value,
-    policy: { mode: "off", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+    policy: { mode: "off", taskTokenLimit: 10 },
   });
   const task = await lifecycle.startTask({ task: "resume.generate", context: {
     operationKey: "off-mode",

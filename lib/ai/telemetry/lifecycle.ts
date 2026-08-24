@@ -84,13 +84,7 @@ function tokenLimitFor(
   context: AITaskTelemetryContext,
   policy: BudgetPolicy,
 ) {
-  if (context.budgetScope?.startsWith("agent_run:")) {
-    return policy.agentRunTokenLimit;
-  }
-  if (context.budgetScope?.startsWith("completion:")) {
-    return policy.completionTokenLimit;
-  }
-  return null;
+  return context.budgetScope ? policy.taskTokenLimit : null;
 }
 
 function noOpTask(
@@ -225,7 +219,7 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         });
       } catch (error) {
         const owner = attemptOwners.get(input.attempt.id);
-        logFailure("complete_attempt", owner?.task ?? "interview.agent", error);
+        logFailure("complete_attempt", owner?.task ?? "resume.parse", error);
         if (owner?.budgetMode === "enforce") unavailableBudgetTasks.add(owner.taskRunId);
       } finally {
         attemptOwners.delete(input.attempt.id);
@@ -250,7 +244,7 @@ export function createAITelemetryLifecycle(options: LifecycleOptions): AITelemet
         });
       } catch (error) {
         const owner = attemptOwners.get(input.attempt.id);
-        logFailure("fail_attempt", owner?.task ?? "interview.agent", error);
+        logFailure("fail_attempt", owner?.task ?? "resume.parse", error);
         if (owner?.budgetMode === "enforce") unavailableBudgetTasks.add(owner.taskRunId);
       } finally {
         attemptOwners.delete(input.attempt.id);

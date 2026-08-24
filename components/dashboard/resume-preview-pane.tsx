@@ -8,12 +8,10 @@ import {
   FileText,
   Loader2,
   Pencil,
-  Settings,
   Sparkles,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import type { ParsedResume } from "@/lib/resume/types";
-import type { InterviewConfigV2 } from "@/lib/interview/settings";
 import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
 import { ParsedResumeEditor } from "@/components/resume/parsed-resume-editor";
 import { Badge } from "@/components/ui/badge";
@@ -53,9 +51,6 @@ interface ResumePreviewPaneProps {
   retryingParse: boolean;
   onPreviewModeChange: (mode: "parsed" | "original") => void;
   onRetryParse: () => void;
-  selectedInterviewConfig: InterviewConfigV2 | null;
-  creatingInterview: boolean;
-  onOpenSettings: () => void;
   onStartInterview: () => void;
   editing: boolean;
   savingEdit: boolean;
@@ -75,9 +70,6 @@ export function ResumePreviewPane({
   retryingParse,
   onPreviewModeChange,
   onRetryParse,
-  selectedInterviewConfig,
-  creatingInterview,
-  onOpenSettings,
   onStartInterview,
   editing,
   savingEdit,
@@ -287,30 +279,11 @@ export function ResumePreviewPane({
           </span>
         </div>
         <div className="flex items-center gap-2">
-          {selectedInterviewConfig && (
-            <Badge variant="secondary" className="h-8">
-              {t.dashboard.settingsSaved}
-            </Badge>
-          )}
-          <Button variant="outline" size="icon-sm" onClick={onOpenSettings}>
-            <Settings className="size-4" />
-          </Button>
           <Button
             size="sm"
-            disabled={
-              selectedVersion.parseStatus !== "parsed" ||
-              !selectedInterviewConfig ||
-              creatingInterview
-            }
             onClick={onStartInterview}
           >
-            {selectedVersion.parseStatus !== "parsed"
-              ? t.dashboard.resumeNotReady
-              : creatingInterview
-                ? t.dashboard.startingInterview
-                : selectedInterviewConfig
-                  ? t.dashboard.startInterview
-                  : t.dashboard.configureFirst}
+            {t.dashboard.startInterview}
           </Button>
         </div>
       </div>

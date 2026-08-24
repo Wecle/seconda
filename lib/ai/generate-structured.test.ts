@@ -141,26 +141,20 @@ test("forwards only caller-provided durable correlation identifiers", async () =
     invoke: async () => ({ output: { value: "secret output" }, usage }),
   });
   await generator.generateStructured({
-    task: "answer.score",
+    task: "resume.parse",
     schema,
     system: "secret system",
     prompt: "secret answer",
     telemetry: {
-      operationKey: "answer.score:job-1:question-1",
-      interviewId: "interview-1",
-      questionId: "question-1",
-      completionJobId: "job-1",
-      budgetScope: "completion:job-1",
+      operationKey: "resume.parse:fixture-id",
+      budgetScope: "resume:fixture-id",
     },
   });
   assert.deepEqual(telemetry.events.tasks[0], {
-    task: "answer.score",
+    task: "resume.parse",
     context: {
-      operationKey: "answer.score:job-1:question-1",
-      interviewId: "interview-1",
-      questionId: "question-1",
-      completionJobId: "job-1",
-      budgetScope: "completion:job-1",
+      operationKey: "resume.parse:fixture-id",
+      budgetScope: "resume:fixture-id",
     },
   });
   assert.doesNotMatch(JSON.stringify(telemetry.events.tasks[0]), /secret/);
@@ -260,7 +254,7 @@ test("observe-mode telemetry persistence failure does not change structured outp
     policy,
     telemetry: createAITelemetryLifecycle({
       repository,
-      policy: { mode: "observe", agentRunTokenLimit: 10, completionTokenLimit: 10 },
+      policy: { mode: "observe", taskTokenLimit: 10 },
     }),
     invoke: async () => ({ output: { value: "ok" }, usage }),
   });
@@ -287,7 +281,7 @@ test("stream telemetry records first partial latency and final Usage", async () 
     }),
   });
   const result = generator.streamStructured({
-    task: "question.generate",
+    task: "resume.generate",
     schema,
     system: "system",
     prompt: "prompt",
@@ -341,7 +335,7 @@ test("closing a structured stream after one partial fails its attempt, task, and
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate",
+    task: "resume.generate",
     schema,
     system: "system",
     prompt: "prompt",
@@ -385,7 +379,7 @@ test("uses fast candidates in policy order, tier keys, and disabled SDK retries"
   ]);
 });
 
-test("uses only quality candidates for scoring", async () => {
+test("uses the first fast candidate when it succeeds", async () => {
   const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
@@ -394,8 +388,8 @@ test("uses only quality candidates for scoring", async () => {
       return { output: { value: "ok" }, usage };
     },
   });
-  await generator.generateStructured({ task: "answer.score", schema, system: "system", prompt: "prompt" });
-  assert.deepEqual(calls, ["zhipu/quality"]);
+  await generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt" });
+  assert.deepEqual(calls, ["deepseek/fast"]);
 });
 
 test("repairs malformed output without trusting it as system instructions", async () => {
@@ -460,7 +454,7 @@ test("falls back before the first usable streamed partial", async () => {
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
+    task: "resume.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
   });
   assert.deepEqual(await collect(result.partialOutputStream), [{ value: "ok" }]);
   assert.deepEqual(await result.output, { value: "ok" });
@@ -505,7 +499,7 @@ test("does not replay after a real AI SDK OpenAI-compatible SSE error event with
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate",
+    task: "resume.generate",
     schema,
     system: "system",
     prompt: "prompt",
@@ -559,7 +553,7 @@ test("retries after real AI SDK pre-output 429 and 5xx stream failures", async (
       },
     });
     const result = generator.streamStructured({
-      task: "question.generate",
+      task: "resume.generate",
       schema,
       system: "system",
       prompt: "prompt",
@@ -601,7 +595,7 @@ test("retries a statusless retryable provider error captured before stream outpu
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate",
+    task: "resume.generate",
     schema,
     system: "system",
     prompt: "prompt",
@@ -631,7 +625,7 @@ test("does not retry after the shared streaming deadline expires", async () => {
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate",
+    task: "resume.generate",
     schema,
     system: "system",
     prompt: "prompt",
@@ -662,7 +656,7 @@ test("does not fall back after a usable streamed partial", async () => {
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
+    task: "resume.generate", schema, system: "system", prompt: "prompt", isUsablePartial: (partial) => Boolean(partial.value?.trim()),
   });
   await assert.rejects(collect(result.partialOutputStream));
   await assert.rejects(result.output);
@@ -676,7 +670,7 @@ test("commits a valid final object that had no partial output", async () => {
     stream: () => ({ partialOutputStream: (async function* () {})(), output: Promise.resolve({ value: "complete" }), usage }),
   });
   const result = generator.streamStructured({
-    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
+    task: "resume.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
     validateFinal: (output) => assert.equal(output.value, "complete"),
   });
   assert.deepEqual(await collect(result.partialOutputStream), []);
@@ -699,7 +693,7 @@ test("repairs an invalid final object before commitment", async () => {
     classifyError: () => "repair",
   });
   const result = generator.streamStructured({
-    task: "question.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
+    task: "resume.generate", schema, system: "system", prompt: "prompt", isUsablePartial: () => false,
     validateFinal: (output) => { if (!output.value.trim()) throw new z.ZodError([]); },
   });
   assert.deepEqual(await collect(result.partialOutputStream), []);
@@ -724,7 +718,7 @@ test("does not fall back after caller cancellation", async () => {
     },
   });
   const result = generator.streamStructured({
-    task: "question.generate", schema, system: "system", prompt: "prompt", abortSignal: controller.signal, isUsablePartial: () => false,
+    task: "resume.generate", schema, system: "system", prompt: "prompt", abortSignal: controller.signal, isUsablePartial: () => false,
   });
   await assert.rejects(collect(result.partialOutputStream));
   await assert.rejects(result.output);

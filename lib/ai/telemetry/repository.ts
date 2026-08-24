@@ -169,10 +169,6 @@ export function createDrizzleAITelemetryRepository(
         budgetMode: input.budgetMode,
         budgetScope: input.context.budgetScope ?? null,
         tokenLimit: input.tokenLimit,
-        interviewId: input.context.interviewId ?? null,
-        agentRunId: input.context.agentRunId ?? null,
-        questionId: input.context.questionId ?? null,
-        completionJobId: input.context.completionJobId ?? null,
         promptTemplateVersion: input.context.promptTemplateVersion ?? null,
       }).onConflictDoUpdate({
         target: aiTaskRuns.operationKey,

@@ -1,14 +1,6 @@
 export type AITask =
   | "resume.parse"
-  | "resume.generate"
-  | "interview.agent"
-  | "context.compact"
-  | "question.generate"
-  | "question.follow-up"
-  | "answer.score"
-  | "report.generate"
-  | "coach.generate"
-  | "coach.evaluate";
+  | "resume.generate";
 
 export type AIModelTier = "fast" | "quality";
 
@@ -32,14 +24,6 @@ const supportedProviders = new Set<ModelProvider>(["deepseek", "openai", "zhipu"
 const taskTiers: Record<AITask, AIModelTier> = {
   "resume.parse": "fast",
   "resume.generate": "fast",
-  "interview.agent": "fast",
-  "context.compact": "quality",
-  "question.generate": "fast",
-  "question.follow-up": "fast",
-  "answer.score": "quality",
-  "report.generate": "quality",
-  "coach.generate": "quality",
-  "coach.evaluate": "quality",
 };
 
 type ModelEnvironment = Record<string, string | undefined>;

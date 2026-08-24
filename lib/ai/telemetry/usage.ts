@@ -16,11 +16,6 @@ export function normalizeModelUsage(value: unknown): NormalizedModelUsage {
   };
 }
 
-export function cacheHitRatio(usage: NormalizedModelUsage) {
-  if (usage.cachedInputTokens === null || usage.inputTokens <= 0) return null;
-  return usage.cachedInputTokens / usage.inputTokens;
-}
-
 function readTokenCount(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? Math.floor(value)

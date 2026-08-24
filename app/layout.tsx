@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { cookies } from "next/headers";
 import { I18nProvider } from "@/lib/i18n/context";
 import { defaultLocale, isLocale, localeCookieName } from "@/lib/i18n";
+import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const inter = Inter({
@@ -35,7 +36,10 @@ export default async function RootLayout({
   return (
     <html lang={initialLocale}>
       <body className={`${inter.variable} antialiased font-sans`}>
-        <I18nProvider initialLocale={initialLocale}>{children}</I18nProvider>
+        <I18nProvider initialLocale={initialLocale}>
+          {children}
+          <Toaster />
+        </I18nProvider>
       </body>
     </html>
   );

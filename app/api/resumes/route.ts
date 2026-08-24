@@ -1,9 +1,8 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { resumes, resumeVersions, interviews } from "@/lib/db/schema";
+import { resumes, resumeVersions } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import type { ParsedResume } from "@/lib/resume/types";
-import { normalizeInterviewConfig } from "@/lib/interview/settings";
 import { getCurrentUserId } from "@/lib/auth/session";
 
 export async function GET() {
@@ -28,24 +27,6 @@ export async function GET() {
       .where(inArray(resumeVersions.resumeId, resumeIds))
       .orderBy(desc(resumeVersions.versionNumber));
 
-    const versionIds = allVersions.map((v) => v.id);
-
-    const allInterviews = versionIds.length
-      ? await db
-          .select()
-          .from(interviews)
-          .where(inArray(interviews.resumeVersionId, versionIds))
-          .orderBy(desc(interviews.createdAt))
-      : [];
-
-    const interviewsByVersionId = new Map<string, typeof allInterviews>();
-    for (const i of allInterviews) {
-      if (!i.resumeVersionId) continue;
-      const arr = interviewsByVersionId.get(i.resumeVersionId) ?? [];
-      arr.push(i);
-      interviewsByVersionId.set(i.resumeVersionId, arr);
-    }
-
     const versionsByResumeId = new Map<string, typeof allVersions>();
     for (const v of allVersions) {
       const arr = versionsByResumeId.get(v.resumeId) ?? [];
@@ -64,24 +45,10 @@ export async function GET() {
         parseError: v.parseError,
         parsedData: (v.parsedJson as ParsedResume) ?? null,
         createdAt: v.createdAt,
-        interviews: (interviewsByVersionId.get(v.id) ?? []).map((i) => ({
-          id: i.id,
-          status: i.status,
-          type: i.type,
-          level: i.level,
-          overallScore: i.overallScore,
-          questionCount: i.questionCount,
-          configVersion: i.configVersion,
-          targetRole: i.targetRole,
-          candidateRoundCount: i.candidateRoundCount,
-          createdAt: i.createdAt,
-          completedAt: i.completedAt,
-        })),
       }));
 
       return {
         ...resume,
-        interviewSettings: normalizeInterviewConfig(resume.interviewSettings),
         versions,
       };
     });

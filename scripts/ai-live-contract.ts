@@ -9,23 +9,10 @@ import { sanitizeAIError } from "../lib/ai/error-sanitizer";
 import { classifyModelError } from "../lib/ai/model-errors";
 import { loadModelPolicy, resolveModelCandidates, type AITask } from "../lib/ai/model-policy";
 import { parsedResumeSchema } from "../lib/resume/types";
-import {
-  coachEvaluateSchema,
-  coachStartSchema,
-  followUpRoundSchema,
-  generatedQuestionSchema,
-  interviewReportSchema,
-  scoreResultSchema,
-} from "../lib/interview/schemas";
 
 const tasks: Array<{ task: AITask; schema: z.ZodType }> = [
   { task: "resume.parse", schema: parsedResumeSchema },
-  { task: "question.generate", schema: generatedQuestionSchema },
-  { task: "question.follow-up", schema: followUpRoundSchema },
-  { task: "answer.score", schema: scoreResultSchema },
-  { task: "report.generate", schema: interviewReportSchema },
-  { task: "coach.generate", schema: coachStartSchema },
-  { task: "coach.evaluate", schema: coachEvaluateSchema },
+  { task: "resume.generate", schema: parsedResumeSchema },
 ];
 
 async function main() {
