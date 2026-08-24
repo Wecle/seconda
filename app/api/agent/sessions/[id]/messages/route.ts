@@ -1,11 +1,9 @@
 import { z } from "zod";
-import type { ModelMessage } from "ai";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { DEFAULT_AGENT_MAX_STEPS, DEFAULT_AGENT_TIMEOUT_MS } from "@/lib/agent/prompt";
 import {
   appendAgentEvent,
   beginAgentRun,
-  deriveAgentMessages,
   renameAgentSession,
   settleAgentRun,
 } from "@/lib/agent/repository";
@@ -39,19 +37,17 @@ export async function POST(
 
   const { session, run } = started;
   let userEvent: AgentEvent;
-  let messages: ModelMessage[];
   try {
     if (session.title === "New agent task") {
       await renameAgentSession(userId, sessionId, parsed.data.message.slice(0, 60));
     }
-    const userMessage: ModelMessage = { role: "user", content: parsed.data.message };
+    const userMessage = { role: "user" as const, content: parsed.data.message };
     userEvent = await appendAgentEvent({
       sessionId,
       runId: run.id,
-      type: "model_message",
-      payload: { message: userMessage },
+      type: "user_message",
+      payload: { message: userMessage, trust: "untrusted-data", source: "human" },
     });
-    messages = await deriveAgentMessages(sessionId);
   } catch (error) {
     const message = safeAgentError(error);
     await settleAgentRun({
@@ -85,6 +81,7 @@ export async function POST(
           enqueue(event);
           return event;
         },
+        publish: enqueue,
       };
 
       try {
@@ -93,7 +90,6 @@ export async function POST(
           runId: run.id,
           model: session.model,
           systemPrompt: session.systemPrompt,
-          messages,
           workspaceRoot: session.workspaceRoot,
           maxSteps: run.maxSteps,
           signal,

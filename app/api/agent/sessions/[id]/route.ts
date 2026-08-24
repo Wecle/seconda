@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { getAgentSession, listAgentEvents, toAgentSessionSummary } from "@/lib/agent/repository";
+import { getAgentSession, listAgentUiEvents, toAgentSessionSummary } from "@/lib/agent/repository";
 
 export async function GET(
   request: Request,
@@ -9,11 +9,20 @@ export async function GET(
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const after = Number(new URL(request.url).searchParams.get("after") ?? 0);
+  const beforeParam = new URL(request.url).searchParams.get("before");
+  const before = beforeParam === null ? undefined : Number(beforeParam);
+  if (before !== undefined && (!Number.isSafeInteger(before) || before <= 0)) {
+    return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
+  }
   const [session, events] = await Promise.all([
     getAgentSession(userId, id),
-    listAgentEvents(userId, id, Number.isSafeInteger(after) && after >= 0 ? after : 0),
+    listAgentUiEvents(userId, id, before),
   ]);
   if (!session || !events) return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  return NextResponse.json({ session: toAgentSessionSummary(session), events });
+  return NextResponse.json({
+    session: toAgentSessionSummary(session),
+    events,
+    previousBefore: events[0]?.sequence ?? before ?? null,
+    hasOlder: events.length === 1_000,
+  });
 }

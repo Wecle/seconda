@@ -1,8 +1,9 @@
-import { and, asc, desc, eq, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, ne, notInArray, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { agentEvents, agentRuns, agentSessions } from "@/lib/db/schema";
 import type { AgentEvent, AgentEventType, AgentSessionSummary } from "./types";
+import { projectModelInput } from "./model-input";
 
 export function toAgentSessionSummary(row: typeof agentSessions.$inferSelect): AgentSessionSummary {
   return {
@@ -13,6 +14,16 @@ export function toAgentSessionSummary(row: typeof agentSessions.$inferSelect): A
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
+}
+
+const MAX_FORK_EVENTS = 5_000;
+const MAX_FORK_PAYLOAD_BYTES = 16 * 1024 * 1024;
+
+export class AgentForkLimitError extends Error {
+  constructor() {
+    super("Session is too large to fork safely");
+    this.name = "AgentForkLimitError";
+  }
 }
 
 export async function listAgentSessions(userId: string) {
@@ -46,6 +57,55 @@ export async function createAgentSession(input: {
   return row;
 }
 
+export async function forkAgentSession(userId: string, sourceSessionId: string) {
+  return db.transaction(async (transaction) => {
+    const [source] = await transaction.select().from(agentSessions).where(and(
+      eq(agentSessions.id, sourceSessionId),
+      eq(agentSessions.userId, userId),
+      ne(agentSessions.status, "running"),
+    )).limit(1).for("update");
+    if (!source) return null;
+    const [size] = await transaction.select({
+      eventCount: sql<number>`count(*)::int`,
+      payloadBytes: sql<number>`coalesce(sum(pg_column_size(${agentEvents.payload})), 0)::int`,
+    }).from(agentEvents).where(eq(agentEvents.sessionId, sourceSessionId));
+    if ((size?.eventCount ?? 0) > MAX_FORK_EVENTS || (size?.payloadBytes ?? 0) > MAX_FORK_PAYLOAD_BYTES) {
+      throw new AgentForkLimitError();
+    }
+    const sourceEvents = await transaction.select().from(agentEvents)
+      .where(eq(agentEvents.sessionId, sourceSessionId))
+      .orderBy(asc(agentEvents.sequence));
+    const boundarySequence = sourceEvents.at(-1)?.sequence ?? 0;
+    const [child] = await transaction.insert(agentSessions).values({
+      userId,
+      title: `Fork of ${source.title}`.slice(0, 100),
+      model: source.model,
+      systemPrompt: source.systemPrompt,
+      workspaceRoot: source.workspaceRoot,
+      status: "idle",
+      nextEventSequence: boundarySequence + 2,
+    }).returning();
+    if (sourceEvents.length > 0) {
+      await transaction.insert(agentEvents).values(sourceEvents.map((event) => ({
+        sessionId: child.id,
+        runId: null,
+        sequence: event.sequence,
+        type: event.type,
+        payload: event.payload,
+        createdAt: event.createdAt,
+      })));
+    }
+    await transaction.insert(agentEvents).values({
+      sessionId: child.id,
+      runId: null,
+      sequence: boundarySequence + 1,
+      type: "session_forked",
+      payload: { parentSessionId: sourceSessionId, boundarySequence },
+    });
+    return child;
+  });
+}
+
 export async function getAgentSession(userId: string, sessionId: string) {
   await recoverStaleAgentRun(userId, sessionId);
   const [row] = await db
@@ -70,10 +130,23 @@ export async function listAgentEvents(userId: string, sessionId: string, afterSe
     eq(agentEvents.sessionId, sessionId),
     sql`${agentEvents.sequence} > ${afterSequence}`,
   );
-  const rows = afterSequence > 0
-    ? await db.select().from(agentEvents).where(condition).orderBy(asc(agentEvents.sequence)).limit(1_000)
-    : (await db.select().from(agentEvents).where(condition).orderBy(desc(agentEvents.sequence)).limit(1_000)).reverse();
+  const rows = await db.select().from(agentEvents).where(condition).orderBy(asc(agentEvents.sequence)).limit(1_000);
   return rows as AgentEvent[];
+}
+
+export async function listAgentUiEvents(userId: string, sessionId: string, beforeSequence?: number) {
+  const session = await getAgentSession(userId, sessionId);
+  if (!session) return null;
+  const conditions = [
+    eq(agentEvents.sessionId, sessionId),
+    notInArray(agentEvents.type, ["assistant_chunk", "assistant_delta"]),
+  ];
+  if (beforeSequence !== undefined) conditions.push(lt(agentEvents.sequence, beforeSequence));
+  const rows = await db.select().from(agentEvents)
+    .where(and(...conditions))
+    .orderBy(desc(agentEvents.sequence))
+    .limit(1_000);
+  return (rows as AgentEvent[]).reverse();
 }
 
 export async function recoverStaleAgentRun(userId: string, sessionId: string) {
@@ -284,9 +357,40 @@ export async function findRunningAgentRun(userId: string, sessionId: string) {
 
 export async function deriveAgentMessages(sessionId: string): Promise<ModelMessage[]> {
   const rows = await db
-    .select({ payload: agentEvents.payload })
+    .select()
     .from(agentEvents)
-    .where(and(eq(agentEvents.sessionId, sessionId), eq(agentEvents.type, "model_message")))
+    .where(eq(agentEvents.sessionId, sessionId))
     .orderBy(asc(agentEvents.sequence));
-  return rows.map(({ payload }) => (payload as { message: ModelMessage }).message);
+  return projectModelInput(rows as AgentEvent[]).messages;
+}
+
+export async function loadAgentEvents(sessionId: string) {
+  return await db.select().from(agentEvents)
+    .where(eq(agentEvents.sessionId, sessionId))
+    .orderBy(asc(agentEvents.sequence)) as AgentEvent[];
+}
+
+export async function appendAgentEventsAtomically(input: {
+  sessionId: string;
+  runId?: string;
+  events: Array<{ type: AgentEventType; payload: Record<string, unknown> }>;
+}) {
+  if (input.events.length === 0) return [];
+  return db.transaction(async (transaction) => {
+    const [session] = await transaction.update(agentSessions).set({
+      nextEventSequence: sql`${agentSessions.nextEventSequence} + ${input.events.length}`,
+      updatedAt: new Date(),
+    }).where(eq(agentSessions.id, input.sessionId))
+      .returning({ nextEventSequence: agentSessions.nextEventSequence });
+    if (!session) throw new Error("Agent session not found");
+    const firstSequence = session.nextEventSequence - input.events.length;
+    const rows = await transaction.insert(agentEvents).values(input.events.map((event, index) => ({
+      sessionId: input.sessionId,
+      runId: input.runId,
+      sequence: firstSequence + index,
+      type: event.type,
+      payload: event.payload,
+    }))).returning();
+    return (rows as AgentEvent[]).sort((left, right) => left.sequence - right.sequence);
+  });
 }

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { listAgentEvents, listAgentSessions } from "@/lib/agent/repository";
+import { listAgentSessions, listAgentUiEvents } from "@/lib/agent/repository";
 import { AgentWorkspace } from "@/components/agent/agent-workspace";
 
 export const metadata: Metadata = {
@@ -13,7 +13,7 @@ export default async function AgentPage() {
   const sessions = userId ? await listAgentSessions(userId) : [];
   const firstSession = sessions[0] ?? null;
   const initialEvents = userId && firstSession
-    ? await listAgentEvents(userId, firstSession.id)
+    ? await listAgentUiEvents(userId, firstSession.id)
     : [];
   return (
     <AgentWorkspace

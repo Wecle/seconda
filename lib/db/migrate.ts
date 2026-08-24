@@ -236,6 +236,10 @@ async function migrate() {
     ON agent_events(session_id, sequence)
   `;
   await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_session_type_sequence
+    ON agent_events(session_id, type, sequence)
+  `;
+  await sql`
     CREATE OR REPLACE VIEW ai_slow_operations AS
     SELECT
       runs.id AS task_run_id,

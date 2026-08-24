@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   check,
+  index,
   integer,
   jsonb,
   pgTable,
@@ -174,4 +175,5 @@ export const agentEvents = pgTable("agent_events", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("idx_agent_events_session_sequence").on(table.sessionId, table.sequence),
+  index("idx_agent_events_session_type_sequence").on(table.sessionId, table.type, table.sequence),
 ]);

@@ -51,6 +51,10 @@ async function migrateAgentSchema() {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_session_sequence
     ON agent_events(session_id, sequence)
   `;
+    await sql`
+    CREATE INDEX IF NOT EXISTS idx_agent_events_session_type_sequence
+    ON agent_events(session_id, type, sequence)
+  `;
     console.log("Agent schema migration completed");
   } finally {
     await sql.end({ timeout: 5 });

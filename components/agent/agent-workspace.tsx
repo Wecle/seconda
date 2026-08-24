@@ -7,6 +7,7 @@ import {
   ChevronRight,
   CircleStop,
   FileSearch,
+  GitFork,
   Loader2,
   MessageSquarePlus,
   PanelRight,
@@ -21,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type { AgentEvent, AgentSessionSummary } from "@/lib/agent/types";
+import { isCurrentHistoryRequest } from "@/lib/agent/history-pagination";
 import {
   applyAssistantChunk,
   compactAssistantBlocks,
@@ -35,6 +37,11 @@ type AgentWorkspaceProps = {
 type SessionDetail = {
   session: AgentSessionSummary;
   events: AgentEvent[];
+};
+
+type SessionPage = SessionDetail & {
+  previousBefore: number | null;
+  hasOlder: boolean;
 };
 
 type ConversationMessage = {
@@ -109,10 +116,20 @@ function AssistantContent({ blocks, running = false }: { blocks: AssistantBlock[
 function traceLabel(event: AgentEvent) {
   switch (event.type) {
     case "run_started": return "Run started";
+    case "session_forked": return "Session forked";
     case "step_started": return "Model step";
+    case "step_retried": return "Step retried";
     case "tool_called": return `Tool · ${String(event.payload.toolName ?? "unknown")}`;
     case "tool_completed": return `Result · ${String(event.payload.toolName ?? "unknown")}`;
     case "step_completed": return `Step · ${String(event.payload.finishReason ?? "completed")}`;
+    case "request_context": return "Context measured";
+    case "context_pressure": return "Context pressure";
+    case "tool_result_spilled": return "Large result spilled";
+    case "compaction_started": return "Compacting context";
+    case "compaction_summary": return "Summary committed";
+    case "model_context_replaced": return "Context surface replaced";
+    case "compaction_completed": return "Compaction completed";
+    case "compaction_failed": return "Compaction failed";
     case "run_completed": return "Run completed";
     case "run_failed": return "Run failed";
     case "run_cancelled": return "Run cancelled";
@@ -132,6 +149,18 @@ function traceDetail(event: AgentEvent) {
     const usage = event.payload.usage as { inputTokens?: number; outputTokens?: number } | undefined;
     return usage ? `${usage.inputTokens ?? "—"} in · ${usage.outputTokens ?? "—"} out` : "";
   }
+  if (event.type === "request_context" || event.type === "context_pressure") {
+    const estimated = Number(event.payload.estimatedTokens ?? 0);
+    const window = Number(event.payload.contextWindow ?? 0);
+    return window > 0 ? `${estimated.toLocaleString()} / ${window.toLocaleString()} estimated tokens` : "";
+  }
+  if (event.type === "tool_result_spilled") {
+    return `Full result retained at event #${String((event.payload.shadowedSequences as unknown[] | undefined)?.[0] ?? "—")}`;
+  }
+  if (event.type === "compaction_started" || event.type === "compaction_completed") {
+    return `${Number(event.payload.shadowedTokenCount ?? 0).toLocaleString()} estimated tokens`;
+  }
+  if (event.type === "compaction_failed") return String(event.payload.message ?? "Compaction failed");
   return "";
 }
 
@@ -155,6 +184,10 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
   const [liveBlocks, setLiveBlocks] = useState<AssistantBlock[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [traceOpen, setTraceOpen] = useState(false);
+  const [historyBefore, setHistoryBefore] = useState<number | null>(
+    initialDetail?.events.length === 1_000 ? initialDetail.events[0]?.sequence ?? null : null,
+  );
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const liveBlocksRef = useRef<(AssistantBlock | undefined)[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const loadRequestRef = useRef(0);
@@ -177,10 +210,11 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
     setError(null);
     try {
       const response = await fetch(`/api/agent/sessions/${id}`);
-      const data = await response.json() as SessionDetail & { error?: string };
+      const data = await response.json() as SessionPage & { error?: string };
       if (!response.ok) throw new Error(data.error ?? "Failed to load session");
       if (loadRequestRef.current !== requestId) return;
-      setDetail(data);
+      setDetail({ session: data.session, events: data.events });
+      setHistoryBefore(data.hasOlder ? data.previousBefore : null);
       setRunning(data.session.status === "running");
     } catch (loadError) {
       if (loadRequestRef.current !== requestId) return;
@@ -189,6 +223,33 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       if (loadRequestRef.current === requestId) setLoadingSession(false);
     }
   }, [running]);
+
+  const loadOlderHistory = useCallback(async () => {
+    if (!selectedId || historyBefore === null || loadingOlder) return;
+    const requestSessionId = selectedId;
+    const requestVersion = loadRequestRef.current;
+    setLoadingOlder(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/agent/sessions/${selectedId}?before=${historyBefore}`);
+      const data = await response.json() as SessionPage & { error?: string };
+      if (!response.ok) throw new Error(data.error ?? "Failed to load older history");
+      if (!isCurrentHistoryRequest({
+        requestVersion,
+        currentVersion: loadRequestRef.current,
+        requestSessionId,
+        currentSessionId: selectedId,
+      })) return;
+      setDetail((current) => current && current.session.id === selectedId
+        ? { ...current, events: [...data.events, ...current.events] }
+        : current);
+      setHistoryBefore(data.hasOlder ? data.previousBefore : null);
+    } catch (historyError) {
+      setError(historyError instanceof Error ? historyError.message : "Failed to load older history");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [historyBefore, loadingOlder, selectedId]);
 
   const refreshSessions = useCallback(async () => {
     const response = await fetch("/api/agent/sessions");
@@ -217,6 +278,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       if (!response.ok) throw new Error(session.error ?? "Failed to create session");
       setSessions((current) => [session, ...current]);
       setDetail({ session, events: [] });
+      setHistoryBefore(null);
       setSelectedId(session.id);
     } catch (createError) {
       setError(createError instanceof Error ? createError.message : "Failed to create session");
@@ -224,6 +286,23 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       setCreating(false);
     }
   }, [running]);
+
+  const forkSession = useCallback(async () => {
+    if (!selectedId || running) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/agent/sessions/${selectedId}/fork`, { method: "POST" });
+      const session = await response.json() as AgentSessionSummary & { error?: string };
+      if (!response.ok) throw new Error(session.error ?? "Failed to fork task");
+      setSessions((current) => [session, ...current]);
+      await loadSession(session.id);
+    } catch (forkError) {
+      setError(forkError instanceof Error ? forkError.message : "Failed to fork task");
+    } finally {
+      setCreating(false);
+    }
+  }, [loadSession, running, selectedId]);
 
   const acceptStreamEvent = useCallback((event: AgentEvent) => {
     if (event.type === "assistant_chunk") {
@@ -241,7 +320,7 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
       flushLiveBlocks();
       return;
     }
-    if (event.type === "model_message") {
+    if (event.type === "model_message" || event.type === "assistant_message") {
       const committed = eventMessage(event);
       if (committed?.role === "assistant") {
         liveBlocksRef.current = [];
@@ -305,14 +384,19 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
   }, [selectedId]);
 
   const messages = useMemo(() => deferredEvents
-    .filter((event) => event.type === "model_message")
+    .filter((event) => event.type === "model_message" || event.type === "user_message" || event.type === "assistant_message")
     .flatMap((event) => {
       const parsed = eventMessage(event);
       return parsed ? [{ ...parsed, sequence: event.sequence }] : [];
     }), [deferredEvents]);
 
   const traceEvents = useMemo(() => deferredEvents.filter((event) =>
-    event.type !== "assistant_chunk" && event.type !== "assistant_delta" && event.type !== "model_message",
+    event.type !== "assistant_chunk"
+      && event.type !== "assistant_delta"
+      && event.type !== "model_message"
+      && event.type !== "user_message"
+      && event.type !== "assistant_message"
+      && event.type !== "tool_result_message",
   ), [deferredEvents]);
 
   return (
@@ -376,6 +460,9 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
             </div>
             <div className="flex items-center gap-2">
               {running ? <Badge variant="secondary" className="gap-1.5"><span className="size-1.5 animate-pulse rounded-full bg-emerald-500" />Running</Badge> : null}
+              <Button variant="outline" size="sm" onClick={forkSession} disabled={!detail || running || creating} aria-label="Fork agent task">
+                <GitFork /> <span className="hidden sm:inline">Fork</span>
+              </Button>
               <Button variant="outline" size="icon" className="xl:hidden" onClick={() => setTraceOpen((value) => !value)} aria-label="Toggle run trace">
                 <PanelRight />
               </Button>
@@ -408,6 +495,14 @@ export function AgentWorkspace({ initialSessions, initialDetail }: AgentWorkspac
                 </div>
               ) : (
                 <div className="space-y-7">
+                  {historyBefore !== null ? (
+                    <div className="flex justify-center">
+                      <Button variant="outline" size="sm" onClick={loadOlderHistory} disabled={loadingOlder}>
+                        {loadingOlder ? <Loader2 className="animate-spin" /> : null}
+                        Load older history
+                      </Button>
+                    </div>
+                  ) : null}
                   {messages.map((item) => (
                     <article key={item.sequence} className={cn("flex gap-3", item.role === "user" && "justify-end")}>
                       {item.role === "assistant" ? <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background"><Bot className="size-4" /></div> : null}

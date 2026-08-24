@@ -7,6 +7,7 @@ import {
   type AIModelTier,
   type ModelProvider,
 } from "./model-policy";
+import { resolveContextWindow } from "@/lib/agent/context-budget";
 
 export type ProviderAdapterMetadata = {
   provider: ModelProvider;
@@ -14,6 +15,7 @@ export type ProviderAdapterMetadata = {
   modelId: string;
   structuredOutput: "json-object" | "json-schema";
   thinking: "enabled" | "disabled" | "not-configured";
+  contextWindow: number;
   jsonInstruction?: string;
 };
 
@@ -33,6 +35,21 @@ type ProviderRegistryInput = {
 };
 
 const DEEPSEEK_JSON_INSTRUCTION = "请只返回合法 JSON 对象。";
+
+function providerBaseUrl(provider: ModelProvider, fallback: string, env: Record<string, string | undefined> = process.env) {
+  const configured = env.AI_PROVIDER_BASE_URLS_JSON?.trim();
+  if (!configured) return fallback;
+  const parsed = JSON.parse(configured) as Record<string, unknown>;
+  const value = parsed[provider];
+  if (value === undefined) return fallback;
+  if (typeof value !== "string") throw new Error(`Base URL for ${provider} must be a string`);
+  const url = new URL(value);
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) {
+    throw new Error(`Base URL for ${provider} must use HTTPS or local HTTP`);
+  }
+  return url.toString().replace(/\/$/, "");
+}
 
 export function applyStructuredOutputInstructions<TSchema extends z.ZodType>(
   system: string,
@@ -56,9 +73,10 @@ export function createProviderOutput<TSchema extends z.ZodType>(
 function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" | "zhipu") {
   const { modelId } = parseModelIdentifier(input.model);
   const isDeepSeek = provider === "deepseek";
-  const baseURL = isDeepSeek
+  const defaultBaseURL = isDeepSeek
     ? "https://api.deepseek.com"
     : "https://open.bigmodel.cn/api/paas/v4/";
+  const baseURL = providerBaseUrl(provider, defaultBaseURL);
 
   const instance = createOpenAICompatible({
     name: provider,
@@ -89,6 +107,7 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
       thinking: isDeepSeek
         ? input.responseMode === "conversational" ? "enabled" : "disabled"
         : "not-configured",
+      contextWindow: resolveContextWindow(input.model),
       ...(isDeepSeek ? { jsonInstruction: DEEPSEEK_JSON_INSTRUCTION } : {}),
     },
   } satisfies ProviderModel;
@@ -101,7 +120,11 @@ export function createProviderModel(input: ProviderRegistryInput): ProviderModel
     return compatibleProvider(input, provider);
   }
 
-  const instance = createOpenAI({ apiKey: input.apiKey, fetch: input.fetch });
+  const instance = createOpenAI({
+    apiKey: input.apiKey,
+    fetch: input.fetch,
+    baseURL: providerBaseUrl("openai", "https://api.openai.com/v1"),
+  });
   return {
     model: instance.chat(modelId),
     metadata: {
@@ -110,6 +133,7 @@ export function createProviderModel(input: ProviderRegistryInput): ProviderModel
       modelId,
       structuredOutput: "json-schema",
       thinking: "not-configured",
+      contextWindow: resolveContextWindow(input.model),
     },
   };
 }
