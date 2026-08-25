@@ -12,7 +12,6 @@ import {
 } from "@/lib/db/schema";
 import { assertOpeningAction, submitInterviewActionSchema, type SubmitInterviewAction } from "../agent/action";
 import type { InterviewDatabase } from "../persistence/repository";
-import { db } from "@/lib/db";
 
 function normalizeText(value: string) {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim();
@@ -113,7 +112,11 @@ export async function commitInterviewAgentAction(input: {
   action: unknown;
 }, dependencies: { database?: InterviewDatabase } = {}) {
   const proposal = submitInterviewActionSchema.parse(input.action);
-  const database = dependencies.database ?? db;
+  let database = dependencies.database;
+  if (!database) {
+    const { db } = await import("@/lib/db");
+    database = db;
+  }
 
   return database.transaction(async (transaction) => {
     const [interview] = await transaction.select().from(interviews)
