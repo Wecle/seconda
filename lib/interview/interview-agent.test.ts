@@ -75,7 +75,7 @@ test("opening context keeps resume and preference outside trusted system instruc
   assert.doesNotMatch(message.content as string, /<system>/);
 });
 
-test("interview capability registers only submit_interview_action and continues until commit", async () => {
+test("interview capability registers retrieval tools and submit_interview_action and continues until commit", async () => {
   const state = new Map<PropertyKey, unknown>();
   const context = {
     sessionId: "00000000-0000-4000-8000-000000000001",
@@ -95,6 +95,8 @@ test("interview capability registers only submit_interview_action and continues 
     events: { append: async () => { throw new Error("not used"); } },
   };
   assert.deepEqual(interviewCapability.createToolRegistry(context).schemas().map(({ name }) => name), [
+    "retrieve_resume_evidence",
+    "retrieve_interview_history",
     "submit_interview_action",
   ]);
   assert.deepEqual(interviewCapability.skillAllowlist, INTERVIEW_SKILL_NAMES);

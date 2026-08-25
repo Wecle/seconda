@@ -568,3 +568,178 @@ export async function loadOwnedInterviewRoomData(input: {
     accessMode: "read only",
   });
 }
+
+export async function loadInterviewResumeEvidence(input: {
+  database: InterviewDatabase;
+  userId: string;
+  sessionId: string;
+  interviewId: string;
+  query?: string;
+  evidenceIds?: string[];
+  limit?: number;
+}) {
+  const [row] = await input.database.select({
+    evidenceJson: interviewResumeSnapshots.evidenceJson,
+  }).from(interviewResumeSnapshots)
+    .innerJoin(interviews, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .innerJoin(agentSessions, and(
+      eq(agentSessions.id, interviews.agentSessionId),
+      eq(agentSessions.userId, interviews.userId),
+      eq(agentSessions.capability, "interview"),
+    ))
+    .where(and(
+      eq(interviews.id, input.interviewId),
+      eq(interviews.userId, input.userId),
+      eq(interviews.agentSessionId, input.sessionId),
+    ))
+    .limit(1);
+
+  if (!row) {
+    throw new Error("Interview resume snapshot is unauthorized or not found");
+  }
+
+  const evidenceMap = (row.evidenceJson ?? {}) as ResumeEvidenceMap;
+  const maxResults = Math.min(Math.max(1, input.limit ?? 5), 10);
+  const results: Array<{ id: string; path: string; text: string }> = [];
+
+  if (input.evidenceIds && input.evidenceIds.length > 0) {
+    const requestedSet = new Set(input.evidenceIds);
+    for (const [id, entry] of Object.entries(evidenceMap)) {
+      if (requestedSet.has(id)) {
+        results.push({
+          id,
+          path: entry.path.slice(0, 200),
+          text: entry.text.slice(0, 1_000),
+        });
+        if (results.length >= maxResults) break;
+      }
+    }
+  }
+
+  if (input.query && results.length < maxResults) {
+    const normalizedQuery = input.query.normalize("NFKC").toLowerCase().trim();
+    const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
+    const existingIds = new Set(results.map((r) => r.id));
+
+    const scored: Array<{ id: string; path: string; text: string; score: number }> = [];
+    for (const [id, entry] of Object.entries(evidenceMap)) {
+      if (existingIds.has(id)) continue;
+      const normalizedPath = entry.path.normalize("NFKC").toLowerCase();
+      const normalizedText = entry.text.normalize("NFKC").toLowerCase();
+      let score = 0;
+      if (normalizedText.includes(normalizedQuery) || normalizedPath.includes(normalizedQuery)) {
+        score += 10;
+      }
+      for (const token of queryTokens) {
+        if (normalizedText.includes(token)) score += 2;
+        if (normalizedPath.includes(token)) score += 3;
+      }
+      if (score > 0) {
+        scored.push({
+          id,
+          path: entry.path.slice(0, 200),
+          text: entry.text.slice(0, 1_000),
+          score,
+        });
+      }
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    for (const item of scored) {
+      results.push({ id: item.id, path: item.path, text: item.text });
+      if (results.length >= maxResults) break;
+    }
+  }
+
+  return {
+    status: "success" as const,
+    count: results.length,
+    evidence: results,
+  };
+}
+
+export async function loadInterviewHistoryEntries(input: {
+  database: InterviewDatabase;
+  userId: string;
+  sessionId: string;
+  interviewId: string;
+  query?: string;
+  topic?: string;
+  limit?: number;
+}) {
+  const [interview] = await input.database.select({
+    id: interviews.id,
+  }).from(interviews)
+    .innerJoin(agentSessions, and(
+      eq(agentSessions.id, interviews.agentSessionId),
+      eq(agentSessions.userId, interviews.userId),
+      eq(agentSessions.capability, "interview"),
+    ))
+    .where(and(
+      eq(interviews.id, input.interviewId),
+      eq(interviews.userId, input.userId),
+      eq(interviews.agentSessionId, input.sessionId),
+    ))
+    .limit(1);
+
+  if (!interview) {
+    throw new Error("Interview history is unauthorized or not found");
+  }
+
+  const rows = await input.database.select({
+    sequence: interviewQuestions.sequence,
+    kind: interviewQuestions.kind,
+    topic: interviewQuestions.topic,
+    question: interviewQuestions.question,
+    answer: interviewAnswers.content,
+    answerStatus: interviewAnswers.status,
+  }).from(interviewQuestions)
+    .leftJoin(interviewAnswers, eq(interviewAnswers.questionId, interviewQuestions.id))
+    .where(eq(interviewQuestions.interviewId, input.interviewId))
+    .orderBy(asc(interviewQuestions.sequence));
+
+  const maxResults = Math.min(Math.max(1, input.limit ?? 5), 10);
+  let filtered = rows.map((r) => ({
+    sequence: r.sequence,
+    kind: r.kind as "main" | "follow_up",
+    topic: r.topic.slice(0, 100),
+    question: r.question.slice(0, 1_000),
+    answer: r.answerStatus === "answered" && r.answer ? r.answer.slice(0, 2_000) : null,
+    skipped: r.answerStatus === "skipped",
+  }));
+
+  if (input.topic) {
+    const targetTopic = input.topic.normalize("NFKC").toLowerCase().trim();
+    filtered = filtered.filter((item) => item.topic.normalize("NFKC").toLowerCase().includes(targetTopic));
+  }
+
+  if (input.query) {
+    const normalizedQuery = input.query.normalize("NFKC").toLowerCase().trim();
+    const queryTokens = normalizedQuery.split(/\s+/).filter(Boolean);
+    const scored = filtered.map((item) => {
+      const qText = item.question.normalize("NFKC").toLowerCase();
+      const aText = (item.answer ?? "").normalize("NFKC").toLowerCase();
+      let score = 0;
+      if (qText.includes(normalizedQuery) || aText.includes(normalizedQuery)) score += 10;
+      for (const token of queryTokens) {
+        if (qText.includes(token)) score += 2;
+        if (aText.includes(token)) score += 2;
+      }
+      return { item, score };
+    }).filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score || b.item.sequence - a.item.sequence);
+
+    filtered = scored.map((s) => s.item);
+  } else if (!input.topic) {
+    filtered = filtered.slice(-maxResults);
+  }
+
+  const results = filtered.slice(0, maxResults);
+
+  return {
+    status: "success" as const,
+    count: results.length,
+    history: results,
+  };
+}
+

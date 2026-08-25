@@ -36,7 +36,11 @@ export const interviewCapability: AgentCapability = {
     return {
       schemas: registry.schemas.bind(registry),
       toAISDKTools: () => registry.toAISDKTools(toolContext),
-      toolOrder: ["submit_interview_action"],
+      toolOrder: [
+        "retrieve_resume_evidence",
+        "retrieve_interview_history",
+        "submit_interview_action",
+      ],
     };
   },
   beforeStep(context) {
