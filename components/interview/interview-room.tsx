@@ -317,16 +317,13 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             <Textarea
               disabled
               aria-label={t.interview.answerPlaceholder}
-              placeholder={t.interview.answerPlaceholder}
+              placeholder={t.interview.readOnlyMilestone}
               className="max-h-40 min-h-11 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
             />
             <Button size="icon" disabled aria-label={t.interview.submitAnswer}>
               <Send className="size-4" />
             </Button>
           </div>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground">
-            {t.interview.readOnlyMilestone}
-          </p>
         </div>
       </div>
     </div>
