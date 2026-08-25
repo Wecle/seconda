@@ -17,6 +17,7 @@ import {
 } from "@/components/dashboard/new-resume-dialog";
 import type { GeneratedResumeDraft } from "@/lib/resume/generation-contract";
 import type { ParsedResume } from "@/lib/resume/types";
+import { InterviewSettingsDialog } from "@/components/interview/interview-settings-dialog";
 
 const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
   name: "",
@@ -70,6 +71,7 @@ export default function DashboardPage() {
   );
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [interviewSettingsOpen, setInterviewSettingsOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resumeGenerationRef = useRef<{ signature: string; key: string } | null>(
     null,
@@ -292,7 +294,11 @@ export default function DashboardPage() {
   };
 
   const handleStartInterview = () => {
-    toast.info(t.dashboard.interviewMaintenance);
+    if (!selectedVersion || selectedVersion.parseStatus !== "parsed" || !parsed) {
+      toast.error(t.dashboard.resumeNotReady);
+      return;
+    }
+    setInterviewSettingsOpen(true);
   };
 
   const handleRetryParse = async () => {
@@ -530,6 +536,16 @@ export default function DashboardPage() {
           }
         }}
       />
+
+      {selectedVersion && parsed ? (
+        <InterviewSettingsDialog
+          key={selectedVersion.id}
+          open={interviewSettingsOpen}
+          onOpenChange={setInterviewSettingsOpen}
+          resumeVersionId={selectedVersion.id}
+          defaultTargetRole={parsed.title}
+        />
+      ) : null}
     </div>
   );
 }

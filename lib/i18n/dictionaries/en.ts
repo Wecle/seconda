@@ -236,6 +236,11 @@ export const en = {
     settingsTitle: "Interview Settings",
     settingsDescription:
       "Set the interviewer style and focus; the Agent adapts to your resume and answers.",
+    targetRole: "Target Role",
+    targetRoleDescription:
+      "Filled from this resume. Adjust it for the role you want to practice.",
+    targetRoleRequired: "Enter a target role.",
+    targetRoleTooLong: "Target role must be 100 characters or fewer.",
     preference: "Interview focus",
     preferenceDescription: "Choose focus areas and add anything you want the interviewer to emphasize.",
     preferencePlaceholder: "For example: go deep on distributed systems projects, trade-offs, and reflection…",
@@ -279,6 +284,17 @@ export const en = {
           "High-pressure, tests how you handle tough questions.",
       },
     },
+    createInterview: "Create Interview",
+    creatingInterview: "Creating...",
+    creationSucceeded: "Interview Created",
+    creationSucceededDescription:
+      "Your settings and resume snapshot are saved. Automatic first-question generation arrives in the next milestone.",
+    interviewId: "Interview ID",
+    creationStatus: "Current Status",
+    statusInitializing: "Initializing",
+    creationFailed: "Could not create the interview. Please try again.",
+    creationConflict:
+      "This creation attempt conflicts with an earlier request. Close the dialog and start again.",
     session: "Interview Session",
     questionOf: "QUESTION {current} OF {total}",
     percentComplete: "{percent}% COMPLETE",
