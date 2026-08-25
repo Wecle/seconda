@@ -30,6 +30,7 @@ const runSchema = z.object({
 });
 
 const eventSchema = z.object({
+  runId: z.string().uuid().nullable(),
   sequence: z.number().int().positive(),
   type: z.string(),
   payload: z.unknown(),

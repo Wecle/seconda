@@ -2,17 +2,8 @@ import type { CreateInterviewRequest } from "@/lib/interview/domain/create-inter
 
 export type InterviewCreationResponse = {
   interviewId: string;
-  status: "active";
+  status: "initializing" | "active" | "completing" | "completed";
   replayed: boolean;
-  question: {
-    id: string;
-    sequence: number;
-    kind: "main" | "follow_up";
-    topic: string;
-    question: string;
-    tip: string | null;
-    resumeEvidenceIds: string[];
-  };
 };
 
 export class InterviewCreationClientError extends Error {
@@ -57,20 +48,9 @@ export function resetInterviewCreationAttempt(): null {
 function isCreationResponse(value: unknown): value is InterviewCreationResponse {
   if (!value || typeof value !== "object") return false;
   const response = value as Record<string, unknown>;
-  if (!response.question || typeof response.question !== "object") return false;
-  const question = response.question as Record<string, unknown>;
   return typeof response.interviewId === "string"
-    && response.status === "active"
-    && typeof response.replayed === "boolean"
-    && typeof question.id === "string"
-    && Number.isSafeInteger(question.sequence)
-    && (question.sequence as number) > 0
-    && (question.kind === "main" || question.kind === "follow_up")
-    && typeof question.topic === "string"
-    && typeof question.question === "string"
-    && (question.tip === null || typeof question.tip === "string")
-    && Array.isArray(question.resumeEvidenceIds)
-    && question.resumeEvidenceIds.every((id) => typeof id === "string");
+    && ["initializing", "active", "completing", "completed"].includes(String(response.status))
+    && typeof response.replayed === "boolean";
 }
 
 export async function requestInterviewCreation(input: {

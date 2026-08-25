@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
@@ -288,6 +288,31 @@ export async function loadOpeningRunStatus(input: {
   return run?.status ?? null;
 }
 
+export async function loadOwnedOpeningRunReference(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewId: string;
+}) {
+  const [row] = await input.database.select({
+    openingRunId: interviewAgentRuns.id,
+  }).from(interviews)
+    .innerJoin(agentSessions, and(
+      eq(agentSessions.id, interviews.agentSessionId),
+      eq(agentSessions.userId, interviews.userId),
+      eq(agentSessions.capability, "interview"),
+    ))
+    .innerJoin(interviewAgentRuns, and(
+      eq(interviewAgentRuns.interviewId, interviews.id),
+      eq(interviewAgentRuns.triggerKey, "opening"),
+    ))
+    .where(and(
+      eq(interviews.id, input.interviewId),
+      eq(interviews.userId, input.userId),
+    ))
+    .limit(1);
+  return row ?? null;
+}
+
 export async function failInterviewOpeningRun(input: {
   database: InterviewDatabase;
   openingRunId: string;
@@ -348,6 +373,7 @@ export async function loadOwnedInterviewRoomData(input: {
       .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
       .limit(1);
     const events = await transaction.select({
+      runId: agentEvents.runId,
       sequence: agentEvents.sequence,
       type: agentEvents.type,
       payload: agentEvents.payload,
@@ -355,7 +381,14 @@ export async function loadOwnedInterviewRoomData(input: {
       visibility: agentEvents.visibility,
     }).from(agentEvents).where(and(
       eq(agentEvents.sessionId, interview.agentSessionId),
-      inArray(agentEvents.visibility, ["user", "model_and_user"]),
+      or(
+        inArray(agentEvents.visibility, ["user", "model_and_user"]),
+        and(
+          inArray(agentEvents.type, ["step_started", "assistant_chunk"]),
+          eq(agentEvents.visibility, "model"),
+          eq(agentEvents.schemaVersion, 1),
+        ),
+      ),
     )).orderBy(asc(agentEvents.sequence));
 
     return {

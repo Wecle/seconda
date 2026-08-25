@@ -1,5 +1,16 @@
 export type InterviewTranscriptItem =
   | {
+      type: "reasoning";
+      runId: string;
+      step: number;
+      attempt: number;
+      blockIndex: number;
+      sequence: number;
+      endSequence: number;
+      content: string;
+      complete: boolean;
+    }
+  | {
       type: "question";
       questionId: string;
       sequence: number;
@@ -47,6 +58,7 @@ export interface InterviewRoomView {
 }
 
 export interface InterviewEventSnapshot {
+  runId: string | null;
   sequence: number;
   type: string;
   payload: unknown;

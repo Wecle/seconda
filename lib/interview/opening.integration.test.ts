@@ -174,6 +174,16 @@ test("opening run is claimed once and commits the first question atomically and 
     const fakeRun = async (agentInput: AgentRunInput) => {
       modelCalls += 1;
       await new Promise((resolve) => setTimeout(resolve, 50));
+      await agentInput.events.append("step_started", { step: 1, attempt: 1 });
+      await agentInput.events.append("assistant_chunk", {
+        chunk: { type: "block-start", index: 0, blockType: "reasoning" },
+      });
+      await agentInput.events.append("assistant_chunk", {
+        chunk: { type: "reasoning-delta", index: 0, text: "Inspect the event-driven project." },
+      });
+      await agentInput.events.append("assistant_chunk", {
+        chunk: { type: "block-end", index: 0, blockType: "reasoning" },
+      });
       const config = agentInput.capabilityConfig as {
         interviewId: string;
         interviewRunId: string;
@@ -215,6 +225,14 @@ test("opening run is claimed once and commits the first question atomically and 
       .where(eq(agentSessions.id, executorCreation.agentSessionId));
     assert.equal(settledRun.status, "completed");
     assert.equal(settledSession.status, "idle");
+    const { getInterviewRoom } = await import("./application/get-interview-room");
+    const room = await getInterviewRoom({
+      userId,
+      interviewId: executorCreation.interviewId,
+    }, { database });
+    assert.equal(room?.transcript[0]?.type, "reasoning");
+    assert.equal(room?.transcript[0]?.content, "Inspect the event-driven project.");
+    assert.equal(room?.transcript[0]?.type === "reasoning" && room.transcript[0].complete, true);
   } finally {
     await database.delete(interviews).where(eq(interviews.userId, userId));
     await database.delete(users).where(eq(users.id, userId));

@@ -7,6 +7,7 @@ import postgres from "postgres";
 import * as schema from "@/lib/db/schema";
 import {
   agentEvents,
+  agentRuns,
   agentSessions,
   interviewAgentRuns,
   interviewQuestions,
@@ -19,7 +20,10 @@ const databaseUrl = process.env.DATABASE_URL;
 test("room query restores committed state for its owner and hides it from other users", {
   skip: databaseUrl ? false : "DATABASE_URL is not configured",
 }, async () => {
-  const { getInterviewRoom } = await import("./application/get-interview-room");
+  const [{ getInterviewRoom }, { loadOwnedOpeningRunReference }] = await Promise.all([
+    import("./application/get-interview-room"),
+    import("./persistence/repository"),
+  ]);
   const client = postgres(databaseUrl!, { prepare: false });
   const database = drizzle(client, { schema });
   const ownerId = randomUUID();
@@ -53,8 +57,16 @@ test("room query restores committed state for its owner and hides it from other 
       targetRoundCount: 5,
       startedAt: new Date(),
     }).returning();
+    const [agentRun] = await database.insert(agentRuns).values({
+      sessionId: session.id,
+      status: "completed",
+      maxSteps: 3,
+      startedAt: new Date(),
+      completedAt: new Date(),
+    }).returning();
     const [logicalRun] = await database.insert(interviewAgentRuns).values({
       interviewId: interview.id,
+      currentAgentRunId: agentRun.id,
       triggerType: "opening",
       triggerKey: "opening",
       status: "completed",
@@ -72,6 +84,7 @@ test("room query restores committed state for its owner and hides it from other 
     await database.insert(agentEvents).values([
       {
         sessionId: session.id,
+        runId: agentRun.id,
         sequence: 1,
         type: "interview/session_initialized",
         payload: { interviewId: interview.id, openingRunId: logicalRun.id, status: "initializing" },
@@ -80,7 +93,44 @@ test("room query restores committed state for its owner and hides it from other 
       },
       {
         sessionId: session.id,
+        runId: agentRun.id,
         sequence: 2,
+        type: "step_started",
+        payload: { step: 1, attempt: 1 },
+        schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 3,
+        type: "assistant_chunk",
+        payload: { chunk: { type: "block-start", index: 0, blockType: "reasoning" } },
+        schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 4,
+        type: "assistant_chunk",
+        payload: { chunk: { type: "reasoning-delta", index: 0, text: "基于候选人的项目经历生成问题。" } },
+        schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 5,
+        type: "assistant_chunk",
+        payload: { chunk: { type: "block-end", index: 0, blockType: "reasoning" } },
+        schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 6,
         type: "interview/question_committed",
         payload: {
           interviewId: interview.id,
@@ -97,10 +147,29 @@ test("room query restores committed state for its owner and hides it from other 
       },
       {
         sessionId: session.id,
-        sequence: 3,
+        runId: agentRun.id,
+        sequence: 7,
         type: "assistant_message",
         payload: { raw: "not public" },
         schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 8,
+        type: "assistant_chunk",
+        payload: { chunk: { type: "reasoning-delta", index: 0, text: "internal payload" } },
+        schemaVersion: 1,
+        visibility: "internal",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 9,
+        type: "assistant_chunk",
+        payload: { chunk: { type: "reasoning-delta", index: 0, text: "future schema" } },
+        schemaVersion: 2,
         visibility: "model",
       },
     ]);
@@ -109,11 +178,22 @@ test("room query restores committed state for its owner and hides it from other 
     assert.equal(owned?.room.phase, "awaiting_answer");
     assert.equal(owned?.room.currentQuestion?.id, question.id);
     assert.equal(owned?.room.currentQuestion?.content, "请介绍你做过的事件驱动系统。");
-    assert.equal(owned?.transcript.length, 1);
-    assert.equal(owned?.transcript[0].type, "question");
+    assert.equal(owned?.transcript.length, 2);
+    assert.deepEqual(owned?.transcript.map((item) => item.type), ["reasoning", "question"]);
+    assert.equal(owned?.transcript[0].content, "基于候选人的项目经历生成问题。");
 
     const hidden = await getInterviewRoom({ userId: outsiderId, interviewId: interview.id }, { database });
     assert.equal(hidden, null);
+    assert.deepEqual(await loadOwnedOpeningRunReference({
+      database,
+      userId: ownerId,
+      interviewId: interview.id,
+    }), { openingRunId: logicalRun.id });
+    assert.equal(await loadOwnedOpeningRunReference({
+      database,
+      userId: outsiderId,
+      interviewId: interview.id,
+    }), null);
 
     await database.update(interviewQuestions).set({ status: "answered" })
       .where(eq(interviewQuestions.id, question.id));

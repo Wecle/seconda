@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
   Bot,
+  BrainCircuit,
+  ChevronRight,
   Loader2,
   Send,
   Sparkles,
@@ -17,11 +19,43 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
+import {
+  parseInterviewOpeningSSEBlock,
+  parseInterviewRoomPayload,
+} from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
   user: UserAvatarMenuUser;
+}
+
+function reasoningSummary(text: string, running: boolean) {
+  const visible = running ? text.trimEnd() : text;
+  const lines = visible.split("\n");
+  return (running ? lines.at(-1) : lines[0])?.trim() || (running ? "Thinking…" : "Reasoning");
+}
+
+function ReasoningRow({ text, running }: { text: string; running: boolean }) {
+  return (
+    <article className="flex gap-3">
+      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
+        <Bot className="size-4" />
+      </div>
+      <details className="group min-w-0 max-w-[85%] text-muted-foreground">
+        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 overflow-hidden rounded-md py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+          <BrainCircuit className={running ? "size-3.5 shrink-0 animate-pulse motion-reduce:animate-none" : "size-3.5 shrink-0"} />
+          <span className="shrink-0">Think</span>
+          <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-muted-foreground/50" />
+          <span className="min-w-0 flex-1 truncate text-xs">{reasoningSummary(text, running)}</span>
+          <ChevronRight className="size-3.5 shrink-0 transition-transform motion-reduce:transition-none group-open:rotate-90" />
+        </summary>
+        <div className="ml-[1.35rem] whitespace-pre-wrap break-words border-l pl-3 text-xs leading-5 [overflow-wrap:anywhere]">
+          {text}
+        </div>
+      </details>
+    </article>
+  );
 }
 
 function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: string }) {
@@ -47,8 +81,14 @@ function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: strin
 
 export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const { t } = useTranslation();
-  const { room, transcript } = view;
+  const [currentView, setCurrentView] = useState(view);
+  const { room, transcript } = currentView;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const lastTranscriptItem = transcript.at(-1);
+  const latestIncompleteReasoning = transcript.findLast((item) => item.type === "reasoning" && !item.complete);
+  const lastTranscriptVersion = lastTranscriptItem?.type === "reasoning"
+    ? `${lastTranscriptItem.endSequence}:${lastTranscriptItem.content.length}:${lastTranscriptItem.complete}`
+    : String(lastTranscriptItem?.sequence ?? 0);
   const progress = room.phase === "completed" || room.phase === "completing"
     ? 100
     : room.totalRounds > 0
@@ -68,7 +108,87 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   useLayoutEffect(() => {
     const viewport = scrollAreaRef.current?.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
     if (viewport) viewport.scrollTop = viewport.scrollHeight;
-  }, [room.interviewId]);
+  }, [room.interviewId, lastTranscriptVersion]);
+
+  useEffect(() => {
+    setCurrentView(view);
+  }, [view]);
+
+  useEffect(() => {
+    if (view.room.phase !== "initializing" && view.room.phase !== "generating_question") return;
+    const controller = new AbortController();
+
+    async function consumeOpeningStream(response: Response) {
+      if (!response.ok || !response.body) throw new Error("Opening stream is unavailable");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let completed = false;
+      while (true) {
+        const { done, value } = await reader.read();
+        buffer += decoder.decode(value, { stream: !done });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() ?? "";
+        for (const block of blocks) {
+          const event = parseInterviewOpeningSSEBlock(block);
+          if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
+            setCurrentView(event.view);
+          }
+          if (event?.type === "complete") completed = true;
+        }
+        if (done) break;
+      }
+      if (buffer.trim()) {
+        const event = parseInterviewOpeningSSEBlock(buffer);
+        if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
+          setCurrentView(event.view);
+        }
+        if (event?.type === "complete") completed = true;
+      }
+      return completed;
+    }
+
+    async function refreshRoom() {
+      const response = await fetch(`/api/interviews/${view.room.interviewId}`, {
+        signal: controller.signal,
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const refreshed = parseInterviewRoomPayload(await response.json());
+      if (refreshed?.room.interviewId === view.room.interviewId) setCurrentView(refreshed);
+    }
+
+    async function streamOpening() {
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          const response = await fetch(`/api/interviews/${view.room.interviewId}/opening`, {
+            method: "POST",
+            signal: controller.signal,
+          });
+          if (await consumeOpeningStream(response)) return;
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") throw error;
+        }
+        if (attempt < 3) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(resolve, attempt * 250);
+            controller.signal.addEventListener("abort", () => {
+              window.clearTimeout(timeout);
+              reject(new DOMException("Aborted", "AbortError"));
+            }, { once: true });
+          });
+        }
+      }
+      await refreshRoom();
+    }
+
+    streamOpening().catch((error) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        console.error("Failed to stream interview opening", error instanceof Error ? error.name : "Unknown error");
+      }
+    });
+    return () => controller.abort();
+  }, [view.room.interviewId, view.room.phase]);
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
@@ -123,6 +243,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-8 sm:px-6 md:py-10">
           <div className="space-y-7">
             {transcript.map((item) => {
+              if (item.type === "reasoning") {
+                const running = item === latestIncompleteReasoning && (
+                  room.phase === "generating_question" || room.phase === "evaluating_answer"
+                );
+                return (
+                  <ReasoningRow
+                    key={`reasoning-${item.runId}-${item.step}-${item.attempt}-${item.blockIndex}`}
+                    text={item.content}
+                    running={running}
+                  />
+                );
+              }
               if (item.type === "answer") {
                 return (
                   <article key={`answer-${item.answerId}`} className="flex justify-end gap-3">

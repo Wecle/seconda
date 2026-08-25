@@ -38,6 +38,33 @@ const completedSchema = z.object({
   interviewId: z.string().uuid(),
 }).strict();
 
+const stepStartedSchema = z.object({
+  step: z.number().int().positive(),
+  attempt: z.number().int().positive(),
+}).strict();
+
+const assistantChunkSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("block-start"),
+    index: z.number().int().nonnegative(),
+    blockType: z.enum(["text", "reasoning"]),
+  }).strict(),
+  z.object({
+    type: z.enum(["text-delta", "reasoning-delta"]),
+    index: z.number().int().nonnegative(),
+    text: z.string(),
+  }).strict(),
+  z.object({
+    type: z.literal("block-end"),
+    index: z.number().int().nonnegative(),
+    blockType: z.enum(["text", "reasoning"]),
+  }).strict(),
+]);
+
+const assistantChunkPayloadSchema = z.object({
+  chunk: assistantChunkSchema,
+}).strict();
+
 function assertOrderedEvents(events: readonly InterviewEventSnapshot[]) {
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -55,8 +82,69 @@ export function projectInterviewTranscript(input: {
 }): InterviewTranscriptItem[] {
   assertOrderedEvents(input.events);
   const transcript: InterviewTranscriptItem[] = [];
+  const currentStepByRun = new Map<string, { step: number; attempt: number }>();
+  const reasoningIndexByBlock = new Map<string, number>();
 
   for (const event of input.events) {
+    if (event.type === "step_started") {
+      if (event.visibility !== "model" || event.schemaVersion !== 1) {
+        throw new Error("Interview step event must use the supported private reasoning schema");
+      }
+      if (!event.runId) throw new Error("Interview step event must belong to a run");
+      currentStepByRun.set(event.runId, stepStartedSchema.parse(event.payload));
+      continue;
+    }
+    if (event.type === "assistant_chunk") {
+      if (event.visibility !== "model" || event.schemaVersion !== 1) {
+        throw new Error("Interview reasoning event must use the supported private reasoning schema");
+      }
+      const { chunk } = assistantChunkPayloadSchema.parse(event.payload);
+      if (chunk.type === "text-delta") continue;
+      if ((chunk.type === "block-start" || chunk.type === "block-end") && chunk.blockType === "text") {
+        continue;
+      }
+      if (!event.runId) throw new Error("Interview reasoning event must belong to a run");
+      const currentStep = currentStepByRun.get(event.runId);
+      if (!currentStep) throw new Error("Interview reasoning event must follow a step start");
+      const blockKey = `${event.runId}:${currentStep.step}:${currentStep.attempt}:${chunk.index}`;
+      const existingIndex = reasoningIndexByBlock.get(blockKey);
+
+      if (chunk.type === "block-start") {
+        if (existingIndex !== undefined) throw new Error("Interview reasoning block cannot start twice");
+        reasoningIndexByBlock.set(blockKey, transcript.length);
+        transcript.push({
+          type: "reasoning",
+          runId: event.runId,
+          step: currentStep.step,
+          attempt: currentStep.attempt,
+          blockIndex: chunk.index,
+          sequence: event.sequence,
+          endSequence: event.sequence,
+          content: "",
+          complete: false,
+        });
+        continue;
+      }
+
+      if (existingIndex === undefined) throw new Error("Interview reasoning block is missing its start");
+      const existing = transcript[existingIndex];
+      if (existing.type !== "reasoning" || existing.complete) {
+        throw new Error("Interview reasoning block is already complete");
+      }
+      transcript[existingIndex] = chunk.type === "reasoning-delta"
+        ? {
+            ...existing,
+            content: existing.content + chunk.text,
+            endSequence: event.sequence,
+          }
+        : {
+            ...existing,
+            complete: true,
+            endSequence: event.sequence,
+          };
+      continue;
+    }
+
     if (event.visibility !== "user" && event.visibility !== "model_and_user") {
       continue;
     }

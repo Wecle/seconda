@@ -75,21 +75,56 @@ test("room projection applies the documented phase priority and permissions", ()
 test("transcript projects only validated public domain events", () => {
   const events: InterviewEventSnapshot[] = [
     {
+      runId,
       sequence: 1,
-      type: "assistant_message",
-      payload: { reasoning: "must never be shown" },
+      type: "step_started",
+      payload: { step: 1, attempt: 1 },
       schemaVersion: 1,
       visibility: "model",
     },
     {
+      runId,
       sequence: 2,
+      type: "assistant_chunk",
+      payload: { chunk: { type: "block-start", index: 0, blockType: "reasoning" } },
+      schemaVersion: 1,
+      visibility: "model",
+    },
+    {
+      runId,
+      sequence: 3,
+      type: "assistant_chunk",
+      payload: { chunk: { type: "reasoning-delta", index: 0, text: "Inspect the resume. " } },
+      schemaVersion: 1,
+      visibility: "model",
+    },
+    {
+      runId,
+      sequence: 4,
+      type: "assistant_chunk",
+      payload: { chunk: { type: "reasoning-delta", index: 0, text: "Ask about system design." } },
+      schemaVersion: 1,
+      visibility: "model",
+    },
+    {
+      runId,
+      sequence: 5,
+      type: "assistant_chunk",
+      payload: { chunk: { type: "block-end", index: 0, blockType: "reasoning" } },
+      schemaVersion: 1,
+      visibility: "model",
+    },
+    {
+      runId,
+      sequence: 6,
       type: "interview/session_initialized",
       payload: { interviewId, openingRunId: runId, status: "initializing" },
       schemaVersion: 1,
       visibility: "model_and_user",
     },
     {
-      sequence: 3,
+      runId,
+      sequence: 7,
       type: "interview/question_committed",
       payload: {
         interviewId,
@@ -105,14 +140,16 @@ test("transcript projects only validated public domain events", () => {
       visibility: "model_and_user",
     },
     {
-      sequence: 4,
+      runId,
+      sequence: 8,
       type: "interview/answer_submitted",
       payload: { interviewId, answerId, questionId, sequence: 1, content: "With an event log.", skipped: false },
       schemaVersion: 1,
       visibility: "model_and_user",
     },
     {
-      sequence: 5,
+      runId,
+      sequence: 9,
       type: "interview/answer_analyzed",
       payload: { rawAnalysis: "private" },
       schemaVersion: 1,
@@ -121,6 +158,17 @@ test("transcript projects only validated public domain events", () => {
   ];
 
   assert.deepEqual(projectInterviewTranscript({ events }), [
+    {
+      type: "reasoning",
+      runId,
+      step: 1,
+      attempt: 1,
+      blockIndex: 0,
+      sequence: 2,
+      endSequence: 5,
+      content: "Inspect the resume. Ask about system design.",
+      complete: true,
+    },
     { type: "question", questionId, sequence: 1, kind: "main", content: "How did you design the system?" },
     { type: "answer", answerId, questionId, sequence: 1, content: "With an event log.", skipped: false },
   ]);
@@ -128,6 +176,7 @@ test("transcript projects only validated public domain events", () => {
 
 test("transcript fails closed for unordered, unknown, or invalid public events", () => {
   const base: InterviewEventSnapshot = {
+    runId,
     sequence: 1,
     type: "interview/session_initialized",
     payload: { interviewId, openingRunId: runId, status: "initializing" },
@@ -139,4 +188,51 @@ test("transcript fails closed for unordered, unknown, or invalid public events",
   assert.throws(() => projectInterviewTranscript({ events: [{ ...base, type: "interview/unknown" }] }), /Unsupported/);
   assert.throws(() => projectInterviewTranscript({ events: [{ ...base, payload: { interviewId } }] }));
   assert.throws(() => projectInterviewTranscript({ events: [{ ...base, type: "interview/answer_analyzed" }] }), /Internal/);
+  assert.throws(() => projectInterviewTranscript({ events: [{
+    ...base,
+    type: "assistant_chunk",
+    visibility: "model",
+    payload: { chunk: { type: "reasoning-delta", index: 0, text: "orphan" } },
+  }] }), /step start/);
+  assert.throws(() => projectInterviewTranscript({ events: [{
+    ...base,
+    type: "step_started",
+    visibility: "internal",
+    payload: { step: 1, attempt: 1 },
+  }] }), /private reasoning schema/);
+  assert.throws(() => projectInterviewTranscript({ events: [{
+    ...base,
+    type: "step_started",
+    visibility: "model",
+    schemaVersion: 2,
+    payload: { step: 1, attempt: 1 },
+  }] }), /private reasoning schema/);
+});
+
+test("transcript keeps reasoning blocks separate across steps and attempts", () => {
+  const events: InterviewEventSnapshot[] = [
+    { runId, sequence: 1, type: "step_started", payload: { step: 1, attempt: 1 }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 2, type: "assistant_chunk", payload: { chunk: { type: "block-start", index: 0, blockType: "reasoning" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 3, type: "assistant_chunk", payload: { chunk: { type: "reasoning-delta", index: 0, text: "first attempt" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 4, type: "step_started", payload: { step: 1, attempt: 2 }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 5, type: "assistant_chunk", payload: { chunk: { type: "block-start", index: 0, blockType: "reasoning" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 6, type: "assistant_chunk", payload: { chunk: { type: "reasoning-delta", index: 0, text: "retry" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 7, type: "assistant_chunk", payload: { chunk: { type: "block-end", index: 0, blockType: "reasoning" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 8, type: "step_started", payload: { step: 2, attempt: 1 }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 9, type: "assistant_chunk", payload: { chunk: { type: "block-start", index: 0, blockType: "reasoning" } }, schemaVersion: 1, visibility: "model" },
+    { runId, sequence: 10, type: "assistant_chunk", payload: { chunk: { type: "reasoning-delta", index: 0, text: "after tool" } }, schemaVersion: 1, visibility: "model" },
+  ];
+
+  const result = projectInterviewTranscript({ events });
+  assert.equal(result.length, 3);
+  assert.deepEqual(result.map((item) => item.type === "reasoning" ? {
+    step: item.step,
+    attempt: item.attempt,
+    content: item.content,
+    complete: item.complete,
+  } : null), [
+    { step: 1, attempt: 1, content: "first attempt", complete: false },
+    { step: 1, attempt: 2, content: "retry", complete: true },
+    { step: 2, attempt: 1, content: "after tool", complete: false },
+  ]);
 });
