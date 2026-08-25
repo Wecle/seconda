@@ -335,6 +335,8 @@ export const zh = {
       invalidState: "状态异常",
     },
     readOnlyMilestone: "当前为只读预览 · 回答能力将在下一里程碑开放",
+    skillLoaded: "Skill · {name} 已加载",
+    skillLoadFailed: "Skill · {name} 加载失败",
     noCurrentQuestion: "房间已从持久化状态恢复，当前没有可回答的问题。",
     transcript: "面试记录",
     yourAnswer: "你的回答",

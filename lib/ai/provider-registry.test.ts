@@ -104,6 +104,11 @@ test("智谱中国区 uses its mandated endpoint, stripped model id, and selecte
   assert.deepEqual(result.output, { value: "ok" });
 });
 
+test("智谱 conversational requests disable parallel tool calls", async () => {
+  const result = await requestFor("zhipu/glm-5.1", "quality", "quality-sentinel", "conversational");
+  assert.equal(result.body.parallel_tool_calls, false);
+});
+
 test("OpenAI uses only the selected tier key instead of ambient OPENAI_API_KEY", async () => {
   const saved = process.env.OPENAI_API_KEY;
   process.env.OPENAI_API_KEY = "poisoned-ambient-key";

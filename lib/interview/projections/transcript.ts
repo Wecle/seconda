@@ -65,6 +65,17 @@ const assistantChunkPayloadSchema = z.object({
   chunk: assistantChunkSchema,
 }).strict();
 
+const skillLoadedSchema = z.object({
+  name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  version: z.string().min(1).max(64),
+  contentHash: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict();
+
+const skillLoadFailedSchema = z.object({
+  name: z.string().min(1).max(100),
+  code: z.string().regex(/^[A-Z][A-Z0-9_]*$/).max(100),
+}).strict();
+
 function assertOrderedEvents(events: readonly InterviewEventSnapshot[]) {
   for (let index = 0; index < events.length; index += 1) {
     const event = events[index];
@@ -86,6 +97,35 @@ export function projectInterviewTranscript(input: {
   const reasoningIndexByBlock = new Map<string, number>();
 
   for (const event of input.events) {
+    if (event.type === "skill_loaded" || event.type === "skill_load_failed") {
+      if (event.visibility !== "model" || event.schemaVersion !== 1 || !event.runId) {
+        throw new Error("Interview skill event must use the supported private lifecycle schema");
+      }
+      if (event.type === "skill_loaded") {
+        const payload = skillLoadedSchema.parse(event.payload);
+        transcript.push({
+          type: "skill",
+          runId: event.runId,
+          sequence: event.sequence,
+          name: payload.name,
+          status: "loaded",
+          version: payload.version,
+          code: null,
+        });
+      } else {
+        const payload = skillLoadFailedSchema.parse(event.payload);
+        transcript.push({
+          type: "skill",
+          runId: event.runId,
+          sequence: event.sequence,
+          name: payload.name,
+          status: "failed",
+          version: null,
+          code: payload.code,
+        });
+      }
+      continue;
+    }
     if (event.type === "step_started") {
       if (event.visibility !== "model" || event.schemaVersion !== 1) {
         throw new Error("Interview step event must use the supported private reasoning schema");

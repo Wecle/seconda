@@ -9,6 +9,7 @@ import {
   BrainCircuit,
   ChevronRight,
   Loader2,
+  Puzzle,
   Send,
   Sparkles,
   UserRound,
@@ -265,6 +266,22 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                     </div>
                     <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border bg-card">
                       <UserRound className="size-4" />
+                    </div>
+                  </article>
+                );
+              }
+              if (item.type === "skill") {
+                const label = item.status === "loaded"
+                  ? t.interview.skillLoaded.replace("{name}", item.name)
+                  : t.interview.skillLoadFailed.replace("{name}", item.name);
+                return (
+                  <article key={`skill-${item.runId}-${item.sequence}`} className="flex gap-3">
+                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
+                      <Bot className="size-4" />
+                    </div>
+                    <div className="flex min-h-8 items-center gap-2 text-xs text-muted-foreground">
+                      <Puzzle className="size-3.5" />
+                      <span>{label}</span>
                     </div>
                   </article>
                 );

@@ -350,6 +350,8 @@ export const en = {
       invalidState: "Invalid state",
     },
     readOnlyMilestone: "Read-only preview · Answering arrives in the next milestone",
+    skillLoaded: "Skill · {name} loaded",
+    skillLoadFailed: "Skill · {name} failed to load",
     noCurrentQuestion: "The room was restored from durable state, but there is no current question.",
     transcript: "Interview transcript",
     yourAnswer: "Your answer",

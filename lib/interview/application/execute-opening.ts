@@ -3,6 +3,7 @@ import { appendAgentEvent, settleAgentRun } from "@/lib/agent/repository";
 import { runAgent, safeAgentError } from "@/lib/agent/runtime";
 import type { AgentEventSink } from "@/lib/agent/types";
 import { applicationCapabilityRegistry } from "@/lib/application-capabilities";
+import { applicationSkillRegistry } from "@/lib/application-skills";
 import { buildOpeningModelMessage } from "../agent/context";
 import type { ResumeEvidenceMap } from "../domain/create-interview";
 import {
@@ -96,7 +97,7 @@ export async function executeInterviewOpening(input: {
       maxSteps: claim.agentRun.maxSteps,
       signal,
       events,
-    }, { capabilities: applicationCapabilityRegistry });
+    }, { capabilities: applicationCapabilityRegistry, skills: applicationSkillRegistry });
     const question = await loadOpeningQuestion({ database, userId: input.userId, openingRunId: input.openingRunId });
     if (!question) throw new Error("Interview agent finished without committing an opening question");
     await settleAgentRun({

@@ -3,10 +3,14 @@ import { z } from "zod";
 import { createProviderModel } from "@/lib/ai/provider-registry";
 import type { AgentEventSink, AgentRunInput } from "./types";
 import type { AgentCapabilityRegistry } from "./capabilities/registry";
-import type { CapabilityContext } from "./capabilities/types";
+import { CURRENT_AGENT_STEP, type CapabilityContext } from "./capabilities/types";
 import { ContextProviderRegistry, renderSystemPrompt } from "./context-providers";
 import { prepareModelContext } from "./context-lifecycle";
 import { isContextOverflowError } from "./runtime-policy";
+import { skillCatalogEventPayload, type AgentSkillRegistry } from "./skills/registry";
+import { createSkillCatalogContextProvider } from "./skills/context";
+import { createSkillToolRegistry, SKILL_LOAD_FAILED, SKILL_TOOL_ERROR } from "./skills/tool";
+import type { SkillCatalogSnapshot } from "./skills/types";
 
 function getQualityApiKey() {
   const key = process.env.QUALITY_MODEL_API_KEY?.trim();
@@ -29,6 +33,14 @@ function usagePayload(usage: LanguageModelUsage) {
   };
 }
 
+function toolTraceOutput(toolName: string, output: unknown) {
+  if (toolName !== "skill" || !output || typeof output !== "object") return output;
+  const record = output as Record<string, unknown>;
+  return Object.fromEntries(["status", "name", "version", "contentHash"].flatMap((key) => (
+    key in record ? [[key, record[key]]] : []
+  )));
+}
+
 async function appendModelMessages(events: AgentEventSink, messages: readonly ModelMessage[]) {
   for (const message of messages) {
     const type = message.role === "assistant"
@@ -45,6 +57,8 @@ export type AgentRuntimeDependencies = {
   provider?: ReturnType<typeof createProviderModel>;
   prepareContext?: typeof prepareModelContext;
   stream?: typeof streamText;
+  skills?: AgentSkillRegistry;
+  loadEvents?: (sessionId: string) => Promise<import("./types").AgentEvent[]>;
 };
 
 export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies) {
@@ -55,6 +69,32 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     apiKey: getQualityApiKey(),
     responseMode: "conversational",
   });
+  if (capability.skillAllowlist?.length && !dependencies.skills) {
+    throw new Error(`Capability ${capability.id} requires a skill registry`);
+  }
+  let createdSkillCatalog = false;
+  let skillCatalog: SkillCatalogSnapshot | undefined;
+  if (capability.skillAllowlist?.length && dependencies.skills) {
+    const events = await (dependencies.loadEvents ?? (async (sessionId: string) => (
+      (await import("./repository")).loadAgentEvents(sessionId)
+    )))(input.sessionId);
+    const persisted = events.filter((event) => (
+      event.runId === input.runId && event.type === "skill_catalog_snapshotted"
+    ));
+    if (persisted.length > 1) throw new Error("Agent run has more than one persisted Skill catalog");
+    if (persisted[0]) {
+      skillCatalog = dependencies.skills.restoreSnapshot(persisted[0].payload, capability.skillAllowlist);
+    } else {
+      skillCatalog = await dependencies.skills.snapshot({
+        sessionId: input.sessionId,
+        runId: input.runId,
+        userId: input.userId,
+        capability: capability.id,
+        allowlist: capability.skillAllowlist,
+      });
+      createdSkillCatalog = true;
+    }
+  }
   const capabilityContext: CapabilityContext = {
     sessionId: input.sessionId,
     runId: input.runId,
@@ -66,25 +106,56 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     state: new Map(),
     signal: input.signal,
     events: input.events,
+    skillCatalog,
   };
-  const toolsRegistry = capability.createToolRegistry(capabilityContext);
-  const tools = toolsRegistry.toAISDKTools();
+  const capabilityToolsRegistry = capability.createToolRegistry(capabilityContext);
+  const skillToolsRegistry = skillCatalog?.skills.length ? createSkillToolRegistry() : undefined;
+  const capabilitySchemas = capabilityToolsRegistry.schemas();
+  const skillSchemas = skillToolsRegistry?.schemas() ?? [];
+  const duplicateTool = capabilitySchemas.find(({ name }) => skillSchemas.some((skill) => skill.name === name));
+  if (duplicateTool) throw new Error(`Tool ${duplicateTool.name} is registered by both capability and skill runtime`);
+  const tools = {
+    ...capabilityToolsRegistry.toAISDKTools(),
+    ...(skillToolsRegistry && skillCatalog && dependencies.skills
+      ? skillToolsRegistry.toAISDKTools({
+          sessionId: input.sessionId,
+          runId: input.runId,
+          userId: input.userId,
+          capability: capability.id,
+          snapshot: skillCatalog,
+          registry: dependencies.skills,
+          signal: input.signal,
+          events: input.events,
+          state: capabilityContext.state,
+          loadStep: capability.skillLoadStep,
+        })
+      : {}),
+  };
+  const toolSchemas = [...skillSchemas, ...capabilitySchemas];
+  const toolOrder = [
+    ...(skillToolsRegistry ? ["skill"] : []),
+    ...(capabilityToolsRegistry.toolOrder ?? []),
+  ];
   const contextProviders = new ContextProviderRegistry();
   for (const provider of capability.createContextProviders(capabilityContext)) {
     contextProviders.register(provider);
   }
+  if (skillCatalog?.skills.length) contextProviders.register(createSkillCatalogContextProvider(skillCatalog));
   const system = renderSystemPrompt(await contextProviders.assemble({
     model: input.model,
     sessionId: input.sessionId,
   }));
   const maxSteps = Math.min(input.maxSteps, capability.maxSteps);
 
+  if (skillCatalog && createdSkillCatalog) {
+    await input.events.append("skill_catalog_snapshotted", skillCatalogEventPayload(skillCatalog));
+  }
   await input.events.append("run_started", {
     model: input.model,
     capability: capability.id,
     promptVersion: input.promptVersion,
     maxSteps,
-    tools: toolsRegistry.schemas().map(({ name, description }) => ({ name, description })),
+    tools: toolSchemas.map(({ name, description }) => ({ name, description })),
   });
   const prepareContext = (trigger?: "pressure" | "context-overflow") => (dependencies.prepareContext ?? prepareModelContext)({
     sessionId: input.sessionId,
@@ -92,7 +163,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     model: input.model,
     contextWindow: provider.metadata.contextWindow,
     system,
-    toolSchemas: toolsRegistry.schemas().map(({ name, description, inputSchema }) => ({
+    toolSchemas: toolSchemas.map(({ name, description, inputSchema }) => ({
       name,
       description,
       inputSchema: z.toJSONSchema(inputSchema),
@@ -138,6 +209,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
   const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
   let nextContext = prepared;
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
+    capabilityContext.state.set(CURRENT_AGENT_STEP, stepIndex + 1);
     const beforeStep = await capability.beforeStep?.({ ...capabilityContext, step: stepIndex + 1 });
     if (beforeStep?.action === "stop") break;
     if (stepIndex > 0) nextContext = await prepareContext();
@@ -153,7 +225,10 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
           system,
           messages: nextContext.messages,
           tools,
-          toolOrder: toolsRegistry.toolOrder,
+          toolOrder,
+          providerOptions: provider.metadata.provider === "openai"
+            ? { openai: { parallelToolCalls: false } }
+            : undefined,
           stopWhen: stepCountIs(1),
           abortSignal: input.signal,
           maxRetries: 0,
@@ -212,10 +287,17 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
               await input.events.append("tool_completed", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
-                output: part.output,
+                output: toolTraceOutput(part.toolName, part.output),
               });
               break;
             case "tool-error":
+              if (part.toolName === "skill" && !capabilityContext.state.has(SKILL_LOAD_FAILED)) {
+                capabilityContext.state.set(SKILL_LOAD_FAILED, SKILL_TOOL_ERROR);
+                await input.events.append("skill_load_failed", {
+                  name: "invalid-input",
+                  code: SKILL_TOOL_ERROR,
+                });
+              }
               await input.events.append("tool_completed", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,

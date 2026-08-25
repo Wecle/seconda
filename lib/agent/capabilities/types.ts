@@ -1,6 +1,7 @@
 import type { ToolSet } from "ai";
 import type { AgentEvent, AgentEventSink, ContextProvider } from "../types";
 import type { AgentToolRegistry } from "../tool-registry";
+import type { SkillCatalogSnapshot } from "../skills/types";
 
 export type AgentCapabilityId = string & {};
 
@@ -8,6 +9,8 @@ export const BUILT_IN_CAPABILITIES = {
   workspace: "workspace",
   interview: "interview",
 } as const;
+
+export const CURRENT_AGENT_STEP = Symbol("current-agent-step");
 
 export type CapabilityContext = {
   sessionId: string;
@@ -20,6 +23,7 @@ export type CapabilityContext = {
   state: Map<PropertyKey, unknown>;
   signal: AbortSignal;
   events: AgentEventSink;
+  skillCatalog?: SkillCatalogSnapshot;
 };
 
 export type StepDecision =
@@ -46,6 +50,8 @@ export interface AgentCapability {
   readonly id: AgentCapabilityId;
   readonly promptVersion: string;
   readonly maxSteps: number;
+  readonly skillAllowlist?: readonly string[];
+  readonly skillLoadStep?: number;
 
   createContextProviders(context: CapabilityContext): ContextProvider[];
   createToolRegistry(context: CapabilityContext): CapabilityToolRegistry;

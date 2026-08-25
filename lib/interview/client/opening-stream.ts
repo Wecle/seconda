@@ -51,6 +51,15 @@ const transcriptItemSchema = z.discriminatedUnion("type", [
     content: z.string(),
   }).strict(),
   z.object({
+    type: z.literal("skill"),
+    runId: z.string().uuid(),
+    sequence: z.number().int().positive(),
+    name: z.string(),
+    status: z.enum(["loaded", "failed"]),
+    version: z.string().nullable(),
+    code: z.string().nullable(),
+  }).strict(),
+  z.object({
     type: z.literal("answer"),
     answerId: z.string().uuid(),
     questionId: z.string().uuid(),

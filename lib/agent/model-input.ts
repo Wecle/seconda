@@ -57,6 +57,54 @@ function toolResultIds(message: ModelMessage) {
   });
 }
 
+function skillCallIds(message: ModelMessage) {
+  if (message.role !== "assistant" || !Array.isArray(message.content)) return [];
+  return message.content.flatMap((part) => {
+    if (!part || typeof part !== "object") return [];
+    const record = part as Record<string, unknown>;
+    return record.type === "tool-call" && record.toolName === "skill" && typeof record.toolCallId === "string"
+      ? [record.toolCallId]
+      : [];
+  });
+}
+
+function skillResultIds(message: ModelMessage) {
+  if (message.role !== "tool" || !Array.isArray(message.content)) return [];
+  return message.content.flatMap((part) => {
+    if (!part || typeof part !== "object") return [];
+    const record = part as Record<string, unknown>;
+    return record.type === "tool-result" && record.toolName === "skill" && typeof record.toolCallId === "string"
+      ? [record.toolCallId]
+      : [];
+  });
+}
+
+function retainCurrentUnconsumedSkillPair(
+  nodes: Array<{ sequence: number; runId: string | null; message: ModelMessage }>,
+  activeRunId?: string,
+) {
+  if (!activeRunId) return nodes;
+  const callPosition = new Map<string, number>();
+  const resultPosition = new Map<string, number>();
+  nodes.forEach(({ message }, index) => {
+    for (const id of skillCallIds(message)) callPosition.set(id, index);
+    for (const id of skillResultIds(message)) resultPosition.set(id, index);
+  });
+  const retained = new Set([...callPosition].flatMap(([id, callIndex]) => {
+    const resultIndex = resultPosition.get(id);
+    if (resultIndex === undefined) return [];
+    if (nodes[callIndex].runId !== activeRunId || nodes[resultIndex].runId !== activeRunId) return [];
+    const consumed = nodes.slice(resultIndex + 1).some((node) => (
+      node.runId === activeRunId && node.message.role === "assistant"
+    ));
+    return consumed ? [] : [id];
+  }));
+  return nodes.filter(({ message }) => (
+    skillCallIds(message).every((id) => retained.has(id))
+    && skillResultIds(message).every((id) => retained.has(id))
+  ));
+}
+
 function removeUnpairedTools(nodes: Array<{ sequence: number; message: ModelMessage }>) {
   const callPositions = new Map<string, number>();
   const resultPositions = new Map<string, number>();
@@ -86,14 +134,14 @@ function removeUnpairedTools(nodes: Array<{ sequence: number; message: ModelMess
  * surface. Lifecycle, chunks, pressure and compaction bookkeeping never enter
  * model history. Replacement events shadow source nodes without deleting them.
  */
-export function projectModelInput(events: readonly AgentEvent[]): ModelInputProjection {
-  let nodes: Array<{ sequence: number; message: ModelMessage }> = [];
+export function projectModelInput(events: readonly AgentEvent[], options: { activeRunId?: string } = {}): ModelInputProjection {
+  let nodes: Array<{ sequence: number; runId: string | null; message: ModelMessage }> = [];
   const ignored = new Set<number>();
 
   for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
     const projected = modelMessage(event);
     if (projected) {
-      nodes.push({ sequence: event.sequence, message: projected });
+      nodes.push({ sequence: event.sequence, runId: event.runId, message: projected });
       continue;
     }
 
@@ -115,11 +163,12 @@ export function projectModelInput(events: readonly AgentEvent[]): ModelInputProj
     for (const sequence of selected) ignored.add(sequence);
     nodes = [
       ...nodes.filter((_, index) => index < start && !shadowed.has(nodes[index].sequence)),
-      { sequence: event.sequence, message: replace.message },
+      { sequence: event.sequence, runId: event.runId, message: replace.message },
       ...nodes.filter((_, index) => index >= start && !shadowed.has(nodes[index].sequence)),
     ];
   }
 
+  nodes = retainCurrentUnconsumedSkillPair(nodes, options.activeRunId);
   const paired = removeUnpairedTools(nodes);
   const retained = new Set(paired.map(({ sequence }) => sequence));
   for (const node of nodes) if (!retained.has(node.sequence)) ignored.add(node.sequence);

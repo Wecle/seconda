@@ -84,17 +84,16 @@ function compatibleProvider(input: ProviderRegistryInput, provider: "deepseek" |
     apiKey: input.apiKey,
     fetch: input.fetch,
     supportsStructuredOutputs: false,
-    ...(isDeepSeek
-      ? {
-          transformRequestBody: (body) => ({
-            ...body,
-            ...(input.responseMode === "structured"
-              ? { response_format: { type: "json_object" } }
-              : { parallel_tool_calls: false }),
+    transformRequestBody: (body) => ({
+      ...body,
+      ...(input.responseMode === "conversational" ? { parallel_tool_calls: false } : {}),
+      ...(isDeepSeek
+        ? {
+            ...(input.responseMode === "structured" ? { response_format: { type: "json_object" } } : {}),
             thinking: { type: input.responseMode === "conversational" ? "enabled" : "disabled" },
-          }),
-        }
-      : {}),
+          }
+        : {}),
+    }),
   });
 
   return {

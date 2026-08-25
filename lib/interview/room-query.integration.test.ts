@@ -131,6 +131,19 @@ test("room query restores committed state for its owner and hides it from other 
         sessionId: session.id,
         runId: agentRun.id,
         sequence: 6,
+        type: "skill_loaded",
+        payload: {
+          name: "resume-deep-dive",
+          version: "1.0.0",
+          contentHash: `sha256:${"a".repeat(64)}`,
+        },
+        schemaVersion: 1,
+        visibility: "model",
+      },
+      {
+        sessionId: session.id,
+        runId: agentRun.id,
+        sequence: 7,
         type: "interview/question_committed",
         payload: {
           interviewId: interview.id,
@@ -148,7 +161,7 @@ test("room query restores committed state for its owner and hides it from other 
       {
         sessionId: session.id,
         runId: agentRun.id,
-        sequence: 7,
+        sequence: 8,
         type: "assistant_message",
         payload: { raw: "not public" },
         schemaVersion: 1,
@@ -157,7 +170,7 @@ test("room query restores committed state for its owner and hides it from other 
       {
         sessionId: session.id,
         runId: agentRun.id,
-        sequence: 8,
+        sequence: 9,
         type: "assistant_chunk",
         payload: { chunk: { type: "reasoning-delta", index: 0, text: "internal payload" } },
         schemaVersion: 1,
@@ -166,7 +179,7 @@ test("room query restores committed state for its owner and hides it from other 
       {
         sessionId: session.id,
         runId: agentRun.id,
-        sequence: 9,
+        sequence: 10,
         type: "assistant_chunk",
         payload: { chunk: { type: "reasoning-delta", index: 0, text: "future schema" } },
         schemaVersion: 2,
@@ -178,9 +191,10 @@ test("room query restores committed state for its owner and hides it from other 
     assert.equal(owned?.room.phase, "awaiting_answer");
     assert.equal(owned?.room.currentQuestion?.id, question.id);
     assert.equal(owned?.room.currentQuestion?.content, "请介绍你做过的事件驱动系统。");
-    assert.equal(owned?.transcript.length, 2);
-    assert.deepEqual(owned?.transcript.map((item) => item.type), ["reasoning", "question"]);
-    assert.equal(owned?.transcript[0].content, "基于候选人的项目经历生成问题。");
+    assert.equal(owned?.transcript.length, 3);
+    assert.deepEqual(owned?.transcript.map((item) => item.type), ["reasoning", "skill", "question"]);
+    assert.equal(owned?.transcript[0].type, "reasoning");
+    assert.equal(owned?.transcript[0].type === "reasoning" ? owned.transcript[0].content : null, "基于候选人的项目经历生成问题。");
 
     const hidden = await getInterviewRoom({ userId: outsiderId, interviewId: interview.id }, { database });
     assert.equal(hidden, null);

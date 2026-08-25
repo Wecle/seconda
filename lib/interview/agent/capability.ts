@@ -6,11 +6,15 @@ import {
   INTERVIEW_ACTION_COMMITTED,
   interviewCapabilityConfigSchema,
 } from "./tools";
+import { INTERVIEW_SKILL_NAMES } from "./skills/built-ins";
+import { SKILL_LOAD_FAILED } from "@/lib/agent/skills/tool";
 
 export const interviewCapability: AgentCapability = {
   id: BUILT_IN_CAPABILITIES.interview,
   promptVersion: INTERVIEW_AGENT_PROMPT_VERSION,
   maxSteps: 3,
+  skillAllowlist: INTERVIEW_SKILL_NAMES,
+  skillLoadStep: 1,
   createContextProviders(context) {
     interviewCapabilityConfigSchema.parse(context.capabilityConfig);
     return createInterviewContextProviders(context.systemPrompt);
@@ -23,6 +27,7 @@ export const interviewCapability: AgentCapability = {
       agentRunId: context.runId,
       config: interviewCapabilityConfigSchema.parse(context.capabilityConfig),
       state: context.state,
+      skillLoadStep: 1,
       signal: context.signal,
     };
     return {
@@ -32,6 +37,9 @@ export const interviewCapability: AgentCapability = {
     };
   },
   afterStep(context) {
+    if (context.state.has(SKILL_LOAD_FAILED)) {
+      return { action: "stop", reason: "interview-skill-load-failed" };
+    }
     return context.state.get(INTERVIEW_ACTION_COMMITTED)
       ? { action: "stop", reason: "interview-action-committed" }
       : { action: "continue" };

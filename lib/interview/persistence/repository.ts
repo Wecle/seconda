@@ -384,7 +384,7 @@ export async function loadOwnedInterviewRoomData(input: {
       or(
         inArray(agentEvents.visibility, ["user", "model_and_user"]),
         and(
-          inArray(agentEvents.type, ["step_started", "assistant_chunk"]),
+          inArray(agentEvents.type, ["step_started", "assistant_chunk", "skill_loaded", "skill_load_failed"]),
           eq(agentEvents.visibility, "model"),
           eq(agentEvents.schemaVersion, 1),
         ),

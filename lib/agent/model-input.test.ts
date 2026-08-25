@@ -109,3 +109,35 @@ test("rejects a tool result that appears before its call", () => {
   ]);
   assert.deepEqual(result.messages, []);
 });
+
+test("skill results are visible only to the next step of their own run", () => {
+  const skillCall = {
+    role: "assistant",
+    content: [{ type: "tool-call", toolCallId: "skill-1", toolName: "skill", input: { name: "resume-deep-dive" } }],
+  } as ModelMessage;
+  const skillResult = {
+    role: "tool",
+    content: [{
+      type: "tool-result",
+      toolCallId: "skill-1",
+      toolName: "skill",
+      output: { type: "json", value: { instructions: "private method body" } },
+    }],
+  } as ModelMessage;
+  const loaded = [
+    event(1, "assistant_message", { message: skillCall }),
+    event(2, "tool_result_message", { message: skillResult }),
+  ];
+  assert.match(JSON.stringify(projectModelInput(loaded, { activeRunId: "run" }).messages), /private method body/);
+
+  const consumed = [
+    ...loaded,
+    event(3, "assistant_message", { message: { role: "assistant", content: "used the skill" } }),
+  ];
+  const afterConsumption = projectModelInput(consumed, { activeRunId: "run" });
+  assert.doesNotMatch(JSON.stringify(afterConsumption.messages), /private method body/);
+  assert.deepEqual(afterConsumption.messages, [{ role: "assistant", content: "used the skill" }]);
+
+  const laterRun = loaded.map((entry) => ({ ...entry, runId: "older-run" }));
+  assert.deepEqual(projectModelInput(laterRun, { activeRunId: "new-run" }).messages, []);
+});

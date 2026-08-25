@@ -52,6 +52,7 @@ test("workspace capability owns its prompt context, tools, and continuation poli
     "read_file",
     "search_files",
   ]);
+  assert.equal(workspaceCapability.skillAllowlist, undefined);
   assert.deepEqual(await workspaceCapability.afterStep?.({ ...context, step: 1, content: [{ type: "tool-result" }] }), {
     action: "continue",
   });

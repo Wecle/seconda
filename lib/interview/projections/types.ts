@@ -18,6 +18,15 @@ export type InterviewTranscriptItem =
       content: string;
     }
   | {
+      type: "skill";
+      runId: string;
+      sequence: number;
+      name: string;
+      status: "loaded" | "failed";
+      version: string | null;
+      code: string | null;
+    }
+  | {
       type: "answer";
       answerId: string;
       questionId: string;

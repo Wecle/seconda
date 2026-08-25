@@ -111,7 +111,7 @@ async function recoverOrphanedCompactions(input: PrepareContextInput, events: Ag
 }
 
 async function spillLargeToolResults(input: PrepareContextInput, events: AgentEvent[]) {
-  const projection = projectModelInput(events);
+  const projection = projectModelInput(events, { activeRunId: input.runId });
   const replacements: Array<{ originalSequence: number; message: ModelMessage }> = [];
   projection.messages.forEach((message, index) => {
     const cropped = cropToolResultMessage(message);
@@ -136,7 +136,7 @@ export async function prepareModelContext(input: PrepareContextInput): Promise<C
   const spillCount = await spillLargeToolResults(input, events);
   if (spillCount > 0) events = await store.load(input.sessionId);
 
-  let projection = projectModelInput(events);
+  let projection = projectModelInput(events, { activeRunId: input.runId });
   let estimatedTokens = measureRequestTokens(input.system, projection.messages, input.toolSchemas);
   const pressure = contextPressure({ estimatedTokens, contextWindow });
   await emit(input, "request_context", {
@@ -206,7 +206,7 @@ export async function prepareModelContext(input: PrepareContextInput): Promise<C
   }
   for (const event of committed) input.publish?.(event);
   events = await store.load(input.sessionId);
-  projection = projectModelInput(events);
+  projection = projectModelInput(events, { activeRunId: input.runId });
   estimatedTokens = measureRequestTokens(input.system, projection.messages, input.toolSchemas);
   const afterPressure = contextPressure({ estimatedTokens, contextWindow });
   if (estimatedTokens >= afterPressure.usableTokens) {

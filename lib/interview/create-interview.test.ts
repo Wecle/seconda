@@ -206,7 +206,7 @@ test("createInterview atomically freezes a parsed resume and is idempotent under
       .where(eq(agentSessions.id, created.agentSessionId));
     assert.equal(session.capability, "interview");
     assert.equal(session.workspaceRoot, null);
-    assert.equal(session.promptVersion, "interview-agent-v1");
+    assert.equal(session.promptVersion, "interview-agent-v2");
     assert.match(session.systemPrompt, /所有候选人可见的问题、提示和结束语必须使用中文/);
     assert.match(session.systemPrompt, /题目深度应匹配 Senior 级别/);
     assert.doesNotMatch(session.systemPrompt, /Platform Engineer/);

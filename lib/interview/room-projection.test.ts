@@ -117,6 +117,18 @@ test("transcript projects only validated public domain events", () => {
     {
       runId,
       sequence: 6,
+      type: "skill_loaded",
+      payload: {
+        name: "resume-deep-dive",
+        version: "1.0.0",
+        contentHash: `sha256:${"a".repeat(64)}`,
+      },
+      schemaVersion: 1,
+      visibility: "model",
+    },
+    {
+      runId,
+      sequence: 7,
       type: "interview/session_initialized",
       payload: { interviewId, openingRunId: runId, status: "initializing" },
       schemaVersion: 1,
@@ -124,7 +136,7 @@ test("transcript projects only validated public domain events", () => {
     },
     {
       runId,
-      sequence: 7,
+      sequence: 8,
       type: "interview/question_committed",
       payload: {
         interviewId,
@@ -141,7 +153,7 @@ test("transcript projects only validated public domain events", () => {
     },
     {
       runId,
-      sequence: 8,
+      sequence: 9,
       type: "interview/answer_submitted",
       payload: { interviewId, answerId, questionId, sequence: 1, content: "With an event log.", skipped: false },
       schemaVersion: 1,
@@ -149,7 +161,7 @@ test("transcript projects only validated public domain events", () => {
     },
     {
       runId,
-      sequence: 9,
+      sequence: 10,
       type: "interview/answer_analyzed",
       payload: { rawAnalysis: "private" },
       schemaVersion: 1,
@@ -168,6 +180,15 @@ test("transcript projects only validated public domain events", () => {
       endSequence: 5,
       content: "Inspect the resume. Ask about system design.",
       complete: true,
+    },
+    {
+      type: "skill",
+      runId,
+      sequence: 6,
+      name: "resume-deep-dive",
+      status: "loaded",
+      version: "1.0.0",
+      code: null,
     },
     { type: "question", questionId, sequence: 1, kind: "main", content: "How did you design the system?" },
     { type: "answer", answerId, questionId, sequence: 1, content: "With an event log.", skipped: false },
@@ -207,6 +228,12 @@ test("transcript fails closed for unordered, unknown, or invalid public events",
     schemaVersion: 2,
     payload: { step: 1, attempt: 1 },
   }] }), /private reasoning schema/);
+  assert.throws(() => projectInterviewTranscript({ events: [{
+    ...base,
+    type: "skill_loaded",
+    visibility: "internal",
+    payload: { name: "resume-deep-dive", version: "1", contentHash: `sha256:${"a".repeat(64)}` },
+  }] }), /private lifecycle schema/);
 });
 
 test("transcript keeps reasoning blocks separate across steps and attempts", () => {
