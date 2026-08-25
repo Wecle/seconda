@@ -63,6 +63,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     systemPrompt: input.systemPrompt,
     promptVersion: input.promptVersion,
     capabilityConfig: input.capabilityConfig,
+    state: new Map(),
     signal: input.signal,
     events: input.events,
   };

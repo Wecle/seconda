@@ -288,10 +288,12 @@ export const en = {
     creatingInterview: "Creating...",
     creationSucceeded: "Interview Created",
     creationSucceededDescription:
-      "Your settings and resume snapshot are saved. Automatic first-question generation arrives in the next milestone.",
+      "Your settings and resume snapshot are saved, and the interviewer has prepared the first question.",
     interviewId: "Interview ID",
     creationStatus: "Current Status",
     statusInitializing: "Initializing",
+    statusActive: "Ready to answer",
+    firstQuestion: "First question",
     creationFailed: "Could not create the interview. Please try again.",
     creationConflict:
       "This creation attempt conflicts with an earlier request. Close the dialog and start again.",

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { getAgentSession, listAgentUiEvents, toAgentSessionSummary } from "@/lib/agent/repository";
+import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 
 export async function GET(
   request: Request,
@@ -15,8 +16,8 @@ export async function GET(
     return NextResponse.json({ error: "Invalid history cursor" }, { status: 400 });
   }
   const [session, events] = await Promise.all([
-    getAgentSession(userId, id),
-    listAgentUiEvents(userId, id, before),
+    getAgentSession(userId, id, BUILT_IN_CAPABILITIES.workspace),
+    listAgentUiEvents(userId, id, before, BUILT_IN_CAPABILITIES.workspace),
   ]);
   if (!session || !events) return NextResponse.json({ error: "Session not found" }, { status: 404 });
   return NextResponse.json({

@@ -17,6 +17,7 @@ export type CapabilityContext = {
   systemPrompt: string;
   promptVersion: string;
   capabilityConfig: unknown;
+  state: Map<PropertyKey, unknown>;
   signal: AbortSignal;
   events: AgentEventSink;
 };

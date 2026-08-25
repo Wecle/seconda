@@ -13,6 +13,7 @@ import {
 import { registerActiveRun } from "@/lib/agent/run-registry";
 import { runAgent, safeAgentError } from "@/lib/agent/runtime";
 import { builtInCapabilityRegistry } from "@/lib/agent/capabilities/built-ins";
+import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 import type { AgentEvent, AgentEventSink } from "@/lib/agent/types";
 
 export const runtime = "nodejs";
@@ -34,7 +35,12 @@ export async function POST(
   const parsed = messageSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return Response.json({ error: "Message is required" }, { status: 400 });
   const { id: sessionId } = await params;
-  const started = await beginAgentRun({ userId, sessionId, maxSteps: DEFAULT_AGENT_MAX_STEPS });
+  const started = await beginAgentRun({
+    userId,
+    sessionId,
+    maxSteps: DEFAULT_AGENT_MAX_STEPS,
+    capability: BUILT_IN_CAPABILITIES.workspace,
+  });
   if (!started) {
     return Response.json({ error: "Session not found or already running" }, { status: 409 });
   }

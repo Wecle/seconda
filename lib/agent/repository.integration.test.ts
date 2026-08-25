@@ -14,6 +14,12 @@ test("capability persistence accepts non-workspace sessions without fake paths a
   const database = drizzle(client, { schema });
   const userId = randomUUID();
   try {
+    const {
+      beginAgentRun,
+      forkAgentSession,
+      getAgentSession,
+      listAgentSessions,
+    } = await import("./repository");
     await database.insert(users).values({ id: userId, email: `${userId}@example.test` });
     await assert.rejects(database.insert(agentSessions).values({
       userId, title: "Invalid workspace", model: "deepseek/deepseek-chat",
@@ -24,6 +30,19 @@ test("capability persistence accepts non-workspace sessions without fake paths a
       capability: "isolated", promptVersion: "isolated-v1", systemPrompt: "test", workspaceRoot: null,
     }).returning();
     await assert.rejects(database.update(agentSessions).set({ capability: "workspace" }).where(eq(agentSessions.id, session.id)));
+    const [workspace] = await database.insert(agentSessions).values({
+      userId, title: "Workspace only", model: "deepseek/deepseek-chat",
+      capability: "workspace", promptVersion: "workspace-agent-v1", systemPrompt: "test", workspaceRoot: process.cwd(),
+    }).returning();
+    assert.deepEqual((await listAgentSessions(userId, "workspace")).map(({ id }) => id), [workspace.id]);
+    assert.equal(await getAgentSession(userId, session.id, "workspace"), null);
+    assert.equal(await beginAgentRun({
+      userId,
+      sessionId: session.id,
+      maxSteps: 1,
+      capability: "workspace",
+    }), null);
+    assert.equal(await forkAgentSession(userId, session.id, "workspace"), null);
   } finally {
     try {
       await database.delete(users).where(eq(users.id, userId));

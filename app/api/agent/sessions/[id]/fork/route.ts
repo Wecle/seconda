@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { AgentForkLimitError, forkAgentSession, toAgentSessionSummary } from "@/lib/agent/repository";
+import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 
 export async function POST(
   _request: Request,
@@ -11,7 +12,7 @@ export async function POST(
   const { id } = await params;
   let session;
   try {
-    session = await forkAgentSession(userId, id);
+    session = await forkAgentSession(userId, id, BUILT_IN_CAPABILITIES.workspace);
   } catch (error) {
     if (error instanceof AgentForkLimitError) {
       return NextResponse.json({ error: error.message }, { status: 413 });

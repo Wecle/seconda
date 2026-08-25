@@ -1,6 +1,7 @@
 import { getCurrentUserId } from "@/lib/auth/session";
 import { findRunningAgentRun } from "@/lib/agent/repository";
 import { cancelActiveRun } from "@/lib/agent/run-registry";
+import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 
 export async function POST(
   _request: Request,
@@ -9,7 +10,7 @@ export async function POST(
   const userId = await getCurrentUserId();
   if (!userId) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
-  const run = await findRunningAgentRun(userId, id);
+  const run = await findRunningAgentRun(userId, id, BUILT_IN_CAPABILITIES.workspace);
   if (!run) return Response.json({ error: "No active run" }, { status: 404 });
   if (!cancelActiveRun(run.id)) {
     return Response.json({ error: "Run is active on another server instance" }, { status: 409 });

@@ -23,6 +23,7 @@ function workspaceContext(workspaceRoot: string | null): CapabilityContext {
     systemPrompt: "workspace contract",
     promptVersion: workspaceCapability.promptVersion,
     capabilityConfig: { workspaceRoot },
+    state: new Map(),
     signal: new AbortController().signal,
     events: { append: async () => { throw new Error("not used"); } },
   };

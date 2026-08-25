@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 import { createInterview } from "@/lib/interview/application/create-interview";
+import { executeInterviewOpening } from "@/lib/interview/application/execute-opening";
 import {
   createInterviewRequestSchema,
   creationIdempotencyKeySchema,
@@ -29,10 +30,15 @@ export async function POST(request: Request) {
       idempotencyKey: idempotencyKey.data,
       request: body.data,
     });
+    const opening = await executeInterviewOpening({
+      userId,
+      openingRunId: result.openingRunId,
+    });
     return NextResponse.json({
       interviewId: result.interviewId,
-      status: result.status,
+      status: opening.status,
       replayed: result.replayed,
+      question: opening.question,
     }, { status: result.replayed ? 200 : 201 });
   } catch (error) {
     if (error instanceof InterviewApplicationError) {

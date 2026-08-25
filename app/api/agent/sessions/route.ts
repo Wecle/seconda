@@ -16,7 +16,7 @@ const createSessionSchema = z.object({
 export async function GET() {
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  return NextResponse.json(await listAgentSessions(userId));
+  return NextResponse.json(await listAgentSessions(userId, BUILT_IN_CAPABILITIES.workspace));
 }
 
 export async function POST(request: Request) {

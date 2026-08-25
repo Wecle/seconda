@@ -276,10 +276,12 @@ export const zh = {
     creatingInterview: "正在创建...",
     creationSucceeded: "面试已创建",
     creationSucceededDescription:
-      "配置与简历快照已经安全保存。自动生成第一题将在后续里程碑接入。",
+      "配置与简历快照已经安全保存，面试官已生成第一道问题。",
     interviewId: "面试 ID",
     creationStatus: "当前状态",
     statusInitializing: "初始化中",
+    statusActive: "可开始回答",
+    firstQuestion: "第一题",
     creationFailed: "创建面试失败，请稍后重试。",
     creationConflict: "本次创建请求与已有请求冲突，请关闭弹窗后重新创建。",
     session: "面试进行中",

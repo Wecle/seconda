@@ -166,9 +166,20 @@ export function InterviewSettingsDialog({
               </div>
               <div className="grid gap-1 sm:grid-cols-[8rem_1fr] sm:items-center">
                 <dt className="text-muted-foreground">{t.interview.creationStatus}</dt>
-                <dd className="font-medium">{t.interview.statusInitializing}</dd>
+                <dd className="font-medium">{t.interview.statusActive}</dd>
               </div>
             </dl>
+            <div className="space-y-2 rounded-lg border bg-background p-4">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t.interview.firstQuestion}
+              </p>
+              <p className="leading-7">{creation.question.question}</p>
+              {creation.question.tip ? (
+                <p className="text-sm text-muted-foreground">
+                  {t.interview.tip}: {creation.question.tip}
+                </p>
+              ) : null}
+            </div>
             <DialogFooter>
               <Button type="button" onClick={() => handleOpenChange(false)}>
                 {t.common.close}

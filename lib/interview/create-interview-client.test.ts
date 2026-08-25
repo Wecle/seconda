@@ -31,8 +31,17 @@ test("browser client sends the idempotency key and normalized creation request",
       receivedInit = init;
       return Response.json({
         interviewId: "interview-1",
-        status: "initializing",
+        status: "active",
         replayed: false,
+        question: {
+          id: "question-1",
+          sequence: 1,
+          kind: "main",
+          topic: "项目经历",
+          question: "请介绍一个项目。",
+          tip: null,
+          resumeEvidenceIds: [],
+        },
       }, { status: 201 });
     },
   });
@@ -46,8 +55,17 @@ test("browser client sends the idempotency key and normalized creation request",
   assert.deepEqual(JSON.parse(String(receivedInit?.body)), request);
   assert.deepEqual(result, {
     interviewId: "interview-1",
-    status: "initializing",
+    status: "active",
     replayed: false,
+    question: {
+      id: "question-1",
+      sequence: 1,
+      kind: "main",
+      topic: "项目经历",
+      question: "请介绍一个项目。",
+      tip: null,
+      resumeEvidenceIds: [],
+    },
   });
 });
 
@@ -73,6 +91,28 @@ test("browser client rejects malformed success responses", async () => {
       idempotencyKey: "malformed-key",
       request,
       fetcher: async () => Response.json({ status: "initializing" }, { status: 201 }),
+    }),
+    (error: unknown) => error instanceof InterviewCreationClientError
+      && error.code === "INVALID_INTERVIEW_RESPONSE",
+  );
+  await assert.rejects(
+    requestInterviewCreation({
+      idempotencyKey: "malformed-question-key",
+      request,
+      fetcher: async () => Response.json({
+        interviewId: "interview-1",
+        status: "active",
+        replayed: false,
+        question: {
+          id: "question-1",
+          sequence: 0,
+          kind: "main",
+          topic: "项目经历",
+          question: "请介绍一个项目。",
+          tip: { unsafe: true },
+          resumeEvidenceIds: [],
+        },
+      }, { status: 201 }),
     }),
     (error: unknown) => error instanceof InterviewCreationClientError
       && error.code === "INVALID_INTERVIEW_RESPONSE",

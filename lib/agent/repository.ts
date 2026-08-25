@@ -33,20 +33,24 @@ export class AgentForkLimitError extends Error {
   }
 }
 
-export async function listAgentSessions(userId: string) {
+export async function listAgentSessions(userId: string, capability?: string) {
+  const ownerCondition = and(
+    eq(agentSessions.userId, userId),
+    capability ? eq(agentSessions.capability, capability) : undefined,
+  );
   let rows = await db
     .select()
     .from(agentSessions)
-    .where(eq(agentSessions.userId, userId))
+    .where(ownerCondition)
     .orderBy(desc(agentSessions.updatedAt));
   const running = rows.filter((row) => row.status === "running");
   if (running.length > 0) {
-    const recovered = await Promise.all(running.map((row) => recoverStaleAgentRun(userId, row.id)));
+    const recovered = await Promise.all(running.map((row) => recoverStaleAgentRun(userId, row.id, capability)));
     if (recovered.some(Boolean)) {
       rows = await db
         .select()
         .from(agentSessions)
-        .where(eq(agentSessions.userId, userId))
+        .where(ownerCondition)
         .orderBy(desc(agentSessions.updatedAt));
     }
   }
@@ -66,11 +70,12 @@ export async function createAgentSession(input: {
   return row;
 }
 
-export async function forkAgentSession(userId: string, sourceSessionId: string) {
+export async function forkAgentSession(userId: string, sourceSessionId: string, capability?: string) {
   return db.transaction(async (transaction) => {
     const [source] = await transaction.select().from(agentSessions).where(and(
       eq(agentSessions.id, sourceSessionId),
       eq(agentSessions.userId, userId),
+      capability ? eq(agentSessions.capability, capability) : undefined,
       ne(agentSessions.status, "running"),
     )).limit(1).for("update");
     if (!source) return null;
@@ -120,13 +125,21 @@ export async function forkAgentSession(userId: string, sourceSessionId: string) 
   });
 }
 
-export async function getAgentSession(userId: string, sessionId: string) {
-  await recoverStaleAgentRun(userId, sessionId);
-  const [row] = await db
+export async function getAgentSession(userId: string, sessionId: string, capability?: string) {
+  const condition = and(
+    eq(agentSessions.id, sessionId),
+    eq(agentSessions.userId, userId),
+    capability ? eq(agentSessions.capability, capability) : undefined,
+  );
+  const [owned] = await db
     .select()
     .from(agentSessions)
-    .where(and(eq(agentSessions.id, sessionId), eq(agentSessions.userId, userId)))
+    .where(condition)
     .limit(1);
+  if (!owned) return null;
+  const recovered = await recoverStaleAgentRun(userId, sessionId, capability);
+  if (!recovered) return owned;
+  const [row] = await db.select().from(agentSessions).where(condition).limit(1);
   return row ?? null;
 }
 
@@ -148,8 +161,13 @@ export async function listAgentEvents(userId: string, sessionId: string, afterSe
   return rows as AgentEvent[];
 }
 
-export async function listAgentUiEvents(userId: string, sessionId: string, beforeSequence?: number) {
-  const session = await getAgentSession(userId, sessionId);
+export async function listAgentUiEvents(
+  userId: string,
+  sessionId: string,
+  beforeSequence?: number,
+  capability?: string,
+) {
+  const session = await getAgentSession(userId, sessionId, capability);
   if (!session) return null;
   const conditions = [
     eq(agentEvents.sessionId, sessionId),
@@ -163,12 +181,16 @@ export async function listAgentUiEvents(userId: string, sessionId: string, befor
   return (rows as AgentEvent[]).reverse();
 }
 
-export async function recoverStaleAgentRun(userId: string, sessionId: string) {
+export async function recoverStaleAgentRun(userId: string, sessionId: string, capability?: string) {
   return db.transaction(async (transaction) => {
     const [ownedSession] = await transaction
       .select({ id: agentSessions.id })
       .from(agentSessions)
-      .where(and(eq(agentSessions.id, sessionId), eq(agentSessions.userId, userId)))
+      .where(and(
+        eq(agentSessions.id, sessionId),
+        eq(agentSessions.userId, userId),
+        capability ? eq(agentSessions.capability, capability) : undefined,
+      ))
       .limit(1);
     if (!ownedSession) return false;
     const [staleRun] = await transaction
@@ -233,12 +255,17 @@ export async function beginAgentRun(input: {
   userId: string;
   sessionId: string;
   maxSteps: number;
+  capability?: string;
 }) {
   return db.transaction(async (transaction) => {
     const [ownedSession] = await transaction
       .select({ id: agentSessions.id })
       .from(agentSessions)
-      .where(and(eq(agentSessions.id, input.sessionId), eq(agentSessions.userId, input.userId)))
+      .where(and(
+        eq(agentSessions.id, input.sessionId),
+        eq(agentSessions.userId, input.userId),
+        input.capability ? eq(agentSessions.capability, input.capability) : undefined,
+      ))
       .limit(1);
     if (!ownedSession) return null;
 
@@ -385,7 +412,7 @@ export async function settleAgentRun(input: {
   });
 }
 
-export async function findRunningAgentRun(userId: string, sessionId: string) {
+export async function findRunningAgentRun(userId: string, sessionId: string, capability?: string) {
   const [run] = await db
     .select({ id: agentRuns.id })
     .from(agentRuns)
@@ -393,6 +420,7 @@ export async function findRunningAgentRun(userId: string, sessionId: string) {
     .where(and(
       eq(agentRuns.sessionId, sessionId),
       eq(agentSessions.userId, userId),
+      capability ? eq(agentSessions.capability, capability) : undefined,
       eq(agentRuns.status, "running"),
     ))
     .orderBy(desc(agentRuns.startedAt))
