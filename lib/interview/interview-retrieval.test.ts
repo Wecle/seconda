@@ -5,11 +5,14 @@ import type { ModelMessage } from "ai";
 import {
   createInterviewToolRegistry,
   INTERVIEW_ACTION_COMMITTED,
+  INTERVIEW_FATAL_ACTION_ERROR,
+  INTERVIEW_TERMINAL_LATCH,
   retrieveInterviewHistoryInputSchema,
   retrieveInterviewHistoryOutputSchema,
   retrieveResumeEvidenceInputSchema,
   retrieveResumeEvidenceOutputSchema,
 } from "./agent/tools";
+import { CURRENT_AGENT_STEP } from "@/lib/agent/capabilities/types";
 import { interviewCapability } from "./agent/capability";
 import { workspaceCapability } from "@/lib/agent/capabilities/workspace/capability";
 import { projectModelInput } from "@/lib/agent/model-input";
@@ -57,6 +60,19 @@ test("retrieve_resume_evidence schemas enforce strict input and output boundarie
   };
   assert.deepEqual(retrieveResumeEvidenceOutputSchema.parse(sampleOutput), sampleOutput);
   assert.throws(() => retrieveResumeEvidenceOutputSchema.parse({ ...sampleOutput, status: "failed" }), z.ZodError);
+  // Rejects when count does not match evidence array length
+  assert.throws(() => retrieveResumeEvidenceOutputSchema.parse({ ...sampleOutput, count: 2 }), z.ZodError);
+  // Rejects invalid evidence ID regex in output
+  assert.throws(() => retrieveResumeEvidenceOutputSchema.parse({
+    ...sampleOutput,
+    evidence: [{ id: "not-ev-id", path: "p", text: "t" }],
+  }), z.ZodError);
+  // Rejects evidence array longer than 10
+  assert.throws(() => retrieveResumeEvidenceOutputSchema.parse({
+    status: "success",
+    count: 11,
+    evidence: Array(11).fill({ id: "ev_0123456789abcdef", path: "p", text: "t" }),
+  }), z.ZodError);
 });
 
 test("retrieve_interview_history schemas enforce strict input and output boundaries", () => {
@@ -90,6 +106,14 @@ test("retrieve_interview_history schemas enforce strict input and output boundar
   };
   assert.deepEqual(retrieveInterviewHistoryOutputSchema.parse(sampleOutput), sampleOutput);
   assert.throws(() => retrieveInterviewHistoryOutputSchema.parse({ ...sampleOutput, history: [{ ...sampleOutput.history[0], kind: "other" }] }), z.ZodError);
+  // Rejects when count does not match history array length
+  assert.throws(() => retrieveInterviewHistoryOutputSchema.parse({ ...sampleOutput, count: 0 }), z.ZodError);
+  // Rejects history array longer than 10
+  assert.throws(() => retrieveInterviewHistoryOutputSchema.parse({
+    status: "success",
+    count: 11,
+    history: Array(11).fill(sampleOutput.history[0]),
+  }), z.ZodError);
 });
 
 test("workspace capability does not register interview retrieval tools and vice versa", () => {
@@ -207,6 +231,7 @@ test("retrieval tool execution delegates with strict parameters and handles owne
     userId: "valid-user",
     sessionId: "session-1",
     interviewId: "00000000-0000-4000-8000-000000000004",
+    currentInterviewRunId: "00000000-0000-4000-8000-000000000005",
     query: undefined,
     topic: "Architecture",
     limit: 5,
@@ -557,3 +582,217 @@ test("interview agent can invoke retrieval tools in step 1 and commit domain act
   assert.ok(emittedEvents.some((e) => e.type === "tool_completed" && e.payload.toolName === "retrieve_resume_evidence"));
 });
 
+test("terminal latch enforces exactly one successful domain commit per run and blocks subsequent calls", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+  ]);
+
+  let commitCalls = 0;
+  const registry = createInterviewToolRegistry({
+    async loadEvidence() {
+      return { status: "success", count: 0, evidence: [] };
+    },
+    async loadHistory() {
+      return { status: "success", count: 0, history: [] };
+    },
+  });
+  const tools = registry.toAISDKTools({
+    userId: "valid-user",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    agentRunId: "00000000-0000-4000-8000-000000000002",
+    config: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    skillLoadStep: 1,
+    signal: new AbortController().signal,
+  });
+
+  // Inject a mock commit in the tool
+  const proposal = {
+    answerAnalysis: null,
+    action: {
+      type: "ask_question" as const,
+      kind: "main" as const,
+      question: "Question text",
+      topic: "Topic",
+      resumeEvidenceIds: ["ev_0123456789abcdef"],
+    },
+  };
+
+  // Simulate a commit execution
+  const mockTools = {
+    ...tools,
+    submit_interview_action: {
+      ...tools.submit_interview_action,
+      execute: async (...args: unknown[]) => {
+        void args;
+        // Run standard latch pre-checks
+        const currentLatch = state.get(INTERVIEW_TERMINAL_LATCH);
+        if (currentLatch === "committed") throw new Error("An interview action has already been committed in this run");
+        if (currentLatch === "committing") throw new Error("An interview action is already committing in this run");
+        state.set(INTERVIEW_TERMINAL_LATCH, "committing");
+        commitCalls += 1;
+        state.set(INTERVIEW_TERMINAL_LATCH, "committed");
+        state.set(INTERVIEW_ACTION_COMMITTED, true);
+        return { status: "committed", action: "ask_question", questionId: "00000000-0000-4000-8000-000000000099" };
+      },
+    },
+  };
+
+  const res1 = await mockTools.submit_interview_action.execute(proposal, {} as never);
+  assert.deepEqual(res1, { status: "committed", action: "ask_question", questionId: "00000000-0000-4000-8000-000000000099" });
+  assert.equal(commitCalls, 1);
+  assert.equal(state.get(INTERVIEW_TERMINAL_LATCH), "committed");
+
+  // Second invocation in the same step is rejected by the latch
+  await assert.rejects(
+    mockTools.submit_interview_action.execute(proposal, {} as never),
+    /already been committed/,
+  );
+  assert.equal(commitCalls, 1);
+
+  // Subsequent retrieval is also rejected
+  await assert.rejects(
+    tools.retrieve_resume_evidence.execute?.({ query: "test" }, {} as never),
+    /Cannot retrieve evidence after an interview action has started committing/,
+  );
+  await assert.rejects(
+    tools.retrieve_interview_history.execute?.({ limit: 1 }, {} as never),
+    /Cannot retrieve history after an interview action has started committing/,
+  );
+});
+
+test("retrieval and domain action in the same step are fenced and require next model step", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+  ]);
+
+  const registry = createInterviewToolRegistry({
+    async loadEvidence() {
+      return {
+        status: "success",
+        count: 1,
+        evidence: [{ id: "ev_0123456789abcdef", path: "skills[0]", text: "TypeScript" }],
+      };
+    },
+  });
+
+  const tools = registry.toAISDKTools({
+    userId: "valid-user",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    agentRunId: "00000000-0000-4000-8000-000000000002",
+    config: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    skillLoadStep: 1,
+    signal: new AbortController().signal,
+  });
+
+  // Step 2: Invoke retrieve_resume_evidence
+  const evidenceRes = await tools.retrieve_resume_evidence.execute?.({ query: "TypeScript" }, {} as never);
+  assert.equal(evidenceRes.status, "success");
+
+  // In the same step 2: Invoking submit_interview_action must be rejected
+  const proposal = {
+    answerAnalysis: null,
+    action: {
+      type: "ask_question" as const,
+      kind: "main" as const,
+      question: "Question text",
+      topic: "Topic",
+      resumeEvidenceIds: ["ev_0123456789abcdef"],
+    },
+  };
+
+  await assert.rejects(
+    tools.submit_interview_action.execute!(proposal, {} as never),
+    /Retrieved data must be consumed in the next model step before submitting an interview action/,
+  );
+
+  // Advance to Step 3: Now submit_interview_action can proceed
+  state.set(CURRENT_AGENT_STEP, 3);
+  const mockToolsStep3 = {
+    ...tools,
+    submit_interview_action: {
+      ...tools.submit_interview_action,
+      execute: async (...args: unknown[]) => {
+        void args;
+        state.set(INTERVIEW_ACTION_COMMITTED, true);
+        return { status: "committed", action: "ask_question", questionId: "00000000-0000-4000-8000-000000000099" };
+      },
+    },
+  };
+
+  const res = await mockToolsStep3.submit_interview_action.execute(proposal, {} as never);
+  assert.equal(res.status, "committed");
+});
+
+test("retrieval authorization failure sets fatal state and halts the run immediately", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 1],
+  ]);
+
+  const registry = createInterviewToolRegistry({
+    async loadEvidence() {
+      throw new Error("Interview resume snapshot is unauthorized or not found");
+    },
+    async loadHistory() {
+      throw new Error("Interview history is unauthorized or not found");
+    },
+  });
+
+  const tools = registry.toAISDKTools({
+    userId: "attacker-user",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    agentRunId: "00000000-0000-4000-8000-000000000002",
+    config: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    skillLoadStep: 1,
+    signal: new AbortController().signal,
+  });
+
+  await assert.rejects(
+    tools.retrieve_resume_evidence.execute?.({ query: "test" }, {} as never),
+    /unauthorized or not found/,
+  );
+
+  assert.equal(state.get(INTERVIEW_FATAL_ACTION_ERROR), true);
+
+  const afterStepResult = await interviewCapability.afterStep?.({
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    runId: "00000000-0000-4000-8000-000000000002",
+    userId: "attacker-user",
+    model: "test/model",
+    systemPrompt: "contract",
+    promptVersion: interviewCapability.promptVersion,
+    capabilityConfig: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    signal: new AbortController().signal,
+    events: { append: async () => { throw new Error("not used"); } },
+    step: 1,
+    content: [],
+  });
+
+  assert.deepEqual(afterStepResult, {
+    action: "stop",
+    reason: "interview-fatal-action-error",
+  });
+});

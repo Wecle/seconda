@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
@@ -663,6 +663,7 @@ export async function loadInterviewHistoryEntries(input: {
   userId: string;
   sessionId: string;
   interviewId: string;
+  currentInterviewRunId?: string;
   query?: string;
   topic?: string;
   limit?: number;
@@ -686,6 +687,46 @@ export async function loadInterviewHistoryEntries(input: {
     throw new Error("Interview history is unauthorized or not found");
   }
 
+  let maxSequenceFilter: number | undefined;
+  if (input.currentInterviewRunId) {
+    const [currentRun] = await input.database.select({
+      triggerAnswerId: interviewAgentRuns.triggerAnswerId,
+    }).from(interviewAgentRuns)
+      .where(and(
+        eq(interviewAgentRuns.id, input.currentInterviewRunId),
+        eq(interviewAgentRuns.interviewId, input.interviewId),
+      ))
+      .limit(1);
+
+    if (currentRun?.triggerAnswerId) {
+      const [triggerAnswer] = await input.database.select({
+        questionId: interviewAnswers.questionId,
+      }).from(interviewAnswers)
+        .where(eq(interviewAnswers.id, currentRun.triggerAnswerId))
+        .limit(1);
+
+      if (triggerAnswer?.questionId) {
+        const [triggerQuestion] = await input.database.select({
+          sequence: interviewQuestions.sequence,
+        }).from(interviewQuestions)
+          .where(eq(interviewQuestions.id, triggerAnswer.questionId))
+          .limit(1);
+
+        if (triggerQuestion) {
+          maxSequenceFilter = triggerQuestion.sequence - 1;
+        }
+      }
+    }
+  }
+
+  const conditions = [
+    eq(interviewQuestions.interviewId, input.interviewId),
+    inArray(interviewQuestions.status, ["answered", "skipped"]),
+  ];
+  if (typeof maxSequenceFilter === "number") {
+    conditions.push(lte(interviewQuestions.sequence, maxSequenceFilter));
+  }
+
   const rows = await input.database.select({
     sequence: interviewQuestions.sequence,
     kind: interviewQuestions.kind,
@@ -695,7 +736,7 @@ export async function loadInterviewHistoryEntries(input: {
     answerStatus: interviewAnswers.status,
   }).from(interviewQuestions)
     .leftJoin(interviewAnswers, eq(interviewAnswers.questionId, interviewQuestions.id))
-    .where(eq(interviewQuestions.interviewId, input.interviewId))
+    .where(and(...conditions))
     .orderBy(asc(interviewQuestions.sequence));
 
   const maxResults = Math.min(Math.max(1, input.limit ?? 5), 10);
@@ -742,4 +783,3 @@ export async function loadInterviewHistoryEntries(input: {
     history: results,
   };
 }
-

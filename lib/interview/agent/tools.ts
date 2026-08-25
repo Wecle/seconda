@@ -8,6 +8,9 @@ export const INTERVIEW_ACTION_COMMITTED = Symbol("interview-action-committed");
 export const INTERVIEW_DOMAIN_ACTION_BLOCKED = Symbol("interview-domain-action-blocked");
 export const INTERVIEW_SKILL_RETRY_STEP = Symbol("interview-skill-retry-step");
 export const INTERVIEW_FATAL_ACTION_ERROR = Symbol("interview-fatal-action-error");
+export const INTERVIEW_TERMINAL_LATCH = Symbol("interview-terminal-latch");
+export const INTERVIEW_RETRIEVAL_LOADING_STEP = Symbol("interview-retrieval-loading-step");
+export const INTERVIEW_RETRIEVAL_LOADED_STEP = Symbol("interview-retrieval-loaded-step");
 
 export function isFatalInterviewActionError(error: unknown) {
   if (!(error instanceof Error)) return true;
@@ -21,6 +24,18 @@ export function isFatalInterviewActionError(error: unknown) {
     "Interview resume snapshot is missing",
     "Interview already has a question awaiting an answer",
   ].some((message) => error.message.startsWith(message));
+}
+
+export function isFatalInterviewRetrievalError(error: unknown) {
+  if (!(error instanceof Error)) return true;
+  return [
+    "Interview resume snapshot is unauthorized or not found",
+    "Interview history is unauthorized or not found",
+    "Interview capability mismatch",
+    "Interview ownership mismatch",
+    "Interview session mismatch",
+    "unauthorized or not found",
+  ].some((msg) => error.message.includes(msg));
 }
 
 export const interviewCapabilityConfigSchema = z.object({
@@ -53,8 +68,18 @@ const outputSchema = z.discriminatedUnion("action", [
 
 function hasSameStepSkillActivity(context: InterviewToolContext) {
   const currentStep = context.state.get(CURRENT_AGENT_STEP);
-  return context.state.get(SKILL_LOADING_STEP) === currentStep
-    || context.state.get(SKILL_LOADED_STEP) === currentStep;
+  return typeof currentStep === "number" && (
+    context.state.get(SKILL_LOADING_STEP) === currentStep
+    || context.state.get(SKILL_LOADED_STEP) === currentStep
+  );
+}
+
+function hasSameStepRetrievalActivity(context: InterviewToolContext) {
+  const currentStep = context.state.get(CURRENT_AGENT_STEP);
+  return typeof currentStep === "number" && (
+    context.state.get(INTERVIEW_RETRIEVAL_LOADING_STEP) === currentStep
+    || context.state.get(INTERVIEW_RETRIEVAL_LOADED_STEP) === currentStep
+  );
 }
 
 export const retrieveResumeEvidenceInputSchema = z.object({
@@ -67,13 +92,15 @@ export const retrieveResumeEvidenceInputSchema = z.object({
 
 export const retrieveResumeEvidenceOutputSchema = z.object({
   status: z.literal("success"),
-  count: z.number().int().nonnegative(),
+  count: z.number().int().min(0).max(10),
   evidence: z.array(z.object({
-    id: z.string(),
-    path: z.string(),
-    text: z.string(),
-  })),
-}).strict();
+    id: z.string().regex(/^ev_[a-f0-9]{16}$/),
+    path: z.string().min(1).max(200),
+    text: z.string().min(1).max(1000),
+  })).max(10),
+}).strict().refine((data) => data.count === data.evidence.length, {
+  message: "count must match evidence length",
+});
 
 export const retrieveInterviewHistoryInputSchema = z.object({
   query: z.string().trim().min(1).max(200).optional(),
@@ -83,16 +110,18 @@ export const retrieveInterviewHistoryInputSchema = z.object({
 
 export const retrieveInterviewHistoryOutputSchema = z.object({
   status: z.literal("success"),
-  count: z.number().int().nonnegative(),
+  count: z.number().int().min(0).max(10),
   history: z.array(z.object({
     sequence: z.number().int().positive(),
     kind: z.enum(["main", "follow_up"]),
-    topic: z.string(),
-    question: z.string(),
-    answer: z.string().nullable(),
+    topic: z.string().min(1).max(100),
+    question: z.string().min(1).max(1000),
+    answer: z.string().max(2000).nullable(),
     skipped: z.boolean(),
-  })),
-}).strict();
+  })).max(10),
+}).strict().refine((data) => data.count === data.history.length, {
+  message: "count must match history length",
+});
 
 export type InterviewToolRegistryDependencies = {
   loadEvidence?: (input: {
@@ -107,6 +136,7 @@ export type InterviewToolRegistryDependencies = {
     userId: string;
     sessionId: string;
     interviewId: string;
+    currentInterviewRunId?: string;
     query?: string;
     topic?: string;
     limit?: number;
@@ -122,28 +152,51 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
     inputSchema: retrieveResumeEvidenceInputSchema,
     outputSchema: retrieveResumeEvidenceOutputSchema,
     async execute(input, context) {
-      const parsed = retrieveResumeEvidenceInputSchema.parse(input);
-      if (dependencies.loadEvidence) {
-        return dependencies.loadEvidence({
-          userId: context.userId,
-          sessionId: context.sessionId,
-          interviewId: context.config.interviewId,
-          query: parsed.query,
-          evidenceIds: parsed.evidenceIds,
-          limit: parsed.limit,
-        });
+      const currentLatch = context.state.get(INTERVIEW_TERMINAL_LATCH);
+      if (currentLatch === "committing" || currentLatch === "committed") {
+        throw new Error("Cannot retrieve evidence after an interview action has started committing");
       }
-      const { loadInterviewResumeEvidence } = await import("../persistence/repository");
-      const { db } = await import("@/lib/db");
-      return loadInterviewResumeEvidence({
-        database: db,
-        userId: context.userId,
-        sessionId: context.sessionId,
-        interviewId: context.config.interviewId,
-        query: parsed.query,
-        evidenceIds: parsed.evidenceIds,
-        limit: parsed.limit,
-      });
+      const currentStep = context.state.get(CURRENT_AGENT_STEP);
+      if (typeof currentStep === "number") {
+        context.state.set(INTERVIEW_RETRIEVAL_LOADING_STEP, currentStep);
+      }
+      try {
+        const parsed = retrieveResumeEvidenceInputSchema.parse(input);
+        let result: z.infer<typeof retrieveResumeEvidenceOutputSchema>;
+        if (dependencies.loadEvidence) {
+          result = await dependencies.loadEvidence({
+            userId: context.userId,
+            sessionId: context.sessionId,
+            interviewId: context.config.interviewId,
+            query: parsed.query,
+            evidenceIds: parsed.evidenceIds,
+            limit: parsed.limit,
+          });
+        } else {
+          const { loadInterviewResumeEvidence } = await import("../persistence/repository");
+          const { db } = await import("@/lib/db");
+          result = await loadInterviewResumeEvidence({
+            database: db,
+            userId: context.userId,
+            sessionId: context.sessionId,
+            interviewId: context.config.interviewId,
+            query: parsed.query,
+            evidenceIds: parsed.evidenceIds,
+            limit: parsed.limit,
+          });
+        }
+        if (typeof currentStep === "number") {
+          context.state.set(INTERVIEW_RETRIEVAL_LOADED_STEP, currentStep);
+        }
+        return retrieveResumeEvidenceOutputSchema.parse(result);
+      } catch (error) {
+        if (isFatalInterviewRetrievalError(error)) {
+          context.state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+        }
+        throw error;
+      } finally {
+        context.state.delete(INTERVIEW_RETRIEVAL_LOADING_STEP);
+      }
     },
   });
 
@@ -153,28 +206,53 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
     inputSchema: retrieveInterviewHistoryInputSchema,
     outputSchema: retrieveInterviewHistoryOutputSchema,
     async execute(input, context) {
-      const parsed = retrieveInterviewHistoryInputSchema.parse(input);
-      if (dependencies.loadHistory) {
-        return dependencies.loadHistory({
-          userId: context.userId,
-          sessionId: context.sessionId,
-          interviewId: context.config.interviewId,
-          query: parsed.query,
-          topic: parsed.topic,
-          limit: parsed.limit,
-        });
+      const currentLatch = context.state.get(INTERVIEW_TERMINAL_LATCH);
+      if (currentLatch === "committing" || currentLatch === "committed") {
+        throw new Error("Cannot retrieve history after an interview action has started committing");
       }
-      const { loadInterviewHistoryEntries } = await import("../persistence/repository");
-      const { db } = await import("@/lib/db");
-      return loadInterviewHistoryEntries({
-        database: db,
-        userId: context.userId,
-        sessionId: context.sessionId,
-        interviewId: context.config.interviewId,
-        query: parsed.query,
-        topic: parsed.topic,
-        limit: parsed.limit,
-      });
+      const currentStep = context.state.get(CURRENT_AGENT_STEP);
+      if (typeof currentStep === "number") {
+        context.state.set(INTERVIEW_RETRIEVAL_LOADING_STEP, currentStep);
+      }
+      try {
+        const parsed = retrieveInterviewHistoryInputSchema.parse(input);
+        let result: z.infer<typeof retrieveInterviewHistoryOutputSchema>;
+        if (dependencies.loadHistory) {
+          result = await dependencies.loadHistory({
+            userId: context.userId,
+            sessionId: context.sessionId,
+            interviewId: context.config.interviewId,
+            currentInterviewRunId: context.config.interviewRunId,
+            query: parsed.query,
+            topic: parsed.topic,
+            limit: parsed.limit,
+          });
+        } else {
+          const { loadInterviewHistoryEntries } = await import("../persistence/repository");
+          const { db } = await import("@/lib/db");
+          result = await loadInterviewHistoryEntries({
+            database: db,
+            userId: context.userId,
+            sessionId: context.sessionId,
+            interviewId: context.config.interviewId,
+            currentInterviewRunId: context.config.interviewRunId,
+            query: parsed.query,
+            topic: parsed.topic,
+            limit: parsed.limit,
+          });
+        }
+        if (typeof currentStep === "number") {
+          context.state.set(INTERVIEW_RETRIEVAL_LOADED_STEP, currentStep);
+        }
+        return retrieveInterviewHistoryOutputSchema.parse(result);
+      } catch (error) {
+        if (isFatalInterviewRetrievalError(error)) {
+          context.state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+        }
+        throw error;
+      } finally {
+        context.state.delete(INTERVIEW_RETRIEVAL_LOADING_STEP);
+      }
     },
   });
 
@@ -185,6 +263,14 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
     outputSchema,
     async execute(action, context) {
       const proposal = submitInterviewActionSchema.parse(action);
+      const currentLatch = context.state.get(INTERVIEW_TERMINAL_LATCH);
+      if (currentLatch === "committed") {
+        throw new Error("An interview action has already been committed in this run");
+      }
+      if (currentLatch === "committing") {
+        throw new Error("An interview action is already committing in this run");
+      }
+
       const currentStep = context.state.get(CURRENT_AGENT_STEP);
       if (typeof currentStep === "number"
         && (currentStep <= context.skillLoadStep || context.state.has(INTERVIEW_DOMAIN_ACTION_BLOCKED))) {
@@ -197,17 +283,43 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
       if (hasSameStepSkillActivity(context)) {
         throw new Error("A loaded Skill must be consumed in the next model step before submitting an interview action");
       }
-      await Promise.resolve();
-      if (hasSameStepSkillActivity(context)) {
-        throw new Error("A loaded Skill must be consumed in the next model step before submitting an interview action");
+      if (hasSameStepRetrievalActivity(context)) {
+        throw new Error("Retrieved data must be consumed in the next model step before submitting an interview action");
       }
-      const { commitInterviewAgentAction } = await import("../application/commit-agent-action");
+
+      // Synchronously acquire the terminal latch BEFORE any await
+      context.state.set(INTERVIEW_TERMINAL_LATCH, "committing");
+
+      await Promise.resolve();
+
       if (context.state.has(SKILL_LOAD_FAILED)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
         throw new Error("Interview action is blocked after a Skill load failure");
       }
       if (hasSameStepSkillActivity(context)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
         throw new Error("A loaded Skill must be consumed in the next model step before submitting an interview action");
       }
+      if (hasSameStepRetrievalActivity(context)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
+        throw new Error("Retrieved data must be consumed in the next model step before submitting an interview action");
+      }
+
+      const { commitInterviewAgentAction } = await import("../application/commit-agent-action");
+
+      if (context.state.has(SKILL_LOAD_FAILED)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
+        throw new Error("Interview action is blocked after a Skill load failure");
+      }
+      if (hasSameStepSkillActivity(context)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
+        throw new Error("A loaded Skill must be consumed in the next model step before submitting an interview action");
+      }
+      if (hasSameStepRetrievalActivity(context)) {
+        context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
+        throw new Error("Retrieved data must be consumed in the next model step before submitting an interview action");
+      }
+
       let question: Awaited<ReturnType<typeof commitInterviewAgentAction>>;
       try {
         question = await commitInterviewAgentAction({
@@ -220,9 +332,14 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
           action: proposal,
         });
       } catch (error) {
-        if (isFatalInterviewActionError(error)) context.state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+        if (isFatalInterviewActionError(error)) {
+          context.state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+        } else {
+          context.state.set(INTERVIEW_TERMINAL_LATCH, "idle");
+        }
         throw error;
       }
+      context.state.set(INTERVIEW_TERMINAL_LATCH, "committed");
       context.state.set(INTERVIEW_ACTION_COMMITTED, true);
       return proposal.action.type === "complete_interview"
         ? { status: "committed", action: "complete_interview" }

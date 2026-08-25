@@ -318,7 +318,21 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
     assert.equal(recentHistory.count, 1);
     assert.equal(recentHistory.history[0].sequence, 2);
 
-    // 9. Ownership isolation for history: foreign user cannot access
+    // 9. Current round exclusion via currentInterviewRunId
+    // Turn 2 is triggered by a2 (question 2). When querying history for Turn 2, question 2 must be excluded.
+    const historyExcludingCurrentTurn = await loadInterviewHistoryEntries({
+      database,
+      userId: ownerUserId,
+      sessionId: created.agentSessionId,
+      interviewId: created.interviewId,
+      currentInterviewRunId: a2.run.id,
+      limit: 5,
+    });
+    assert.equal(historyExcludingCurrentTurn.status, "success");
+    assert.equal(historyExcludingCurrentTurn.count, 1);
+    assert.equal(historyExcludingCurrentTurn.history[0].sequence, 1);
+
+    // 10. Ownership isolation for history: foreign user cannot access
     await assert.rejects(
       loadInterviewHistoryEntries({
         database,
@@ -328,9 +342,56 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
       }),
       /unauthorized or not found/,
     );
+
+    // 11. Session mismatch isolation for history
+    await assert.rejects(
+      loadInterviewHistoryEntries({
+        database,
+        userId: ownerUserId,
+        sessionId: randomUUID(), // Wrong session
+        interviewId: created.interviewId,
+      }),
+      /unauthorized or not found/,
+    );
+
+    // 12. Non-interview capability session rejection
+    const [workspaceSession] = await database.insert(schema.agentSessions).values({
+      userId: ownerUserId,
+      title: "Workspace Session",
+      model: "test/model",
+      capability: "workspace",
+      promptVersion: "workspace-agent-v1",
+      systemPrompt: "workspace prompt",
+      workspaceRoot: "/tmp/fake-workspace",
+      status: "idle",
+    }).returning();
+
+    // Mismatched capability session rejected for evidence
+    await assert.rejects(
+      loadInterviewResumeEvidence({
+        database,
+        userId: ownerUserId,
+        sessionId: workspaceSession.id,
+        interviewId: created.interviewId,
+        query: "Kafka",
+      }),
+      /unauthorized or not found/,
+    );
+
+    // Mismatched capability session rejected for history
+    await assert.rejects(
+      loadInterviewHistoryEntries({
+        database,
+        userId: ownerUserId,
+        sessionId: workspaceSession.id,
+        interviewId: created.interviewId,
+      }),
+      /unauthorized or not found/,
+    );
   } finally {
-    const { interviews: interviewsTable } = await import("@/lib/db/schema");
+    const { interviews: interviewsTable, agentSessions: agentSessionsTable } = await import("@/lib/db/schema");
     await database.delete(interviewsTable).where(eq(interviewsTable.userId, ownerUserId));
+    await database.delete(agentSessionsTable).where(eq(agentSessionsTable.userId, ownerUserId));
     await database.delete(users).where(inArray(users.id, [ownerUserId, foreignUserId]));
     await client.end();
     const { closeAgentRepositoryConnection } = await import("@/lib/agent/repository");
