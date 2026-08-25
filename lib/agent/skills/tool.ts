@@ -21,6 +21,8 @@ export const SKILL_LOAD_FAILED = Symbol("skill-load-failed");
 export const SKILL_LOADED_STEP = Symbol("skill-loaded-step");
 export const SKILL_WRONG_STEP = "SKILL_WRONG_STEP";
 export const SKILL_TOOL_ERROR = "SKILL_TOOL_ERROR";
+export const SKILL_ALLOWED_STEP = Symbol("skill-allowed-step");
+export const SKILL_LOADING_STEP = Symbol("skill-loading-step");
 
 const inputSchema = z.object({ name: z.string().min(1).max(100) }).strict();
 const outputSchema = z.object({
@@ -41,9 +43,11 @@ export function createSkillToolRegistry() {
     async execute(input, context) {
       const { name } = inputSchema.parse(input);
       try {
-        if (context.loadStep !== undefined && context.state.get(CURRENT_AGENT_STEP) !== context.loadStep) {
-          throw new SkillRegistryError(SKILL_WRONG_STEP, `Skill can only be loaded during model step ${context.loadStep}`);
+        const allowedStep = context.state.get(SKILL_ALLOWED_STEP) ?? context.loadStep;
+        if (allowedStep !== undefined && context.state.get(CURRENT_AGENT_STEP) !== allowedStep) {
+          throw new SkillRegistryError(SKILL_WRONG_STEP, `Skill can only be loaded during model step ${allowedStep}`);
         }
+        context.state.set(SKILL_LOADING_STEP, context.state.get(CURRENT_AGENT_STEP));
         const skill = await context.registry.load(name, {
           sessionId: context.sessionId,
           runId: context.runId,

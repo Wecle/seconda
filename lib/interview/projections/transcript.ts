@@ -32,6 +32,7 @@ const answerSubmittedSchema = z.object({
 
 const completionRequestedSchema = z.object({
   interviewId: z.string().uuid(),
+  closingMessage: z.string().trim().min(1).max(2_000).optional(),
 }).strict();
 
 const completedSchema = z.object({
@@ -220,9 +221,17 @@ export function projectInterviewTranscript(input: {
         });
         break;
       }
-      case "interview/completion_requested":
-        completionRequestedSchema.parse(event.payload);
+      case "interview/completion_requested": {
+        const payload = completionRequestedSchema.parse(event.payload);
+        if (payload.closingMessage) {
+          transcript.push({
+            type: "closing",
+            sequence: event.sequence,
+            content: payload.closingMessage,
+          });
+        }
         break;
+      }
       case "interview/completed":
         completedSchema.parse(event.payload);
         break;

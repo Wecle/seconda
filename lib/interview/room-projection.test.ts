@@ -54,6 +54,7 @@ test("room projection applies the documented phase priority and permissions", ()
     { expected: "run_failed", interview: interview(), run: run({ status: "failed" }), question: question() },
     { expected: "generating_question", interview: interview({ status: "initializing" }), run: run({ status: "queued" }), question: null },
     { expected: "evaluating_answer", interview: interview(), run: run({ triggerType: "answer", status: "running" }), question: null },
+    { expected: "evaluating_answer", interview: interview(), run: run({ triggerType: "answer", status: "completed", agentRunStatus: "running" }), question: question() },
     { expected: "awaiting_answer", interview: interview(), run: run(), question: question() },
     { expected: "initializing", interview: interview({ status: "initializing" }), run: null, question: null },
     { expected: "invalid_state", interview: interview(), run: run(), question: null },

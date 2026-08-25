@@ -132,6 +132,18 @@ test("opening run is claimed once and commits the first question atomically and 
       action: proposal,
     }, { database });
     assert.equal(replayed.id, committed.id);
+    await assert.rejects(commitInterviewAgentAction({
+      userId,
+      sessionId: claimed.session.id,
+      agentRunId: claimed.agentRun.id,
+      interviewId: claimed.interview.id,
+      interviewRunId: claimed.logicalRun.id,
+      attemptGeneration: claimed.logicalRun.attemptGeneration,
+      action: {
+        ...proposal,
+        action: { ...proposal.action, question: "不同的重放问题" },
+      },
+    }, { database }), /replay does not match/);
     const [interview] = await database.select().from(interviews).where(eq(interviews.id, created.interviewId));
     const [logicalRun] = await database.select().from(interviewAgentRuns)
       .where(eq(interviewAgentRuns.id, created.openingRunId));

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createStaticSkillProvider } from "./skills/static-provider";
 import { AgentSkillRegistry, SkillRegistryError, skillContentHash } from "./skills/registry";
-import { createSkillToolRegistry, SKILL_LOAD_FAILED } from "./skills/tool";
+import { createSkillToolRegistry, SKILL_ALLOWED_STEP, SKILL_LOAD_FAILED } from "./skills/tool";
+import { CURRENT_AGENT_STEP } from "./capabilities/types";
 import type { AgentEvent, AgentEventType } from "./types";
 
 const discovery = {
@@ -188,4 +189,31 @@ test("skill tool returns instructions to the model but records metadata-only lif
   assert.equal(events.at(-1)?.type, "skill_load_failed");
   assert.equal(state.get(SKILL_LOAD_FAILED), "SKILL_NOT_VISIBLE");
   assert.equal("instructions" in (events.at(-1)?.payload ?? {}), false);
+});
+
+test("capability policy can move a recoverable Skill discovery step", async () => {
+  const registry = new AgentSkillRegistry();
+  registry.registerProvider(createStaticSkillProvider("built-ins", [
+    { name: "resume-deep-dive", description: "Resume evidence", version: "1", instructions: "Probe one claim." },
+  ]));
+  const snapshot = await registry.snapshot(discovery);
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+    [SKILL_ALLOWED_STEP, 2],
+  ]);
+  const execute = createSkillToolRegistry().toAISDKTools({
+    sessionId: "session",
+    runId: "run",
+    userId: "user",
+    capability: "interview",
+    snapshot,
+    registry,
+    loadStep: 1,
+    state,
+    signal: new AbortController().signal,
+    events: { append: async () => ({}) as never },
+  }).skill.execute;
+  assert.ok(execute);
+  const result = await execute({ name: "resume-deep-dive" }, {} as never);
+  assert.equal((result as { status: string }).status, "loaded");
 });

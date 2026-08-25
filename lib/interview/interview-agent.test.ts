@@ -8,7 +8,13 @@ import { INTERVIEW_SKILL_NAMES } from "./agent/skills/built-ins";
 import { buildInterviewSystemPrompt } from "./agent/prompt";
 import { CURRENT_AGENT_STEP } from "@/lib/agent/capabilities/types";
 import { AgentSkillRegistry, skillContentHash } from "@/lib/agent/skills/registry";
-import { createSkillToolRegistry, SKILL_LOAD_FAILED, SKILL_LOADED_STEP } from "@/lib/agent/skills/tool";
+import { createSkillToolRegistry, SKILL_ALLOWED_STEP, SKILL_LOAD_FAILED, SKILL_LOADED_STEP } from "@/lib/agent/skills/tool";
+import {
+  INTERVIEW_DOMAIN_ACTION_BLOCKED,
+  INTERVIEW_FATAL_ACTION_ERROR,
+  INTERVIEW_SKILL_RETRY_STEP,
+  isFatalInterviewActionError,
+} from "./agent/tools";
 
 const baseAction = {
   answerAnalysis: null,
@@ -53,6 +59,10 @@ test("opening context keeps resume and preference outside trusted system instruc
   assert.equal((section as { content: string }).content, "trusted contract");
   assert.equal((section as { trust: string }).trust, "trusted-instruction");
   const message = buildOpeningModelMessage({
+    language: "zh",
+    persona: "standard",
+    interviewType: "mixed",
+    targetLevel: "Mid",
     targetRole: injection,
     preference: injection,
     preferenceTags: [],
@@ -96,6 +106,19 @@ test("interview capability registers only submit_interview_action and continues 
     action: "stop",
     reason: "interview-skill-load-failed",
   });
+  state.delete(SKILL_LOAD_FAILED);
+  state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+  assert.deepEqual(await interviewCapability.afterStep?.({ ...context, step: 1, content: [] }), {
+    action: "stop",
+    reason: "interview-fatal-action-error",
+  });
+});
+
+test("interview action errors distinguish fatal state conflicts from repairable proposals", () => {
+  assert.equal(isFatalInterviewActionError(new Error("Interview ownership mismatch")), true);
+  assert.equal(isFatalInterviewActionError(new Error("Interview already has a question awaiting an answer")), true);
+  assert.equal(isFatalInterviewActionError(new Error("A follow-up must stay on the current topic")), false);
+  assert.equal(isFatalInterviewActionError(new Error("Question references unknown resume evidence")), false);
 });
 
 test("interview terminal action is fenced from same-step Skill activity", async () => {
@@ -123,6 +146,27 @@ test("interview terminal action is fenced from same-step Skill activity", async 
   const execute = tools.submit_interview_action.execute;
   assert.ok(execute);
   await assert.rejects(execute(baseAction, {} as never), /separate model step/);
+  assert.equal(state.get(INTERVIEW_SKILL_RETRY_STEP), 2);
+  await interviewCapability.beforeStep?.({
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    runId: "00000000-0000-4000-8000-000000000002",
+    userId: "00000000-0000-4000-8000-000000000003",
+    model: "test/model",
+    systemPrompt: "trusted contract",
+    promptVersion: interviewCapability.promptVersion,
+    capabilityConfig: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    signal: new AbortController().signal,
+    events: { append: async () => { throw new Error("not used"); } },
+    step: 2,
+  });
+  assert.equal(state.has(INTERVIEW_DOMAIN_ACTION_BLOCKED), false);
+  state.delete(INTERVIEW_DOMAIN_ACTION_BLOCKED);
   state.set(CURRENT_AGENT_STEP, 2);
   state.set(SKILL_LOADED_STEP, 2);
   await assert.rejects(execute(baseAction, {} as never), /next model step/);
@@ -131,7 +175,7 @@ test("interview terminal action is fenced from same-step Skill activity", async 
   await assert.rejects(execute(baseAction, {} as never), /blocked after a Skill load failure/);
 });
 
-test("a delayed Skill load cannot race a same-step interview action", async () => {
+test("a delayed recovery-step Skill load fences an action that starts first", async () => {
   let releaseLoad!: () => void;
   let markStarted!: () => void;
   const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
@@ -170,7 +214,10 @@ test("a delayed Skill load cannot race a same-step interview action", async () =
     capability: "interview",
     allowlist: ["resume-deep-dive"],
   });
-  const state = new Map<PropertyKey, unknown>([[CURRENT_AGENT_STEP, 1]]);
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+    [SKILL_ALLOWED_STEP, 2],
+  ]);
   const skillExecute = createSkillToolRegistry().toAISDKTools({
     sessionId: "session",
     runId: "run",
@@ -184,9 +231,6 @@ test("a delayed Skill load cannot race a same-step interview action", async () =
     events: { append: async () => ({}) as never },
   }).skill.execute;
   assert.ok(skillExecute);
-  const pendingSkill = skillExecute({ name: "resume-deep-dive" }, {} as never);
-  await loadStarted;
-
   const actionExecute = interviewCapability.createToolRegistry({
     sessionId: "00000000-0000-4000-8000-000000000001",
     runId: "00000000-0000-4000-8000-000000000002",
@@ -205,7 +249,10 @@ test("a delayed Skill load cannot race a same-step interview action", async () =
     events: { append: async () => { throw new Error("not used"); } },
   }).toAISDKTools().submit_interview_action.execute;
   assert.ok(actionExecute);
-  await assert.rejects(actionExecute(baseAction, {} as never), /separate model step/);
+  const pendingAction = actionExecute(baseAction, {} as never);
+  const pendingSkill = skillExecute({ name: "resume-deep-dive" }, {} as never);
+  await loadStarted;
+  await assert.rejects(pendingAction, /next model step/);
   releaseLoad();
   await pendingSkill;
 });

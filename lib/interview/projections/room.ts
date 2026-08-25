@@ -12,13 +12,14 @@ function resolveRoomPhase(input: {
   currentRun: InterviewRunSnapshot | null;
 }): InterviewRoomPhase {
   const { interview, currentQuestion, currentRun } = input;
+  const currentAttemptActive = currentRun?.agentRunStatus === "queued" || currentRun?.agentRunStatus === "running";
   if (interview.status === "completed") return "completed";
   if (interview.status === "completing") return "completing";
   if (currentRun?.status === "failed") return "run_failed";
   if (
     interview.status === "initializing"
     && currentRun?.triggerType === "opening"
-    && (currentRun.status === "queued" || currentRun.status === "running")
+    && (currentRun.status === "queued" || currentRun.status === "running" || currentAttemptActive)
   ) {
     return "generating_question";
   }
@@ -26,7 +27,7 @@ function resolveRoomPhase(input: {
     interview.status === "active"
     && currentRun
     && (currentRun.triggerType === "answer" || currentRun.triggerType === "skip")
-    && (currentRun.status === "queued" || currentRun.status === "running")
+    && (currentRun.status === "queued" || currentRun.status === "running" || currentAttemptActive)
   ) {
     return "evaluating_answer";
   }
@@ -35,6 +36,7 @@ function resolveRoomPhase(input: {
     && currentQuestion?.status === "awaiting_answer"
     && currentRun?.status !== "queued"
     && currentRun?.status !== "running"
+    && !currentAttemptActive
   ) {
     return "awaiting_answer";
   }

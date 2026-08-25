@@ -7,6 +7,7 @@ import {
   agentSessions,
   agentEvents,
   interviewAgentRuns,
+  interviewAnswers,
   interviewQuestions,
   interviewResumeSnapshots,
   interviews,
@@ -328,6 +329,169 @@ export async function failInterviewOpeningRun(input: {
   ));
 }
 
+export async function claimInterviewTurnRun(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewRunId: string;
+  buildModelMessage(input: {
+    interview: typeof interviews.$inferSelect;
+    snapshot: typeof interviewResumeSnapshots.$inferSelect;
+    answer: typeof interviewAnswers.$inferSelect;
+    question: typeof interviewQuestions.$inferSelect;
+    history: Array<{
+      sequence: number;
+      kind: string;
+      topic: string;
+      question: string;
+      answer: string | null;
+      answerStatus: string | null;
+    }>;
+  }): ModelMessage;
+}) {
+  return input.database.transaction(async (transaction) => {
+    const [candidateRun] = await transaction.select().from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, input.interviewRunId))
+      .limit(1);
+    if (!candidateRun || candidateRun.triggerType === "opening" || !candidateRun.currentAgentRunId || !candidateRun.triggerAnswerId) {
+      return { state: "not_found" as const };
+    }
+    const [interview] = await transaction.select().from(interviews)
+      .where(and(eq(interviews.id, candidateRun.interviewId), eq(interviews.userId, input.userId)))
+      .limit(1)
+      .for("update");
+    if (!interview) return { state: "not_found" as const };
+    const [logicalRun] = await transaction.select().from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.id, input.interviewRunId))
+      .limit(1)
+      .for("update");
+    if (!logicalRun || logicalRun.interviewId !== interview.id || !logicalRun.currentAgentRunId || !logicalRun.triggerAnswerId) {
+      return { state: "not_found" as const };
+    }
+    if (logicalRun.status === "completed") return { state: "completed" as const };
+    if (logicalRun.status !== "queued") {
+      return { state: "unavailable" as const, status: logicalRun.status };
+    }
+    const [session] = await transaction.select().from(agentSessions)
+      .where(and(
+        eq(agentSessions.id, interview.agentSessionId),
+        eq(agentSessions.userId, input.userId),
+        eq(agentSessions.capability, "interview"),
+      ))
+      .limit(1)
+      .for("update");
+    const [snapshot] = await transaction.select().from(interviewResumeSnapshots)
+      .where(eq(interviewResumeSnapshots.interviewId, interview.id))
+      .limit(1);
+    const [trigger] = await transaction.select({
+      answer: interviewAnswers,
+      question: interviewQuestions,
+    }).from(interviewAnswers)
+      .innerJoin(interviewQuestions, eq(interviewAnswers.questionId, interviewQuestions.id))
+      .where(and(
+        eq(interviewAnswers.id, logicalRun.triggerAnswerId),
+        eq(interviewAnswers.interviewId, interview.id),
+        eq(interviewQuestions.interviewId, interview.id),
+      ))
+      .limit(1);
+    if (!session || !snapshot || !trigger) throw new Error("Interview turn context is incomplete");
+    if ((logicalRun.triggerType === "skip") !== (trigger.answer.status === "skipped")) {
+      throw new Error("Interview turn trigger does not match its answer");
+    }
+    const history = await transaction.select({
+      sequence: interviewQuestions.sequence,
+      kind: interviewQuestions.kind,
+      topic: interviewQuestions.topic,
+      question: interviewQuestions.question,
+      answer: interviewAnswers.content,
+      answerStatus: interviewAnswers.status,
+    }).from(interviewQuestions)
+      .leftJoin(interviewAnswers, eq(interviewAnswers.questionId, interviewQuestions.id))
+      .where(eq(interviewQuestions.interviewId, interview.id))
+      .orderBy(asc(interviewQuestions.sequence));
+    const [agentRun] = await transaction.update(agentRuns).set({
+      status: "running",
+      startedAt: new Date(),
+    }).where(and(
+      eq(agentRuns.id, logicalRun.currentAgentRunId),
+      eq(agentRuns.sessionId, session.id),
+      eq(agentRuns.status, "queued"),
+    )).returning();
+    if (!agentRun) return { state: "unavailable" as const, status: logicalRun.status };
+    await transaction.update(agentSessions).set({ status: "running", updatedAt: new Date() })
+      .where(eq(agentSessions.id, session.id));
+    const [claimedRun] = await transaction.update(interviewAgentRuns).set({
+      status: "running",
+      attemptCount: sql`${interviewAgentRuns.attemptCount} + 1`,
+      attemptGeneration: sql`${interviewAgentRuns.attemptGeneration} + 1`,
+      errorJson: null,
+    }).where(and(
+      eq(interviewAgentRuns.id, logicalRun.id),
+      eq(interviewAgentRuns.status, "queued"),
+    )).returning();
+    if (!claimedRun) throw new Error("Interview turn claim was lost");
+    await appendAgentEventsInTransaction(transaction, {
+      sessionId: session.id,
+      runId: agentRun.id,
+      events: [{
+        type: "model_message",
+        payload: { message: input.buildModelMessage({
+          interview,
+          snapshot,
+          answer: trigger.answer,
+          question: trigger.question,
+          history,
+        }) },
+        dedupeKey: `interview:turn-context:${logicalRun.id}`,
+        visibility: "model",
+      }],
+    });
+    return {
+      state: "claimed" as const,
+      interview,
+      logicalRun: claimedRun,
+      agentRun,
+      session: { ...session, status: "running" },
+      snapshot,
+      answer: trigger.answer,
+      question: trigger.question,
+      history,
+    };
+  });
+}
+
+export async function loadInterviewTurnRunStatus(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewRunId: string;
+}) {
+  const [row] = await input.database.select({
+    runStatus: interviewAgentRuns.status,
+    interviewStatus: interviews.status,
+  }).from(interviewAgentRuns)
+    .innerJoin(interviews, eq(interviewAgentRuns.interviewId, interviews.id))
+    .where(and(
+      eq(interviewAgentRuns.id, input.interviewRunId),
+      eq(interviews.userId, input.userId),
+    ))
+    .limit(1);
+  return row ?? null;
+}
+
+export async function failInterviewTurnRun(input: {
+  database: InterviewDatabase;
+  interviewRunId: string;
+  errorCode: string;
+}) {
+  await input.database.update(interviewAgentRuns).set({
+    status: "failed",
+    errorJson: { code: input.errorCode },
+    completedAt: new Date(),
+  }).where(and(
+    eq(interviewAgentRuns.id, input.interviewRunId),
+    eq(interviewAgentRuns.status, "running"),
+  ));
+}
+
 export async function loadOwnedInterviewRoomData(input: {
   database: InterviewDatabase;
   userId: string;
@@ -368,7 +532,9 @@ export async function loadOwnedInterviewRoomData(input: {
       id: interviewAgentRuns.id,
       triggerType: interviewAgentRuns.triggerType,
       status: interviewAgentRuns.status,
+      agentRunStatus: agentRuns.status,
     }).from(interviewAgentRuns)
+      .leftJoin(agentRuns, eq(agentRuns.id, interviewAgentRuns.currentAgentRunId))
       .where(eq(interviewAgentRuns.interviewId, interview.id))
       .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
       .limit(1);

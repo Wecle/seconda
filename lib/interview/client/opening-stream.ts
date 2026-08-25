@@ -67,6 +67,11 @@ const transcriptItemSchema = z.discriminatedUnion("type", [
     content: z.string(),
     skipped: z.boolean(),
   }).strict(),
+  z.object({
+    type: z.literal("closing"),
+    sequence: z.number().int().positive(),
+    content: z.string(),
+  }).strict(),
 ]);
 
 const streamEventSchema = z.discriminatedUnion("type", [

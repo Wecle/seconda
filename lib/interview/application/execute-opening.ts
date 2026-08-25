@@ -47,6 +47,10 @@ export async function executeInterviewOpening(input: {
     userId: input.userId,
     openingRunId: input.openingRunId,
     buildModelMessage: ({ interview, snapshot }) => buildOpeningModelMessage({
+      language: interview.language as "zh" | "en" | "es" | "de",
+      persona: interview.persona as "friendly" | "standard" | "stressful",
+      interviewType: interview.interviewType as "behavioral" | "technical" | "mixed",
+      targetLevel: interview.targetLevel as "Junior" | "Mid" | "Senior",
       targetRole: interview.targetRole,
       preference: interview.preference,
       preferenceTags: interview.preferenceTags,

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -11,7 +11,9 @@ import {
   Loader2,
   Puzzle,
   Send,
+  SkipForward,
   Sparkles,
+  Square,
   UserRound,
 } from "lucide-react";
 import { UserAvatarMenu, type UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
@@ -83,6 +85,10 @@ function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: strin
 export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const { t } = useTranslation();
   const [currentView, setCurrentView] = useState(view);
+  const [answer, setAnswer] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submissionError, setSubmissionError] = useState<string | null>(null);
+  const submissionRef = useRef<{ signature: string; key: string } | null>(null);
   const { room, transcript } = currentView;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastTranscriptItem = transcript.at(-1);
@@ -115,49 +121,50 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
     setCurrentView(view);
   }, [view]);
 
-  useEffect(() => {
-    if (view.room.phase !== "initializing" && view.room.phase !== "generating_question") return;
-    const controller = new AbortController();
-
-    async function consumeOpeningStream(response: Response) {
-      if (!response.ok || !response.body) throw new Error("Opening stream is unavailable");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let completed = false;
-      while (true) {
-        const { done, value } = await reader.read();
-        buffer += decoder.decode(value, { stream: !done });
-        const blocks = buffer.split("\n\n");
-        buffer = blocks.pop() ?? "";
-        for (const block of blocks) {
-          const event = parseInterviewOpeningSSEBlock(block);
-          if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
-            setCurrentView(event.view);
-          }
-          if (event?.type === "complete") completed = true;
-        }
-        if (done) break;
-      }
-      if (buffer.trim()) {
-        const event = parseInterviewOpeningSSEBlock(buffer);
+  const consumeRoomStream = useCallback(async (response: Response, signal?: AbortSignal) => {
+    if (!response.ok || !response.body) throw new Error("Interview stream is unavailable");
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let completed = false;
+    while (true) {
+      signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      const blocks = buffer.split("\n\n");
+      buffer = blocks.pop() ?? "";
+      for (const block of blocks) {
+        const event = parseInterviewOpeningSSEBlock(block);
         if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
           setCurrentView(event.view);
         }
-        if (event?.type === "complete") completed = true;
+        if (event?.type === "complete") completed = event.ok;
       }
-      return completed;
+      if (done) break;
     }
+    if (buffer.trim()) {
+      const event = parseInterviewOpeningSSEBlock(buffer);
+      if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
+        setCurrentView(event.view);
+      }
+      if (event?.type === "complete") completed = event.ok;
+    }
+    return completed;
+  }, [view.room.interviewId]);
 
-    async function refreshRoom() {
-      const response = await fetch(`/api/interviews/${view.room.interviewId}`, {
-        signal: controller.signal,
-        cache: "no-store",
-      });
-      if (!response.ok) return;
-      const refreshed = parseInterviewRoomPayload(await response.json());
-      if (refreshed?.room.interviewId === view.room.interviewId) setCurrentView(refreshed);
-    }
+  const refreshRoom = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch(`/api/interviews/${view.room.interviewId}`, {
+      signal,
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const refreshed = parseInterviewRoomPayload(await response.json());
+    if (refreshed?.room.interviewId === view.room.interviewId) setCurrentView(refreshed);
+  }, [view.room.interviewId]);
+
+  useEffect(() => {
+    if (view.room.phase !== "initializing" && view.room.phase !== "generating_question") return;
+    const controller = new AbortController();
 
     async function streamOpening() {
       for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -166,7 +173,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             method: "POST",
             signal: controller.signal,
           });
-          if (await consumeOpeningStream(response)) return;
+          if (await consumeRoomStream(response, controller.signal)) return;
         } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") throw error;
         }
@@ -180,7 +187,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           });
         }
       }
-      await refreshRoom();
+      await refreshRoom(controller.signal);
     }
 
     streamOpening().catch((error) => {
@@ -189,7 +196,93 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       }
     });
     return () => controller.abort();
-  }, [view.room.interviewId, view.room.phase]);
+  }, [consumeRoomStream, refreshRoom, view.room.interviewId, view.room.phase]);
+
+  useEffect(() => {
+    if (view.room.phase !== "evaluating_answer") return;
+    const controller = new AbortController();
+
+    async function recoverTurn() {
+      for (let attempt = 0; attempt < 120 && !controller.signal.aborted; attempt += 1) {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => {
+            window.clearTimeout(timeout);
+            reject(new DOMException("Aborted", "AbortError"));
+          };
+          const timeout = window.setTimeout(() => {
+            controller.signal.removeEventListener("abort", onAbort);
+            resolve();
+          }, 500);
+          controller.signal.addEventListener("abort", onAbort, { once: true });
+        });
+        await refreshRoom(controller.signal);
+      }
+    }
+
+    recoverTurn().catch((error) => {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        console.error("Failed to recover interview turn", error instanceof Error ? error.name : "Unknown error");
+      }
+    });
+    return () => controller.abort();
+  }, [refreshRoom, view.room.phase]);
+
+  async function submitCurrentAnswer(skipped: boolean) {
+    if (!room.currentQuestion || !room.canSubmitAnswer || submitting) return;
+    const content = skipped ? "" : answer.trim();
+    if (!skipped && !content) return;
+    const signature = `${room.currentQuestion.id}:${skipped}:${content}`;
+    if (submissionRef.current?.signature !== signature) {
+      submissionRef.current = { signature, key: crypto.randomUUID() };
+    }
+    setSubmitting(true);
+    setSubmissionError(null);
+    try {
+      const response = await fetch(`/api/interviews/${room.interviewId}/answers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": submissionRef.current.key,
+        },
+        body: JSON.stringify({
+          questionId: room.currentQuestion.id,
+          skipped,
+          ...(skipped ? {} : { content }),
+        }),
+      });
+      if (!response.ok) throw new Error("Answer submission failed");
+      if (!skipped) setAnswer("");
+      const completed = await consumeRoomStream(response);
+      if (!completed) {
+        await refreshRoom();
+        throw new Error("Interview turn failed");
+      }
+      submissionRef.current = null;
+    } catch (error) {
+      setSubmissionError(t.interview.answerSubmissionFailed);
+      console.error("Failed to submit interview answer", error instanceof Error ? error.name : "Unknown error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function endInterview() {
+    if (!room.canEnd || submitting || !window.confirm(t.interview.endInterviewConfirm)) return;
+    setSubmitting(true);
+    setSubmissionError(null);
+    try {
+      const response = await fetch(`/api/interviews/${room.interviewId}/end`, { method: "POST" });
+      if (!response.ok) throw new Error("End interview failed");
+      const refreshed = parseInterviewRoomPayload(await response.json());
+      if (!refreshed) throw new Error("End interview response is invalid");
+      setCurrentView(refreshed);
+    } catch (error) {
+      setSubmissionError(t.interview.endInterviewFailed);
+      console.error("Failed to end interview", error instanceof Error ? error.name : "Unknown error");
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
@@ -219,6 +312,16 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             >
               {phaseLabels[room.phase]}
             </Badge>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!room.canEnd || submitting}
+              onClick={endInterview}
+              className="hidden sm:inline-flex"
+            >
+              <Square className="size-3.5" />
+              {t.interview.endInterview}
+            </Button>
             <Button variant="ghost" size="icon" asChild aria-label={t.interview.returnDashboard}>
               <Link href="/dashboard"><ArrowLeft className="size-4" /></Link>
             </Button>
@@ -286,6 +389,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   </article>
                 );
               }
+              if (item.type === "closing") {
+                return (
+                  <article key={`closing-${item.sequence}`} className="flex gap-3">
+                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
+                      <Bot className="size-4" />
+                    </div>
+                    <p className="min-w-0 max-w-[85%] whitespace-pre-wrap break-words pt-1 text-[15px] leading-7">
+                      {item.content}
+                    </p>
+                  </article>
+                );
+              }
 
               const isCurrent = item.questionId === room.currentQuestion?.id;
               return (
@@ -330,15 +445,52 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
 
       <div className="shrink-0 border-t bg-card/95 p-3 backdrop-blur md:p-4">
         <div className="mx-auto max-w-3xl">
+          {submissionError ? (
+            <p className="mb-2 text-sm text-destructive" role="alert">{submissionError}</p>
+          ) : null}
           <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
             <Textarea
-              disabled
+              value={answer}
+              disabled={!room.canSubmitAnswer || submitting}
+              onChange={(event) => setAnswer(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                  event.preventDefault();
+                  void submitCurrentAnswer(false);
+                }
+              }}
               aria-label={t.interview.answerPlaceholder}
-              placeholder={t.interview.readOnlyMilestone}
+              placeholder={room.canSubmitAnswer ? t.interview.answerPlaceholder : phaseLabels[room.phase]}
               className="max-h-40 min-h-11 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
             />
-            <Button size="icon" disabled aria-label={t.interview.submitAnswer}>
-              <Send className="size-4" />
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={!room.canSkip || submitting}
+              onClick={() => void submitCurrentAnswer(true)}
+              aria-label={t.interview.skipQuestion}
+            >
+              <SkipForward className="size-4" />
+            </Button>
+            <Button
+              size="icon"
+              disabled={!room.canSubmitAnswer || submitting || !answer.trim()}
+              onClick={() => void submitCurrentAnswer(false)}
+              aria-label={t.interview.submitAnswer}
+            >
+              {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+            </Button>
+          </div>
+          <div className="mt-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
+            <span>{t.interview.submitShortcut}</span>
+            <Button
+              variant="link"
+              size="sm"
+              disabled={!room.canEnd || submitting}
+              onClick={endInterview}
+              className="h-auto px-0 py-0 sm:hidden"
+            >
+              {t.interview.endInterview}
             </Button>
           </div>
         </div>

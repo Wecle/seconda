@@ -27,6 +27,7 @@ const runSchema = z.object({
   id: z.string().uuid(),
   triggerType: z.enum(["opening", "answer", "skip"]),
   status: z.enum(["queued", "running", "completed", "failed", "cancelled"]),
+  agentRunStatus: z.enum(["queued", "running", "completed", "failed", "cancelled"]).nullable().optional(),
 });
 
 const eventSchema = z.object({

@@ -33,6 +33,11 @@ export type InterviewTranscriptItem =
       sequence: number;
       content: string;
       skipped: boolean;
+    }
+  | {
+      type: "closing";
+      sequence: number;
+      content: string;
     };
 
 export type InterviewRoomPhase =
@@ -96,6 +101,7 @@ export interface InterviewRunSnapshot {
   id: string;
   triggerType: "opening" | "answer" | "skip";
   status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  agentRunStatus?: "queued" | "running" | "completed" | "failed" | "cancelled" | null;
 }
 
 export interface InterviewRoomQueryView {
