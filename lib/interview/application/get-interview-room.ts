@@ -53,6 +53,24 @@ export async function getInterviewRoom(input: {
     runStatus: string | null;
   }) => void;
 } = {}): Promise<InterviewRoomQueryView | null> {
+  const snapshot = await getInterviewRoomEventSnapshot(input, dependencies);
+  return snapshot?.view ?? null;
+}
+
+export async function getInterviewRoomEventSnapshot(input: {
+  userId: string;
+  interviewId: string;
+}, dependencies: {
+  database?: InterviewDatabase;
+  recordInvalidState?: (details: {
+    interviewId: string;
+    interviewStatus: string;
+    questionId: string | null;
+    questionStatus: string | null;
+    runId: string | null;
+    runStatus: string | null;
+  }) => void;
+} = {}): Promise<{ cursor: number; view: InterviewRoomQueryView } | null> {
   const data = await loadOwnedInterviewRoomData({
     database: dependencies.database ?? db,
     userId: input.userId,
@@ -83,7 +101,10 @@ export async function getInterviewRoom(input: {
   }
 
   return {
-    room,
-    transcript: projectInterviewTranscript({ events }),
+    cursor: z.number().int().nonnegative().parse(data.eventCursor),
+    view: {
+      room,
+      transcript: projectInterviewTranscript({ events }),
+    },
   };
 }

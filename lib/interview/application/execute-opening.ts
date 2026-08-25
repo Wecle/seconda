@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { appendAgentEvent, settleAgentRun } from "@/lib/agent/repository";
-import { runAgent, safeAgentError } from "@/lib/agent/runtime";
+import { appendAgentEvent, recordCompletedAgentRunUsage } from "@/lib/agent/repository";
+import { runAgent } from "@/lib/agent/runtime";
 import type { AgentEventSink } from "@/lib/agent/types";
 import { applicationCapabilityRegistry } from "@/lib/application-capabilities";
 import { applicationSkillRegistry } from "@/lib/application-skills";
@@ -13,8 +13,11 @@ import {
   loadOpeningRunStatus,
   type InterviewDatabase,
 } from "../persistence/repository";
+import { createInterviewLeaseOwner, startInterviewRunLease } from "./run-lease";
 
 export type OpeningQuestion = NonNullable<Awaited<ReturnType<typeof loadOpeningQuestion>>>;
+
+class InterviewOpeningLeaseExpiredError extends Error {}
 
 async function waitForOpeningQuestion(input: {
   database: InterviewDatabase;
@@ -26,8 +29,9 @@ async function waitForOpeningQuestion(input: {
   while (Date.now() < deadline) {
     const question = await loadOpeningQuestion(input);
     if (question) return question;
-    const status = await loadOpeningRunStatus(input);
-    if (status !== "running") throw new Error(`Interview opening run ended as ${status ?? "not_found"}`);
+    const run = await loadOpeningRunStatus(input);
+    if (run?.status !== "running") throw new Error(`Interview opening run ended as ${run?.status ?? "not_found"}`);
+    if (!run.leaseExpiresAt || run.leaseExpiresAt <= new Date()) throw new InterviewOpeningLeaseExpiredError();
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new DOMException("Interview opening run did not finish in time", "TimeoutError");
@@ -42,10 +46,12 @@ export async function executeInterviewOpening(input: {
   signal?: AbortSignal;
 } = {}): Promise<{ status: "active"; question: OpeningQuestion }> {
   const database = dependencies.database ?? db;
+  const leaseOwner = createInterviewLeaseOwner();
   const claim = await claimInterviewOpeningRun({
     database,
     userId: input.userId,
     openingRunId: input.openingRunId,
+    leaseOwner,
     buildModelMessage: ({ interview, snapshot }) => buildOpeningModelMessage({
       language: interview.language as "zh" | "en" | "es" | "de",
       persona: interview.persona as "friendly" | "standard" | "stressful",
@@ -63,12 +69,19 @@ export async function executeInterviewOpening(input: {
     return { status: "active", question: claim.question };
   }
   if (claim.state === "unavailable" && claim.status === "running") {
-    const question = await waitForOpeningQuestion({
-      database,
-      userId: input.userId,
-      openingRunId: input.openingRunId,
-    });
-    return { status: "active", question };
+    try {
+      const question = await waitForOpeningQuestion({
+        database,
+        userId: input.userId,
+        openingRunId: input.openingRunId,
+      });
+      return { status: "active", question };
+    } catch (error) {
+      if (error instanceof InterviewOpeningLeaseExpiredError) {
+        return executeInterviewOpening(input, dependencies);
+      }
+      throw error;
+    }
   }
   if (claim.state !== "claimed") {
     throw new Error(`Interview opening run is ${claim.state}`);
@@ -77,12 +90,19 @@ export async function executeInterviewOpening(input: {
   const events: AgentEventSink = {
     append: (type, payload) => appendAgentEvent({
       sessionId: claim.session.id,
-      runId: claim.agentRun.id,
+      runId: type === "skill_catalog_snapshotted" ? claim.skillSnapshotRunId : claim.agentRun.id,
       type,
       payload,
     }),
   };
-  const signal = dependencies.signal ?? AbortSignal.timeout(90_000);
+  const lease = startInterviewRunLease({
+    database,
+    interviewRunId: claim.logicalRun.id,
+    agentRunId: claim.agentRun.id,
+    attemptGeneration: claim.logicalRun.attemptGeneration,
+    leaseOwner,
+    signal: dependencies.signal ?? AbortSignal.timeout(90_000),
+  });
   try {
     const usage = await (dependencies.run ?? runAgent)({
       sessionId: claim.session.id,
@@ -97,21 +117,22 @@ export async function executeInterviewOpening(input: {
         interviewRunId: claim.logicalRun.id,
         triggerType: "opening",
         attemptGeneration: claim.logicalRun.attemptGeneration,
+        leaseOwner,
       },
+      skillSnapshotRunId: claim.skillSnapshotRunId,
+      modelContextBoundarySequence: claim.modelContextBoundarySequence,
       maxSteps: claim.agentRun.maxSteps,
-      signal,
+      signal: lease.signal,
       events,
     }, { capabilities: applicationCapabilityRegistry, skills: applicationSkillRegistry });
     const question = await loadOpeningQuestion({ database, userId: input.userId, openingRunId: input.openingRunId });
     if (!question) throw new Error("Interview agent finished without committing an opening question");
-    await settleAgentRun({
+    await recordCompletedAgentRunUsage({
       runId: claim.agentRun.id,
       sessionId: claim.session.id,
-      status: "completed",
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
-      terminalEvent: { type: "run_completed", payload: { usage } },
-    });
+    }).catch(() => false);
     return { status: "active", question };
   } catch (error) {
     const committed = await loadOpeningQuestion({
@@ -120,27 +141,18 @@ export async function executeInterviewOpening(input: {
       openingRunId: input.openingRunId,
     });
     if (committed) {
-      await settleAgentRun({
-        runId: claim.agentRun.id,
-        sessionId: claim.session.id,
-        status: "completed",
-        terminalEvent: { type: "run_completed", payload: { recoveredAfterCommit: true } },
-      }).catch(() => undefined);
       return { status: "active", question: committed };
     }
-    const message = safeAgentError(error);
     await failInterviewOpeningRun({
       database,
       openingRunId: input.openingRunId,
+      agentRunId: claim.agentRun.id,
+      attemptGeneration: claim.logicalRun.attemptGeneration,
+      leaseOwner,
       errorCode: "OPENING_RUN_FAILED",
     });
-    await settleAgentRun({
-      runId: claim.agentRun.id,
-      sessionId: claim.session.id,
-      status: "failed",
-      errorMessage: message,
-      terminalEvent: { type: "run_failed", payload: { code: "OPENING_RUN_FAILED" } },
-    }).catch(() => undefined);
     throw error;
+  } finally {
+    lease.stop();
   }
 }

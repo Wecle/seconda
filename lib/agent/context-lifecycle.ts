@@ -34,11 +34,20 @@ export type PrepareContextInput = {
   signal: AbortSignal;
   liveEvents?: AgentEventSink;
   publish?: (event: AgentEvent) => void;
+  modelContextBoundarySequence?: number;
   summarize?: (messages: readonly ModelMessage[], signal: AbortSignal) => Promise<{ text: string; usage?: Record<string, unknown> }>;
   store?: ContextLifecycleStore;
   trigger?: "pressure" | "context-overflow";
   compactionDepth?: number;
 };
+
+function scopeModelContextEvents(input: PrepareContextInput, events: AgentEvent[]) {
+  const boundary = input.modelContextBoundarySequence;
+  if (boundary === undefined) return events;
+  return events.filter((event) => (
+    event.sequence <= boundary || event.runId === input.runId
+  ));
+}
 
 const defaultStore: ContextLifecycleStore = {
   async load(sessionId) {
@@ -131,10 +140,10 @@ async function spillLargeToolResults(input: PrepareContextInput, events: AgentEv
 export async function prepareModelContext(input: PrepareContextInput): Promise<ContextLifecycleResult> {
   const store = input.store ?? defaultStore;
   const contextWindow = input.contextWindow ?? resolveContextWindow(input.model);
-  let events = await store.load(input.sessionId);
+  let events = scopeModelContextEvents(input, await store.load(input.sessionId));
   await recoverOrphanedCompactions(input, events);
   const spillCount = await spillLargeToolResults(input, events);
-  if (spillCount > 0) events = await store.load(input.sessionId);
+  if (spillCount > 0) events = scopeModelContextEvents(input, await store.load(input.sessionId));
 
   let projection = projectModelInput(events, { activeRunId: input.runId });
   let estimatedTokens = measureRequestTokens(input.system, projection.messages, input.toolSchemas);
@@ -205,7 +214,7 @@ export async function prepareModelContext(input: PrepareContextInput): Promise<C
     return { events, messages: projection.messages, estimatedTokens, contextWindow, maxOutputTokens: pressure.reserveTokens, compacted: false };
   }
   for (const event of committed) input.publish?.(event);
-  events = await store.load(input.sessionId);
+  events = scopeModelContextEvents(input, await store.load(input.sessionId));
   projection = projectModelInput(events, { activeRunId: input.runId });
   estimatedTokens = measureRequestTokens(input.system, projection.messages, input.toolSchemas);
   const afterPressure = contextPressure({ estimatedTokens, contextWindow });

@@ -83,6 +83,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       database,
       userId,
       openingRunId: created.openingRunId,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "opening" }),
     });
     assert.equal(claim.state, "claimed");
@@ -95,6 +96,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: claim.interview.id,
       interviewRunId: claim.logicalRun.id,
       attemptGeneration: claim.logicalRun.attemptGeneration,
+      leaseOwner: claim.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: {
@@ -149,6 +151,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       database,
       userId,
       interviewRunId: submissions[0].run.id,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "answer turn" }),
     });
     assert.equal(firstTurn.state, "claimed");
@@ -170,6 +173,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: firstTurn.interview.id,
       interviewRunId: firstTurn.logicalRun.id,
       attemptGeneration: firstTurn.logicalRun.attemptGeneration,
+      leaseOwner: firstTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: {
@@ -197,6 +201,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: firstTurn.interview.id,
       interviewRunId: firstTurn.logicalRun.id,
       attemptGeneration: firstTurn.logicalRun.attemptGeneration,
+      leaseOwner: firstTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: analysis,
         action: {
@@ -218,6 +223,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: firstTurn.interview.id,
       interviewRunId: firstTurn.logicalRun.id,
       attemptGeneration: firstTurn.logicalRun.attemptGeneration,
+      leaseOwner: firstTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: analysis,
         action: {
@@ -230,17 +236,6 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       },
     }, { database });
     assert.equal(replayedFollowUp.id, followUp.id);
-    await assert.rejects(submitInterviewAnswer({
-      userId,
-      interviewId: created.interviewId,
-      idempotencyKey: "answer-before-agent-handoff",
-      request: { questionId: followUp.id, skipped: true },
-    }, { database }), /still settling/);
-    await database.update(agentRuns).set({ status: "completed", completedAt: new Date() })
-      .where(eq(agentRuns.id, firstTurn.agentRun.id));
-    await database.update(agentSessions).set({ status: "idle" })
-      .where(eq(agentSessions.id, firstTurn.session.id));
-
     const skipped = await submitInterviewAnswer({
       userId,
       interviewId: created.interviewId,
@@ -251,6 +246,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       database,
       userId,
       interviewRunId: skipped.run.id,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "skip turn" }),
     });
     assert.equal(finalTurn.state, "claimed");
@@ -262,6 +258,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: finalTurn.interview.id,
       interviewRunId: finalTurn.logicalRun.id,
       attemptGeneration: finalTurn.logicalRun.attemptGeneration,
+      leaseOwner: finalTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: {
@@ -280,6 +277,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: finalTurn.interview.id,
       interviewRunId: finalTurn.logicalRun.id,
       attemptGeneration: finalTurn.logicalRun.attemptGeneration,
+      leaseOwner: finalTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: { type: "complete_interview", closingMessage: "面试已完成。" },
@@ -312,6 +310,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       database,
       userId,
       interviewRunId: topicAnswer.run.id,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "topic turn one" }),
     });
     assert.equal(topicFirstTurn.state, "claimed");
@@ -323,6 +322,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: topicFirstTurn.interview.id,
       interviewRunId: topicFirstTurn.logicalRun.id,
       attemptGeneration: topicFirstTurn.logicalRun.attemptGeneration,
+      leaseOwner: topicFirstTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: analysis,
         action: {
@@ -350,6 +350,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       database,
       userId,
       interviewRunId: topicFollowUpAnswer.run.id,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "topic turn two" }),
     });
     assert.equal(topicSecondTurn.state, "claimed");
@@ -362,6 +363,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: topicSecondTurn.interview.id,
       interviewRunId: topicSecondTurn.logicalRun.id,
       attemptGeneration: topicSecondTurn.logicalRun.attemptGeneration,
+      leaseOwner: topicSecondTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: mainAnalysis,
         action: {
@@ -380,6 +382,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: topicSecondTurn.interview.id,
       interviewRunId: topicSecondTurn.logicalRun.id,
       attemptGeneration: topicSecondTurn.logicalRun.attemptGeneration,
+      leaseOwner: topicSecondTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: mainAnalysis,
         action: {
@@ -398,6 +401,7 @@ test("adaptive interview loop is idempotent and enforces analysis, follow-up, ro
       interviewId: topicSecondTurn.interview.id,
       interviewRunId: topicSecondTurn.logicalRun.id,
       attemptGeneration: topicSecondTurn.logicalRun.attemptGeneration,
+      leaseOwner: topicSecondTurn.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: mainAnalysis,
         action: {

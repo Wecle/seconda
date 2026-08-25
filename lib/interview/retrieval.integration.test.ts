@@ -111,6 +111,7 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
       database,
       userId: ownerUserId,
       openingRunId: created.openingRunId,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "opening" }),
     });
     assert.equal(openingClaim.state, "claimed");
@@ -191,6 +192,7 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
       interviewId: created.interviewId,
       interviewRunId: created.openingRunId,
       attemptGeneration: openingClaim.logicalRun.attemptGeneration,
+      leaseOwner: openingClaim.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: {
@@ -226,6 +228,7 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
       database,
       userId: ownerUserId,
       interviewRunId: a1.run.id,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user", content: "turn-1" }),
     });
     assert.equal(turn1Claim.state, "claimed");
@@ -239,6 +242,7 @@ test("interview retrieval tools enforce database ownership isolation, keyword se
       interviewId: created.interviewId,
       interviewRunId: a1.run.id,
       attemptGeneration: turn1Claim.logicalRun.attemptGeneration,
+      leaseOwner: turn1Claim.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: {
           completeness: "high",

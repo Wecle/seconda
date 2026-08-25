@@ -412,6 +412,23 @@ export async function settleAgentRun(input: {
   });
 }
 
+export async function recordCompletedAgentRunUsage(input: {
+  runId: string;
+  sessionId: string;
+  inputTokens?: number;
+  outputTokens?: number;
+}) {
+  const [run] = await db.update(agentRuns).set({
+    inputTokens: input.inputTokens,
+    outputTokens: input.outputTokens,
+  }).where(and(
+    eq(agentRuns.id, input.runId),
+    eq(agentRuns.sessionId, input.sessionId),
+    eq(agentRuns.status, "completed"),
+  )).returning({ id: agentRuns.id });
+  return Boolean(run);
+}
+
 export async function findRunningAgentRun(userId: string, sessionId: string, capability?: string) {
   const [run] = await db
     .select({ id: agentRuns.id })

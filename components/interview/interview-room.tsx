@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -10,6 +10,7 @@ import {
   ChevronRight,
   Loader2,
   Puzzle,
+  RotateCcw,
   Send,
   SkipForward,
   Sparkles,
@@ -22,10 +23,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
-import {
-  parseInterviewOpeningSSEBlock,
-  parseInterviewRoomPayload,
-} from "@/lib/interview/client/opening-stream";
+import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
 
 interface InterviewRoomProps {
@@ -89,6 +87,8 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const submissionRef = useRef<{ signature: string; key: string } | null>(null);
+  const answerAcceptedRef = useRef(false);
+  const openingRequestRef = useRef(false);
   const { room, transcript } = currentView;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const lastTranscriptItem = transcript.at(-1);
@@ -121,111 +121,36 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
     setCurrentView(view);
   }, [view]);
 
-  const consumeRoomStream = useCallback(async (response: Response, signal?: AbortSignal) => {
-    if (!response.ok || !response.body) throw new Error("Interview stream is unavailable");
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let completed = false;
-    while (true) {
-      signal?.throwIfAborted();
-      const { done, value } = await reader.read();
-      buffer += decoder.decode(value, { stream: !done });
-      const blocks = buffer.split("\n\n");
-      buffer = blocks.pop() ?? "";
-      for (const block of blocks) {
-        const event = parseInterviewOpeningSSEBlock(block);
-        if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
-          setCurrentView(event.view);
-        }
-        if (event?.type === "complete") completed = event.ok;
-      }
-      if (done) break;
+  useEffect(() => {
+    if (answerAcceptedRef.current && room.phase !== "awaiting_answer") {
+      answerAcceptedRef.current = false;
+      setSubmitting(false);
     }
-    if (buffer.trim()) {
-      const event = parseInterviewOpeningSSEBlock(buffer);
-      if (event?.type === "room" && event.view.room.interviewId === view.room.interviewId) {
-        setCurrentView(event.view);
-      }
-      if (event?.type === "complete") completed = event.ok;
-    }
-    return completed;
-  }, [view.room.interviewId]);
+  }, [room.phase]);
 
-  const refreshRoom = useCallback(async (signal?: AbortSignal) => {
-    const response = await fetch(`/api/interviews/${view.room.interviewId}`, {
-      signal,
-      cache: "no-store",
+  useEffect(() => {
+    const source = new EventSource(`/api/interviews/${view.room.interviewId}/events?after=0`);
+    source.addEventListener("room", (event) => {
+      try {
+        const refreshed = parseInterviewRoomEventData((event as MessageEvent<string>).data);
+        if (refreshed?.room.interviewId === view.room.interviewId) setCurrentView(refreshed);
+      } catch {
+        console.error("Received an invalid interview room event");
+      }
     });
-    if (!response.ok) return;
-    const refreshed = parseInterviewRoomPayload(await response.json());
-    if (refreshed?.room.interviewId === view.room.interviewId) setCurrentView(refreshed);
+    return () => source.close();
   }, [view.room.interviewId]);
 
   useEffect(() => {
-    if (view.room.phase !== "initializing" && view.room.phase !== "generating_question") return;
-    const controller = new AbortController();
-
-    async function streamOpening() {
-      for (let attempt = 1; attempt <= 3; attempt += 1) {
-        try {
-          const response = await fetch(`/api/interviews/${view.room.interviewId}/opening`, {
-            method: "POST",
-            signal: controller.signal,
-          });
-          if (await consumeRoomStream(response, controller.signal)) return;
-        } catch (error) {
-          if (error instanceof DOMException && error.name === "AbortError") throw error;
-        }
-        if (attempt < 3) {
-          await new Promise<void>((resolve, reject) => {
-            const timeout = window.setTimeout(resolve, attempt * 250);
-            controller.signal.addEventListener("abort", () => {
-              window.clearTimeout(timeout);
-              reject(new DOMException("Aborted", "AbortError"));
-            }, { once: true });
-          });
-        }
-      }
-      await refreshRoom(controller.signal);
-    }
-
-    streamOpening().catch((error) => {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
-        console.error("Failed to stream interview opening", error instanceof Error ? error.name : "Unknown error");
-      }
+    if (openingRequestRef.current || (room.phase !== "initializing" && room.phase !== "generating_question")) return;
+    openingRequestRef.current = true;
+    fetch(`/api/interviews/${room.interviewId}/opening`, { method: "POST" }).then((response) => {
+      if (!response.ok) throw new Error("Interview opening failed to start");
+    }).catch((error) => {
+      openingRequestRef.current = false;
+      console.error("Failed to start interview opening", error instanceof Error ? error.name : "Unknown error");
     });
-    return () => controller.abort();
-  }, [consumeRoomStream, refreshRoom, view.room.interviewId, view.room.phase]);
-
-  useEffect(() => {
-    if (view.room.phase !== "evaluating_answer") return;
-    const controller = new AbortController();
-
-    async function recoverTurn() {
-      for (let attempt = 0; attempt < 120 && !controller.signal.aborted; attempt += 1) {
-        await new Promise<void>((resolve, reject) => {
-          const onAbort = () => {
-            window.clearTimeout(timeout);
-            reject(new DOMException("Aborted", "AbortError"));
-          };
-          const timeout = window.setTimeout(() => {
-            controller.signal.removeEventListener("abort", onAbort);
-            resolve();
-          }, 500);
-          controller.signal.addEventListener("abort", onAbort, { once: true });
-        });
-        await refreshRoom(controller.signal);
-      }
-    }
-
-    recoverTurn().catch((error) => {
-      if (!(error instanceof DOMException && error.name === "AbortError")) {
-        console.error("Failed to recover interview turn", error instanceof Error ? error.name : "Unknown error");
-      }
-    });
-    return () => controller.abort();
-  }, [refreshRoom, view.room.phase]);
+  }, [room.interviewId, room.phase]);
 
   async function submitCurrentAnswer(skipped: boolean) {
     if (!room.currentQuestion || !room.canSubmitAnswer || submitting) return;
@@ -237,6 +162,8 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
     }
     setSubmitting(true);
     setSubmissionError(null);
+    answerAcceptedRef.current = true;
+    let accepted = false;
     try {
       const response = await fetch(`/api/interviews/${room.interviewId}/answers`, {
         method: "POST",
@@ -252,15 +179,30 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       });
       if (!response.ok) throw new Error("Answer submission failed");
       if (!skipped) setAnswer("");
-      const completed = await consumeRoomStream(response);
-      if (!completed) {
-        await refreshRoom();
-        throw new Error("Interview turn failed");
-      }
       submissionRef.current = null;
+      accepted = true;
     } catch (error) {
+      answerAcceptedRef.current = false;
       setSubmissionError(t.interview.answerSubmissionFailed);
       console.error("Failed to submit interview answer", error instanceof Error ? error.name : "Unknown error");
+    } finally {
+      if (!accepted) setSubmitting(false);
+    }
+  }
+
+  async function retryRun() {
+    if (!room.retryableRunId || submitting) return;
+    setSubmitting(true);
+    setSubmissionError(null);
+    try {
+      const response = await fetch(
+        `/api/interviews/${room.interviewId}/runs/${room.retryableRunId}/retry`,
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error("Interview run retry failed");
+    } catch (error) {
+      setSubmissionError(t.interview.questionLoadFailed);
+      console.error("Failed to retry interview run", error instanceof Error ? error.name : "Unknown error");
     } finally {
       setSubmitting(false);
     }
@@ -437,7 +379,21 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             })}
 
             {room.phase !== "awaiting_answer" ? (
-              <PhaseStatus phase={room.phase} label={phaseLabels[room.phase]} />
+              <div className="space-y-3">
+                <PhaseStatus phase={room.phase} label={phaseLabels[room.phase]} />
+                {room.phase === "run_failed" && room.retryableRunId ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={submitting}
+                    onClick={() => void retryRun()}
+                    className="ml-11"
+                  >
+                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                    {t.common.retry}
+                  </Button>
+                ) : null}
+              </div>
             ) : null}
           </div>
         </main>

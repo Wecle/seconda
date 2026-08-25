@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import type { ModelMessage } from "ai";
 import type { AgentEvent, AgentEventType } from "./types";
 import { findOrphanedCompactionIds, prepareModelContext, type ContextLifecycleStore } from "./context-lifecycle";
 
-function memoryStore(seed: Array<{ type: AgentEventType; payload: Record<string, unknown> }>) {
+function memoryStore(seed: Array<{ type: AgentEventType; payload: Record<string, unknown>; runId?: string | null }>) {
   let nextId = 1;
   const events: AgentEvent[] = seed.map((event, index) => ({
-    id: nextId++, sessionId: "session", runId: null, sequence: index + 1,
+    id: nextId++, sessionId: "session", runId: event.runId ?? null, sequence: index + 1,
     type: event.type, payload: structuredClone(event.payload),
     dedupeKey: null, schemaVersion: 1, visibility: "model", createdAt: new Date(0),
   }));
@@ -99,5 +100,39 @@ describe("context lifecycle", () => {
     assert.deepEqual(findOrphanedCompactionIds(memory.events), []);
     assert.equal(memory.events[2].type, "compaction_failed");
     assert.equal(memory.events[2].payload.recovered, true);
+  });
+
+  test("retry context excludes the failed attempt while preserving prior history and the current attempt", async () => {
+    const failedAssistant = {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "failed-call", toolName: "read", input: {} }],
+    } as ModelMessage;
+    const failedTool = {
+      role: "tool",
+      content: [{
+        type: "tool-result", toolCallId: "failed-call", toolName: "read",
+        output: { type: "json", value: { leaked: true } },
+      }],
+    } as ModelMessage;
+    const memory = memoryStore([
+      { type: "user_message", runId: "prior", payload: { message: { role: "user", content: "completed history" } } },
+      { type: "model_message", runId: "failed-attempt", payload: { message: { role: "user", content: "logical trigger" } } },
+      { type: "assistant_message", runId: "failed-attempt", payload: { message: failedAssistant } },
+      { type: "tool_result_message", runId: "failed-attempt", payload: { message: failedTool } },
+      { type: "assistant_message", runId: "retry-attempt", payload: { message: { role: "assistant", content: "current progress" } } },
+    ]);
+
+    const result = await prepareModelContext({
+      sessionId: "session", runId: "retry-attempt", model: "test", contextWindow: 10_000,
+      system: "system", toolSchemas: [], signal: new AbortController().signal,
+      store: memory.store, modelContextBoundarySequence: 2,
+    });
+
+    assert.deepEqual(result.messages, [
+      { role: "user", content: "completed history" },
+      { role: "user", content: "logical trigger" },
+      { role: "assistant", content: "current progress" },
+    ]);
+    assert.doesNotMatch(JSON.stringify(result.messages), /failed-call|leaked/);
   });
 });

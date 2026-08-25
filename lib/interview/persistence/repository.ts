@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
@@ -19,6 +19,12 @@ import type { CreateInterviewRequest, ResumeEvidenceMap } from "../domain/create
 export type InterviewTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 export type InterviewDatabase = typeof db;
+
+const INTERVIEW_RUN_LEASE_MS = 30_000;
+
+function leaseExpiry(durationMs = INTERVIEW_RUN_LEASE_MS) {
+  return new Date(Date.now() + durationMs);
+}
 
 export async function lockInterviewCreationKey(
   transaction: InterviewTransaction,
@@ -165,6 +171,8 @@ export async function claimInterviewOpeningRun(input: {
   database: InterviewDatabase;
   userId: string;
   openingRunId: string;
+  leaseOwner: string;
+  leaseDurationMs?: number;
   buildModelMessage(input: {
     interview: typeof interviews.$inferSelect;
     snapshot: typeof interviewResumeSnapshots.$inferSelect;
@@ -193,7 +201,9 @@ export async function claimInterviewOpeningRun(input: {
       .where(eq(interviewQuestions.sourceInterviewRunId, logicalRun.id))
       .limit(1);
     if (existingQuestion) return { state: "completed" as const, question: existingQuestion };
-    if (logicalRun.status !== "queued") {
+    const takingOver = logicalRun.status === "running"
+      && (!logicalRun.leaseExpiresAt || logicalRun.leaseExpiresAt <= new Date());
+    if (logicalRun.status !== "queued" && !takingOver) {
       return { state: "unavailable" as const, status: logicalRun.status };
     }
     const [session] = await transaction.select().from(agentSessions)
@@ -208,11 +218,45 @@ export async function claimInterviewOpeningRun(input: {
       .where(eq(interviewResumeSnapshots.interviewId, interview.id))
       .limit(1);
     if (!session || !snapshot) throw new Error("Interview opening context is incomplete");
+    let agentRunId = logicalRun.currentAgentRunId;
+    if (takingOver) {
+      const [currentAttempt] = await transaction.select({
+        status: agentRuns.status,
+        maxSteps: agentRuns.maxSteps,
+      }).from(agentRuns).where(and(
+        eq(agentRuns.id, logicalRun.currentAgentRunId),
+        eq(agentRuns.sessionId, session.id),
+      )).limit(1).for("update");
+      if (!currentAttempt) return { state: "unavailable" as const, status: logicalRun.status };
+      if (currentAttempt.status === "queued" || currentAttempt.status === "running") {
+        await transaction.update(agentRuns).set({
+          status: "failed",
+          errorMessage: "Interview run lease expired",
+          completedAt: new Date(),
+        }).where(eq(agentRuns.id, logicalRun.currentAgentRunId));
+        await appendAgentEventsInTransaction(transaction, {
+          sessionId: session.id,
+          runId: logicalRun.currentAgentRunId,
+          events: [{
+            type: "run_failed",
+            payload: { code: "INTERVIEW_RUN_LEASE_EXPIRED" },
+            dedupeKey: `interview:lease-expired:${logicalRun.id}:${logicalRun.attemptGeneration}`,
+            visibility: "model",
+          }],
+        });
+      }
+      const [replacement] = await transaction.insert(agentRuns).values({
+        sessionId: session.id,
+        status: "queued",
+        maxSteps: currentAttempt.maxSteps,
+      }).returning({ id: agentRuns.id });
+      agentRunId = replacement.id;
+    }
     const [agentRun] = await transaction.update(agentRuns).set({
       status: "running",
       startedAt: new Date(),
     }).where(and(
-      eq(agentRuns.id, logicalRun.currentAgentRunId),
+      eq(agentRuns.id, agentRunId),
       eq(agentRuns.sessionId, session.id),
       eq(agentRuns.status, "queued"),
     )).returning();
@@ -223,22 +267,37 @@ export async function claimInterviewOpeningRun(input: {
       status: "running",
       attemptCount: sql`${interviewAgentRuns.attemptCount} + 1`,
       attemptGeneration: sql`${interviewAgentRuns.attemptGeneration} + 1`,
+      currentAgentRunId: agentRun.id,
+      leaseOwner: input.leaseOwner,
+      leaseExpiresAt: leaseExpiry(input.leaseDurationMs),
       errorJson: null,
     }).where(and(
       eq(interviewAgentRuns.id, logicalRun.id),
-      eq(interviewAgentRuns.status, "queued"),
+      takingOver
+        ? and(
+            eq(interviewAgentRuns.status, "running"),
+            or(isNull(interviewAgentRuns.leaseExpiresAt), lte(interviewAgentRuns.leaseExpiresAt, new Date())),
+          )
+        : eq(interviewAgentRuns.status, "queued"),
     )).returning();
     if (!claimedRun) throw new Error("Opening run claim was lost");
-    await appendAgentEventsInTransaction(transaction, {
-      sessionId: session.id,
-      runId: agentRun.id,
-      events: [{
-        type: "model_message",
-        payload: { message: input.buildModelMessage({ interview, snapshot }) },
-        dedupeKey: `interview:opening-context:${logicalRun.id}`,
-        visibility: "model",
-      }],
-    });
+    const contextDedupeKey = `interview:opening-context:${logicalRun.id}`;
+    let [contextEvent] = await transaction.select({ runId: agentEvents.runId, sequence: agentEvents.sequence }).from(agentEvents).where(and(
+      eq(agentEvents.sessionId, session.id),
+      eq(agentEvents.dedupeKey, contextDedupeKey),
+    )).limit(1);
+    if (!contextEvent) {
+      [contextEvent] = await appendAgentEventsInTransaction(transaction, {
+        sessionId: session.id,
+        runId: agentRun.id,
+        events: [{
+          type: "model_message",
+          payload: { message: input.buildModelMessage({ interview, snapshot }) },
+          dedupeKey: contextDedupeKey,
+          visibility: "model",
+        }],
+      });
+    }
     return {
       state: "claimed" as const,
       interview,
@@ -246,6 +305,8 @@ export async function claimInterviewOpeningRun(input: {
       agentRun,
       session: { ...session, status: "running" },
       snapshot,
+      skillSnapshotRunId: contextEvent?.runId ?? agentRun.id,
+      modelContextBoundarySequence: contextEvent?.sequence,
     };
   });
 }
@@ -278,7 +339,10 @@ export async function loadOpeningRunStatus(input: {
   userId: string;
   openingRunId: string;
 }) {
-  const [run] = await input.database.select({ status: interviewAgentRuns.status })
+  const [run] = await input.database.select({
+    status: interviewAgentRuns.status,
+    leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
+  })
     .from(interviewAgentRuns)
     .innerJoin(interviews, eq(interviewAgentRuns.interviewId, interviews.id))
     .where(and(
@@ -286,7 +350,7 @@ export async function loadOpeningRunStatus(input: {
       eq(interviews.userId, input.userId),
     ))
     .limit(1);
-  return run?.status ?? null;
+  return run ?? null;
 }
 
 export async function loadOwnedOpeningRunReference(input: {
@@ -314,25 +378,79 @@ export async function loadOwnedOpeningRunReference(input: {
   return row ?? null;
 }
 
+async function failInterviewRunAttempt(input: {
+  database: InterviewDatabase;
+  interviewRunId: string;
+  agentRunId: string;
+  attemptGeneration: number;
+  leaseOwner: string;
+  errorCode: string;
+}) {
+  return input.database.transaction(async (transaction) => {
+    const failedAt = new Date();
+    const [failed] = await transaction.update(interviewAgentRuns).set({
+      status: "failed",
+      errorJson: { code: input.errorCode },
+      completedAt: failedAt,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+    }).where(and(
+      eq(interviewAgentRuns.id, input.interviewRunId),
+      eq(interviewAgentRuns.status, "running"),
+      eq(interviewAgentRuns.currentAgentRunId, input.agentRunId),
+      eq(interviewAgentRuns.attemptGeneration, input.attemptGeneration),
+      eq(interviewAgentRuns.leaseOwner, input.leaseOwner),
+      gt(interviewAgentRuns.leaseExpiresAt, new Date()),
+    )).returning({ id: interviewAgentRuns.id });
+    if (!failed) return false;
+    const [attempt] = await transaction.update(agentRuns).set({
+      status: "failed",
+      errorMessage: input.errorCode,
+      completedAt: failedAt,
+    }).where(and(
+      eq(agentRuns.id, input.agentRunId),
+      eq(agentRuns.status, "running"),
+    )).returning({ sessionId: agentRuns.sessionId });
+    if (!attempt) throw new Error("Interview Agent attempt could not be failed atomically");
+    const [session] = await transaction.update(agentSessions).set({
+      status: "failed",
+      updatedAt: failedAt,
+    }).where(and(
+      eq(agentSessions.id, attempt.sessionId),
+      eq(agentSessions.status, "running"),
+    )).returning({ id: agentSessions.id });
+    if (!session) throw new Error("Interview Agent session could not be failed atomically");
+    await appendAgentEventsInTransaction(transaction, {
+      sessionId: attempt.sessionId,
+      runId: input.agentRunId,
+      events: [{
+        type: "run_failed",
+        payload: { code: input.errorCode },
+        dedupeKey: `interview:attempt-failed:${input.interviewRunId}:${input.attemptGeneration}`,
+        visibility: "model",
+      }],
+    });
+    return true;
+  });
+}
+
 export async function failInterviewOpeningRun(input: {
   database: InterviewDatabase;
   openingRunId: string;
+  agentRunId: string;
+  attemptGeneration: number;
+  leaseOwner: string;
   errorCode: string;
 }) {
-  await input.database.update(interviewAgentRuns).set({
-    status: "failed",
-    errorJson: { code: input.errorCode },
-    completedAt: new Date(),
-  }).where(and(
-    eq(interviewAgentRuns.id, input.openingRunId),
-    eq(interviewAgentRuns.status, "running"),
-  ));
+  return failInterviewRunAttempt({ ...input, interviewRunId: input.openingRunId });
 }
 
 export async function claimInterviewTurnRun(input: {
   database: InterviewDatabase;
   userId: string;
   interviewRunId: string;
+  leaseOwner: string;
+  leaseDurationMs?: number;
   buildModelMessage(input: {
     interview: typeof interviews.$inferSelect;
     snapshot: typeof interviewResumeSnapshots.$inferSelect;
@@ -368,7 +486,9 @@ export async function claimInterviewTurnRun(input: {
       return { state: "not_found" as const };
     }
     if (logicalRun.status === "completed") return { state: "completed" as const };
-    if (logicalRun.status !== "queued") {
+    const takingOver = logicalRun.status === "running"
+      && (!logicalRun.leaseExpiresAt || logicalRun.leaseExpiresAt <= new Date());
+    if (logicalRun.status !== "queued" && !takingOver) {
       return { state: "unavailable" as const, status: logicalRun.status };
     }
     const [session] = await transaction.select().from(agentSessions)
@@ -408,11 +528,45 @@ export async function claimInterviewTurnRun(input: {
       .leftJoin(interviewAnswers, eq(interviewAnswers.questionId, interviewQuestions.id))
       .where(eq(interviewQuestions.interviewId, interview.id))
       .orderBy(asc(interviewQuestions.sequence));
+    let agentRunId = logicalRun.currentAgentRunId;
+    if (takingOver) {
+      const [currentAttempt] = await transaction.select({
+        status: agentRuns.status,
+        maxSteps: agentRuns.maxSteps,
+      }).from(agentRuns).where(and(
+        eq(agentRuns.id, logicalRun.currentAgentRunId),
+        eq(agentRuns.sessionId, session.id),
+      )).limit(1).for("update");
+      if (!currentAttempt) return { state: "unavailable" as const, status: logicalRun.status };
+      if (currentAttempt.status === "queued" || currentAttempt.status === "running") {
+        await transaction.update(agentRuns).set({
+          status: "failed",
+          errorMessage: "Interview run lease expired",
+          completedAt: new Date(),
+        }).where(eq(agentRuns.id, logicalRun.currentAgentRunId));
+        await appendAgentEventsInTransaction(transaction, {
+          sessionId: session.id,
+          runId: logicalRun.currentAgentRunId,
+          events: [{
+            type: "run_failed",
+            payload: { code: "INTERVIEW_RUN_LEASE_EXPIRED" },
+            dedupeKey: `interview:lease-expired:${logicalRun.id}:${logicalRun.attemptGeneration}`,
+            visibility: "model",
+          }],
+        });
+      }
+      const [replacement] = await transaction.insert(agentRuns).values({
+        sessionId: session.id,
+        status: "queued",
+        maxSteps: currentAttempt.maxSteps,
+      }).returning({ id: agentRuns.id });
+      agentRunId = replacement.id;
+    }
     const [agentRun] = await transaction.update(agentRuns).set({
       status: "running",
       startedAt: new Date(),
     }).where(and(
-      eq(agentRuns.id, logicalRun.currentAgentRunId),
+      eq(agentRuns.id, agentRunId),
       eq(agentRuns.sessionId, session.id),
       eq(agentRuns.status, "queued"),
     )).returning();
@@ -423,28 +577,43 @@ export async function claimInterviewTurnRun(input: {
       status: "running",
       attemptCount: sql`${interviewAgentRuns.attemptCount} + 1`,
       attemptGeneration: sql`${interviewAgentRuns.attemptGeneration} + 1`,
+      currentAgentRunId: agentRun.id,
+      leaseOwner: input.leaseOwner,
+      leaseExpiresAt: leaseExpiry(input.leaseDurationMs),
       errorJson: null,
     }).where(and(
       eq(interviewAgentRuns.id, logicalRun.id),
-      eq(interviewAgentRuns.status, "queued"),
+      takingOver
+        ? and(
+            eq(interviewAgentRuns.status, "running"),
+            or(isNull(interviewAgentRuns.leaseExpiresAt), lte(interviewAgentRuns.leaseExpiresAt, new Date())),
+          )
+        : eq(interviewAgentRuns.status, "queued"),
     )).returning();
     if (!claimedRun) throw new Error("Interview turn claim was lost");
-    await appendAgentEventsInTransaction(transaction, {
-      sessionId: session.id,
-      runId: agentRun.id,
-      events: [{
-        type: "model_message",
-        payload: { message: input.buildModelMessage({
-          interview,
-          snapshot,
-          answer: trigger.answer,
-          question: trigger.question,
-          history,
-        }) },
-        dedupeKey: `interview:turn-context:${logicalRun.id}`,
-        visibility: "model",
-      }],
-    });
+    const contextDedupeKey = `interview:turn-context:${logicalRun.id}`;
+    let [contextEvent] = await transaction.select({ runId: agentEvents.runId, sequence: agentEvents.sequence }).from(agentEvents).where(and(
+      eq(agentEvents.sessionId, session.id),
+      eq(agentEvents.dedupeKey, contextDedupeKey),
+    )).limit(1);
+    if (!contextEvent) {
+      [contextEvent] = await appendAgentEventsInTransaction(transaction, {
+        sessionId: session.id,
+        runId: agentRun.id,
+        events: [{
+          type: "model_message",
+          payload: { message: input.buildModelMessage({
+            interview,
+            snapshot,
+            answer: trigger.answer,
+            question: trigger.question,
+            history,
+          }) },
+          dedupeKey: contextDedupeKey,
+          visibility: "model",
+        }],
+      });
+    }
     return {
       state: "claimed" as const,
       interview,
@@ -455,6 +624,8 @@ export async function claimInterviewTurnRun(input: {
       answer: trigger.answer,
       question: trigger.question,
       history,
+      skillSnapshotRunId: contextEvent?.runId ?? agentRun.id,
+      modelContextBoundarySequence: contextEvent?.sequence,
     };
   });
 }
@@ -467,6 +638,7 @@ export async function loadInterviewTurnRunStatus(input: {
   const [row] = await input.database.select({
     runStatus: interviewAgentRuns.status,
     interviewStatus: interviews.status,
+    leaseExpiresAt: interviewAgentRuns.leaseExpiresAt,
   }).from(interviewAgentRuns)
     .innerJoin(interviews, eq(interviewAgentRuns.interviewId, interviews.id))
     .where(and(
@@ -480,16 +652,136 @@ export async function loadInterviewTurnRunStatus(input: {
 export async function failInterviewTurnRun(input: {
   database: InterviewDatabase;
   interviewRunId: string;
+  agentRunId: string;
+  attemptGeneration: number;
+  leaseOwner: string;
   errorCode: string;
 }) {
-  await input.database.update(interviewAgentRuns).set({
-    status: "failed",
-    errorJson: { code: input.errorCode },
-    completedAt: new Date(),
+  return failInterviewRunAttempt(input);
+}
+
+export async function renewInterviewRunLease(input: {
+  database: InterviewDatabase;
+  interviewRunId: string;
+  agentRunId: string;
+  attemptGeneration: number;
+  leaseOwner: string;
+  leaseDurationMs?: number;
+}) {
+  const [renewed] = await input.database.update(interviewAgentRuns).set({
+    leaseExpiresAt: leaseExpiry(input.leaseDurationMs),
   }).where(and(
     eq(interviewAgentRuns.id, input.interviewRunId),
     eq(interviewAgentRuns.status, "running"),
-  ));
+    eq(interviewAgentRuns.currentAgentRunId, input.agentRunId),
+    eq(interviewAgentRuns.attemptGeneration, input.attemptGeneration),
+    eq(interviewAgentRuns.leaseOwner, input.leaseOwner),
+    gt(interviewAgentRuns.leaseExpiresAt, new Date()),
+  )).returning({ id: interviewAgentRuns.id });
+  return Boolean(renewed);
+}
+
+export async function retryInterviewRun(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewId: string;
+  interviewRunId: string;
+}) {
+  return input.database.transaction(async (transaction) => {
+    const [interview] = await transaction.select().from(interviews).where(and(
+      eq(interviews.id, input.interviewId),
+      eq(interviews.userId, input.userId),
+    )).limit(1).for("update");
+    if (!interview) return { state: "not_found" as const };
+    const [logicalRun] = await transaction.select().from(interviewAgentRuns).where(and(
+      eq(interviewAgentRuns.id, input.interviewRunId),
+      eq(interviewAgentRuns.interviewId, interview.id),
+    )).limit(1).for("update");
+    if (!logicalRun) return { state: "not_found" as const };
+    const expectedInterviewStatus = logicalRun.triggerType === "opening" ? "initializing" : "active";
+    if (interview.status !== expectedInterviewStatus) {
+      return { state: "conflict" as const, status: interview.status };
+    }
+    const [committedQuestion] = await transaction.select({ id: interviewQuestions.id })
+      .from(interviewQuestions)
+      .where(eq(interviewQuestions.sourceInterviewRunId, logicalRun.id))
+      .limit(1);
+    if (committedQuestion) return { state: "conflict" as const, status: "already_committed" };
+    if (logicalRun.triggerType !== "opening") {
+      if (!logicalRun.triggerAnswerId) return { state: "conflict" as const, status: "missing_trigger" };
+      const [triggerAnswer] = await transaction.select({ status: interviewAnswers.status })
+        .from(interviewAnswers)
+        .where(and(
+          eq(interviewAnswers.id, logicalRun.triggerAnswerId),
+          eq(interviewAnswers.interviewId, interview.id),
+        ))
+        .limit(1);
+      const expectedAnswerStatus = logicalRun.triggerType === "skip" ? "skipped" : "answered";
+      if (!triggerAnswer || triggerAnswer.status !== expectedAnswerStatus) {
+        return { state: "conflict" as const, status: "stale_trigger" };
+      }
+    }
+    if (logicalRun.status === "queued" || logicalRun.status === "running") {
+      return { state: "ready" as const, run: logicalRun };
+    }
+    if (logicalRun.status !== "failed") return { state: "conflict" as const, status: logicalRun.status };
+    const [previousAgentRun] = logicalRun.currentAgentRunId
+      ? await transaction.select({
+          id: agentRuns.id,
+          status: agentRuns.status,
+          maxSteps: agentRuns.maxSteps,
+        }).from(agentRuns).where(and(
+          eq(agentRuns.id, logicalRun.currentAgentRunId),
+          eq(agentRuns.sessionId, interview.agentSessionId),
+        )).limit(1).for("update")
+      : [];
+    if (!previousAgentRun) throw new Error("Failed interview run is missing its Agent attempt");
+    if (previousAgentRun.status === "queued" || previousAgentRun.status === "running") {
+      await transaction.update(agentRuns).set({
+        status: "failed",
+        errorMessage: "Interview attempt was closed by a logical run retry",
+        completedAt: new Date(),
+      }).where(eq(agentRuns.id, previousAgentRun.id));
+      await appendAgentEventsInTransaction(transaction, {
+        sessionId: interview.agentSessionId,
+        runId: previousAgentRun.id,
+        events: [{
+          type: "run_failed",
+          payload: { code: "INTERVIEW_RUN_RETRIED" },
+          dedupeKey: `interview:retry-closed-attempt:${logicalRun.id}:${logicalRun.attemptGeneration}`,
+          visibility: "model",
+        }],
+      });
+    }
+    const [agentRun] = await transaction.insert(agentRuns).values({
+      sessionId: interview.agentSessionId,
+      status: "queued",
+      maxSteps: previousAgentRun.maxSteps,
+    }).returning();
+    const [run] = await transaction.update(interviewAgentRuns).set({
+      currentAgentRunId: agentRun.id,
+      status: "queued",
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      errorJson: null,
+      completedAt: null,
+    }).where(and(
+      eq(interviewAgentRuns.id, logicalRun.id),
+      eq(interviewAgentRuns.status, "failed"),
+    )).returning();
+    if (!run) throw new Error("Interview retry was lost");
+    await appendAgentEventsInTransaction(transaction, {
+      sessionId: interview.agentSessionId,
+      runId: agentRun.id,
+      events: [{
+        type: "interview/run_retried",
+        payload: { interviewId: interview.id, interviewRunId: run.id },
+        dedupeKey: `interview:run-retried:${run.id}:${agentRun.id}`,
+        visibility: "internal",
+      }],
+    });
+    return { state: "ready" as const, run };
+  });
 }
 
 export async function loadOwnedInterviewRoomData(input: {
@@ -556,12 +848,16 @@ export async function loadOwnedInterviewRoomData(input: {
         ),
       ),
     )).orderBy(asc(agentEvents.sequence));
+    const [cursorRow] = await transaction.select({
+      cursor: sql<number>`coalesce(max(${agentEvents.sequence}), 0)::int`,
+    }).from(agentEvents).where(eq(agentEvents.sessionId, interview.agentSessionId));
 
     return {
       interview,
       currentQuestion: questions[0] ?? null,
       currentRun: runs[0] ?? null,
       events,
+      eventCursor: cursorRow?.cursor ?? 0,
     };
   }, {
     isolationLevel: "repeatable read",

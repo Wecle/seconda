@@ -20,7 +20,7 @@ const databaseUrl = process.env.DATABASE_URL;
 test("room query restores committed state for its owner and hides it from other users", {
   skip: databaseUrl ? false : "DATABASE_URL is not configured",
 }, async () => {
-  const [{ getInterviewRoom }, { loadOwnedOpeningRunReference }] = await Promise.all([
+  const [{ getInterviewRoom, getInterviewRoomEventSnapshot }, { loadOwnedOpeningRunReference }] = await Promise.all([
     import("./application/get-interview-room"),
     import("./persistence/repository"),
   ]);
@@ -195,6 +195,12 @@ test("room query restores committed state for its owner and hides it from other 
     assert.deepEqual(owned?.transcript.map((item) => item.type), ["reasoning", "skill", "question"]);
     assert.equal(owned?.transcript[0].type, "reasoning");
     assert.equal(owned?.transcript[0].type === "reasoning" ? owned.transcript[0].content : null, "基于候选人的项目经历生成问题。");
+    const eventSnapshot = await getInterviewRoomEventSnapshot(
+      { userId: ownerId, interviewId: interview.id },
+      { database },
+    );
+    assert.equal(eventSnapshot?.cursor, 10);
+    assert.deepEqual(eventSnapshot?.view, owned);
 
     const hidden = await getInterviewRoom({ userId: outsiderId, interviewId: interview.id }, { database });
     assert.equal(hidden, null);

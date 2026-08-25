@@ -75,6 +75,7 @@ test("opening run is claimed once and commits the first question atomically and 
       database,
       userId,
       openingRunId: created.openingRunId,
+      leaseOwner: randomUUID(),
       buildModelMessage: () => ({ role: "user" as const, content: "untrusted opening context" }),
     };
     const [first, second] = await Promise.all([
@@ -92,6 +93,7 @@ test("opening run is claimed once and commits the first question atomically and 
       interviewId: claimed.interview.id,
       interviewRunId: claimed.logicalRun.id,
       attemptGeneration: claimed.logicalRun.attemptGeneration,
+      leaseOwner: claimed.logicalRun.leaseOwner!,
       action: {
         answerAnalysis: null,
         action: {
@@ -120,6 +122,7 @@ test("opening run is claimed once and commits the first question atomically and 
       interviewId: claimed.interview.id,
       interviewRunId: claimed.logicalRun.id,
       attemptGeneration: claimed.logicalRun.attemptGeneration,
+      leaseOwner: claimed.logicalRun.leaseOwner!,
       action: proposal,
     }, { database });
     const replayed = await commitInterviewAgentAction({
@@ -129,6 +132,7 @@ test("opening run is claimed once and commits the first question atomically and 
       interviewId: claimed.interview.id,
       interviewRunId: claimed.logicalRun.id,
       attemptGeneration: claimed.logicalRun.attemptGeneration,
+      leaseOwner: claimed.logicalRun.leaseOwner!,
       action: proposal,
     }, { database });
     assert.equal(replayed.id, committed.id);
@@ -139,6 +143,7 @@ test("opening run is claimed once and commits the first question atomically and 
       interviewId: claimed.interview.id,
       interviewRunId: claimed.logicalRun.id,
       attemptGeneration: claimed.logicalRun.attemptGeneration,
+      leaseOwner: claimed.logicalRun.leaseOwner!,
       action: {
         ...proposal,
         action: { ...proposal.action, question: "不同的重放问题" },
@@ -164,8 +169,8 @@ test("opening run is claimed once and commits the first question atomically and 
     assert.equal(events[0].visibility, "model_and_user");
     const [run] = await database.select().from(agentRuns).where(eq(agentRuns.id, created.agentRunId));
     const [session] = await database.select().from(agentSessions).where(eq(agentSessions.id, created.agentSessionId));
-    assert.equal(run.status, "running");
-    assert.equal(session.status, "running");
+    assert.equal(run.status, "completed");
+    assert.equal(session.status, "idle");
 
     const executorCreation = await createInterview({
       userId,
@@ -200,6 +205,7 @@ test("opening run is claimed once and commits the first question atomically and 
         interviewId: string;
         interviewRunId: string;
         attemptGeneration: number;
+        leaseOwner: string;
       };
       await commitInterviewAgentAction({
         userId: agentInput.userId,
@@ -208,6 +214,7 @@ test("opening run is claimed once and commits the first question atomically and 
         interviewId: config.interviewId,
         interviewRunId: config.interviewRunId,
         attemptGeneration: config.attemptGeneration,
+        leaseOwner: config.leaseOwner,
         action: {
           answerAnalysis: null,
           action: {

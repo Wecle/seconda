@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
-import { appendAgentEvent, settleAgentRun } from "@/lib/agent/repository";
-import { runAgent, safeAgentError } from "@/lib/agent/runtime";
+import { appendAgentEvent, recordCompletedAgentRunUsage } from "@/lib/agent/repository";
+import { runAgent } from "@/lib/agent/runtime";
 import type { AgentEventSink } from "@/lib/agent/types";
 import { applicationCapabilityRegistry } from "@/lib/application-capabilities";
 import { applicationSkillRegistry } from "@/lib/application-skills";
@@ -12,6 +12,9 @@ import {
   loadInterviewTurnRunStatus,
   type InterviewDatabase,
 } from "../persistence/repository";
+import { createInterviewLeaseOwner, startInterviewRunLease } from "./run-lease";
+
+class InterviewTurnLeaseExpiredError extends Error {}
 
 async function waitForTurn(input: {
   database: InterviewDatabase;
@@ -27,6 +30,7 @@ async function waitForTurn(input: {
     if (outcome.runStatus !== "running") {
       throw new Error(`Interview turn ended as ${outcome.runStatus}`);
     }
+    if (!outcome.leaseExpiresAt || outcome.leaseExpiresAt <= new Date()) throw new InterviewTurnLeaseExpiredError();
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new DOMException("Interview turn did not finish in time", "TimeoutError");
@@ -41,10 +45,12 @@ export async function executeInterviewTurn(input: {
   signal?: AbortSignal;
 } = {}) {
   const database = dependencies.database ?? db;
+  const leaseOwner = createInterviewLeaseOwner();
   const claim = await claimInterviewTurnRun({
     database,
     userId: input.userId,
     interviewRunId: input.interviewRunId,
+    leaseOwner,
     buildModelMessage: ({ interview, snapshot, answer, question, history }) => {
       const projectedHistory = history.map((item) => ({
         sequence: item.sequence,
@@ -88,19 +94,33 @@ export async function executeInterviewTurn(input: {
     return outcome;
   }
   if (claim.state === "unavailable" && claim.status === "running") {
-    return waitForTurn({ database, userId: input.userId, interviewRunId: input.interviewRunId });
+    try {
+      return await waitForTurn({ database, userId: input.userId, interviewRunId: input.interviewRunId });
+    } catch (error) {
+      if (error instanceof InterviewTurnLeaseExpiredError) {
+        return executeInterviewTurn(input, dependencies);
+      }
+      throw error;
+    }
   }
   if (claim.state !== "claimed") throw new Error(`Interview turn is ${claim.state}`);
 
   const events: AgentEventSink = {
     append: (type, payload) => appendAgentEvent({
       sessionId: claim.session.id,
-      runId: claim.agentRun.id,
+      runId: type === "skill_catalog_snapshotted" ? claim.skillSnapshotRunId : claim.agentRun.id,
       type,
       payload,
     }),
   };
-  const signal = dependencies.signal ?? AbortSignal.timeout(90_000);
+  const lease = startInterviewRunLease({
+    database,
+    interviewRunId: claim.logicalRun.id,
+    agentRunId: claim.agentRun.id,
+    attemptGeneration: claim.logicalRun.attemptGeneration,
+    leaseOwner,
+    signal: dependencies.signal ?? AbortSignal.timeout(90_000),
+  });
   try {
     const usage = await (dependencies.run ?? runAgent)({
       sessionId: claim.session.id,
@@ -115,9 +135,12 @@ export async function executeInterviewTurn(input: {
         interviewRunId: claim.logicalRun.id,
         triggerType: claim.logicalRun.triggerType,
         attemptGeneration: claim.logicalRun.attemptGeneration,
+        leaseOwner,
       },
+      skillSnapshotRunId: claim.skillSnapshotRunId,
+      modelContextBoundarySequence: claim.modelContextBoundarySequence,
       maxSteps: claim.agentRun.maxSteps,
-      signal,
+      signal: lease.signal,
       events,
     }, { capabilities: applicationCapabilityRegistry, skills: applicationSkillRegistry });
     const outcome = await loadInterviewTurnRunStatus({
@@ -128,14 +151,12 @@ export async function executeInterviewTurn(input: {
     if (!outcome || outcome.runStatus !== "completed") {
       throw new Error("Interview agent finished without committing a turn action");
     }
-    await settleAgentRun({
+    await recordCompletedAgentRunUsage({
       runId: claim.agentRun.id,
       sessionId: claim.session.id,
-      status: "completed",
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
-      terminalEvent: { type: "run_completed", payload: { usage } },
-    });
+    }).catch(() => false);
     return outcome;
   } catch (error) {
     const outcome = await loadInterviewTurnRunStatus({
@@ -144,27 +165,18 @@ export async function executeInterviewTurn(input: {
       interviewRunId: input.interviewRunId,
     });
     if (outcome?.runStatus === "completed") {
-      await settleAgentRun({
-        runId: claim.agentRun.id,
-        sessionId: claim.session.id,
-        status: "completed",
-        terminalEvent: { type: "run_completed", payload: { recoveredAfterCommit: true } },
-      }).catch(() => undefined);
       return outcome;
     }
-    const message = safeAgentError(error);
     await failInterviewTurnRun({
       database,
       interviewRunId: input.interviewRunId,
+      agentRunId: claim.agentRun.id,
+      attemptGeneration: claim.logicalRun.attemptGeneration,
+      leaseOwner,
       errorCode: "INTERVIEW_TURN_FAILED",
     });
-    await settleAgentRun({
-      runId: claim.agentRun.id,
-      sessionId: claim.session.id,
-      status: "failed",
-      errorMessage: message,
-      terminalEvent: { type: "run_failed", payload: { code: "INTERVIEW_TURN_FAILED" } },
-    }).catch(() => undefined);
     throw error;
+  } finally {
+    lease.stop();
   }
 }

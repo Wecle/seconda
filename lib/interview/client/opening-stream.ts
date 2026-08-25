@@ -100,6 +100,15 @@ export function parseInterviewRoomPayload(value: unknown): InterviewRoomQueryVie
   return parsed.success ? parsed.data : null;
 }
 
+export function parseInterviewRoomEventData(data: string): InterviewRoomQueryView | null {
+  try {
+    const value = JSON.parse(data) as { type?: unknown; view?: unknown };
+    return value.type === "room" ? parseInterviewRoomPayload(value.view) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function parseInterviewOpeningSSEBlock(block: string): InterviewOpeningStreamEvent | null {
   const data = block.split("\n")
     .filter((line) => line.startsWith("data:"))

@@ -84,7 +84,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
       (await import("./repository")).loadAgentEvents(sessionId)
     )))(input.sessionId);
     const persisted = events.filter((event) => (
-      event.runId === input.runId && event.type === "skill_catalog_snapshotted"
+      event.runId === (input.skillSnapshotRunId ?? input.runId) && event.type === "skill_catalog_snapshotted"
     ));
     if (persisted.length > 1) throw new Error("Agent run has more than one persisted Skill catalog");
     if (persisted[0]) {
@@ -176,6 +176,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     signal: input.signal,
     liveEvents: input.events,
     publish: input.events.publish,
+    modelContextBoundarySequence: input.modelContextBoundarySequence,
     trigger,
   });
   const prepared = await prepareContext();

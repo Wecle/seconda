@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { parseInterviewOpeningSSEBlock, parseInterviewRoomPayload } from "./client/opening-stream";
+import { parseInterviewOpeningSSEBlock, parseInterviewRoomEventData, parseInterviewRoomPayload } from "./client/opening-stream";
 
 test("opening stream parser accepts strict room and completion events", () => {
   const interviewId = randomUUID();
@@ -50,6 +50,7 @@ test("opening stream parser accepts strict room and completion events", () => {
     roomEvent,
   );
   assert.deepEqual(parseInterviewRoomPayload(roomEvent.view), roomEvent.view);
+  assert.deepEqual(parseInterviewRoomEventData(JSON.stringify(roomEvent)), roomEvent.view);
   assert.deepEqual(parseInterviewOpeningSSEBlock("data: {\"type\":\"complete\",\"ok\":true}"), {
     type: "complete",
     ok: true,
@@ -62,4 +63,6 @@ test("opening stream parser rejects malformed or unsafe envelopes", () => {
   assert.equal(parseInterviewOpeningSSEBlock("data: {\"type\":\"room\",\"view\":{},\"extra\":true}"), null);
   assert.equal(parseInterviewOpeningSSEBlock("data: not-json"), null);
   assert.equal(parseInterviewRoomPayload({ room: {}, transcript: [], unsafe: true }), null);
+  assert.equal(parseInterviewRoomEventData("not-json"), null);
+  assert.equal(parseInterviewRoomEventData(JSON.stringify({ type: "tool_result", view: {} })), null);
 });

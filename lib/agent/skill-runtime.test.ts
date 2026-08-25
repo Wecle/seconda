@@ -178,6 +178,7 @@ test("runtime stops an interview when Skill input validation fails before execut
       interviewRunId: "00000000-0000-4000-8000-000000000005",
       triggerType: "opening",
       attemptGeneration: 1,
+      leaseOwner: "00000000-0000-4000-8000-000000000006",
     },
     maxSteps: 3,
     signal: new AbortController().signal,
@@ -384,7 +385,7 @@ test("runtime restores the persisted catalog instead of resnapshotting the same 
 
   await runAgent(input, dependencies);
   description = "Changed after restart";
-  await runAgent(input, dependencies);
+  await runAgent({ ...input, runId: "retry-run", skillSnapshotRunId: "run" }, dependencies);
   assert.equal(snapshots, 1);
   assert.equal(events.filter(({ type }) => type === "skill_catalog_snapshotted").length, 1);
 });

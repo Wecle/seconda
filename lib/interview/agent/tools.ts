@@ -129,6 +129,7 @@ export const interviewCapabilityConfigSchema = z.object({
   interviewRunId: z.string().uuid(),
   triggerType: z.enum(["opening", "answer", "skip"]),
   attemptGeneration: z.number().int().positive(),
+  leaseOwner: z.string().uuid(),
 }).strict();
 
 export type InterviewToolContext = AgentToolContext & {
@@ -226,6 +227,7 @@ export type InterviewToolRegistryDependencies = {
     interviewId: string;
     interviewRunId: string;
     attemptGeneration: number;
+    leaseOwner: string;
     action: unknown;
   }) => Promise<{ id: string; sequence?: number; completed?: boolean }>;
 };
@@ -479,6 +481,7 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
             interviewId: context.config.interviewId,
             interviewRunId: context.config.interviewRunId,
             attemptGeneration: context.config.attemptGeneration,
+            leaseOwner: context.config.leaseOwner,
             action: proposal,
           });
           if (getTerminalLatch(context) === "fatal") {

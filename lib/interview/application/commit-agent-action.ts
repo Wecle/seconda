@@ -13,6 +13,29 @@ import {
 import { assertOpeningAction, submitInterviewActionSchema, type SubmitInterviewAction } from "../agent/action";
 import type { InterviewDatabase } from "../persistence/repository";
 
+async function settleCommittedInterviewAttempt(
+  transaction: Parameters<Parameters<InterviewDatabase["transaction"]>[0]>[0],
+  input: { agentRunId: string; sessionId: string; committedAt: Date },
+) {
+  const [agentRun] = await transaction.update(agentRuns).set({
+    status: "completed",
+    completedAt: input.committedAt,
+  }).where(and(
+    eq(agentRuns.id, input.agentRunId),
+    eq(agentRuns.sessionId, input.sessionId),
+    eq(agentRuns.status, "running"),
+  )).returning({ id: agentRuns.id });
+  if (!agentRun) throw new Error("Interview Agent attempt could not be completed atomically");
+  const [session] = await transaction.update(agentSessions).set({
+    status: "idle",
+    updatedAt: input.committedAt,
+  }).where(and(
+    eq(agentSessions.id, input.sessionId),
+    eq(agentSessions.status, "running"),
+  )).returning({ id: agentSessions.id });
+  if (!session) throw new Error("Interview Agent session could not be completed atomically");
+}
+
 function normalizeText(value: string) {
   return value.normalize("NFKC").replace(/\s+/g, " ").trim();
 }
@@ -109,6 +132,7 @@ export async function commitInterviewAgentAction(input: {
   interviewId: string;
   interviewRunId: string;
   attemptGeneration: number;
+  leaseOwner: string;
   action: unknown;
 }, dependencies: { database?: InterviewDatabase } = {}) {
   const proposal = submitInterviewActionSchema.parse(input.action);
@@ -195,6 +219,9 @@ export async function commitInterviewAgentAction(input: {
       .limit(1);
     if (
       logicalRun.status !== "running"
+      || logicalRun.leaseOwner !== input.leaseOwner
+      || !logicalRun.leaseExpiresAt
+      || logicalRun.leaseExpiresAt <= new Date()
       || agentRun?.status !== "running"
       || agentRun.capability !== "interview"
     ) {
@@ -263,6 +290,11 @@ export async function commitInterviewAgentAction(input: {
         leaseExpiresAt: null,
         errorJson: null,
       }).where(eq(interviewAgentRuns.id, logicalRun.id));
+      await settleCommittedInterviewAttempt(transaction, {
+        agentRunId: input.agentRunId,
+        sessionId: input.sessionId,
+        committedAt,
+      });
       await appendAgentEventsInTransaction(transaction, {
         sessionId: input.sessionId,
         runId: input.agentRunId,
@@ -276,6 +308,12 @@ export async function commitInterviewAgentAction(input: {
             },
             dedupeKey: `interview:completion-requested:${interview.id}`,
             visibility: "model_and_user",
+          },
+          {
+            type: "run_completed",
+            payload: { domainCommitted: true },
+            dedupeKey: `interview:attempt-completed:${logicalRun.id}:${logicalRun.attemptGeneration}`,
+            visibility: "model",
           },
         ],
       });
@@ -333,6 +371,11 @@ export async function commitInterviewAgentAction(input: {
       leaseExpiresAt: null,
       errorJson: null,
     }).where(eq(interviewAgentRuns.id, logicalRun.id));
+    await settleCommittedInterviewAttempt(transaction, {
+      agentRunId: input.agentRunId,
+      sessionId: input.sessionId,
+      committedAt,
+    });
     await appendAgentEventsInTransaction(transaction, {
       sessionId: input.sessionId,
       runId: input.agentRunId,
@@ -352,6 +395,12 @@ export async function commitInterviewAgentAction(input: {
           },
           dedupeKey: `interview:question:${question.id}`,
           visibility: "model_and_user",
+        },
+        {
+          type: "run_completed",
+          payload: { domainCommitted: true },
+          dedupeKey: `interview:attempt-completed:${logicalRun.id}:${logicalRun.attemptGeneration}`,
+          visibility: "model",
         },
       ],
     });
