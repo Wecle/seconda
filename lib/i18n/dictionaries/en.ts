@@ -349,7 +349,7 @@ export const en = {
       runFailed: "Generation failed",
       invalidState: "Invalid state",
     },
-    readOnlyMilestone: "This milestone supports viewing and refresh recovery. Answer submission arrives in the next milestone.",
+    readOnlyMilestone: "Read-only preview · Answering arrives in the next milestone",
     noCurrentQuestion: "The room was restored from durable state, but there is no current question.",
     transcript: "Interview transcript",
     yourAnswer: "Your answer",

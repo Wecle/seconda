@@ -334,7 +334,7 @@ export const zh = {
       runFailed: "生成失败",
       invalidState: "状态异常",
     },
-    readOnlyMilestone: "当前里程碑支持查看与刷新恢复；回答提交将在下一里程碑开放。",
+    readOnlyMilestone: "当前为只读预览 · 回答能力将在下一里程碑开放",
     noCurrentQuestion: "房间已从持久化状态恢复，当前没有可回答的问题。",
     transcript: "面试记录",
     yourAnswer: "你的回答",
