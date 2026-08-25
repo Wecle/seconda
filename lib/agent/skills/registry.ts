@@ -33,6 +33,7 @@ export type SkillRegistryErrorCode =
   | "SKILL_UNAVAILABLE"
   | "SKILL_SNAPSHOT_MISMATCH"
   | "SKILL_WRONG_STEP"
+  | "SKILL_TERMINAL_ACTION_ACTIVE"
   | "INVALID_SKILL";
 
 export class SkillRegistryError extends Error {

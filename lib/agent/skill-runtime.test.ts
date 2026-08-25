@@ -3,11 +3,13 @@ import test from "node:test";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderModel } from "@/lib/ai/provider-registry";
 import { AgentCapabilityRegistry } from "./capabilities/registry";
+import { AGENT_TERMINAL_ACTION_LATCH } from "./capabilities/types";
 import type { AgentEvent, AgentEventType } from "./types";
 import { projectModelInput } from "./model-input";
 import { runAgent } from "./runtime";
-import { AgentSkillRegistry } from "./skills/registry";
+import { AgentSkillRegistry, SkillRegistryError } from "./skills/registry";
 import { createStaticSkillProvider } from "./skills/static-provider";
+import { SKILL_LOAD_FAILED, SKILL_TERMINAL_ACTION_ACTIVE } from "./skills/tool";
 import { interviewCapability } from "@/lib/interview/agent/capability";
 
 test("runtime injects a scoped catalog and carries an on-demand skill result into the next step", async () => {
@@ -216,6 +218,109 @@ test("runtime stops an interview when Skill input validation fails before execut
   assert.equal(streamSteps, 1);
   assert.equal(events.filter(({ type }) => type === "skill_load_failed").length, 1);
   assert.equal(events.some(({ type }) => type === "interview/question_committed"), false);
+});
+
+test("runtime preserves terminal-action priority when a late Skill call is rejected", async () => {
+  const capabilities = new AgentCapabilityRegistry();
+  capabilities.register({
+    id: "terminal-skill-test",
+    promptVersion: "terminal-skill-test-v1",
+    maxSteps: 2,
+    skillAllowlist: ["resume-deep-dive"],
+    createContextProviders: () => [],
+    createToolRegistry: () => ({ schemas: () => [], toAISDKTools: () => ({}) }),
+    beforeStep(context) {
+      context.state.set(AGENT_TERMINAL_ACTION_LATCH, "committing");
+      return { action: "continue" };
+    },
+    afterStep(context) {
+      return context.state.has(SKILL_LOAD_FAILED)
+        ? { action: "continue" }
+        : { action: "stop", reason: "terminal-action-won" };
+    },
+  });
+  const skills = new AgentSkillRegistry();
+  skills.registerProvider(createStaticSkillProvider("built-ins", [{
+    name: "resume-deep-dive",
+    description: "Probe one resume claim.",
+    version: "1.0.0",
+    instructions: "Ask about personal ownership.",
+  }]));
+  const provider: ProviderModel = {
+    model: {} as LanguageModel,
+    metadata: {
+      provider: "deepseek", model: "deepseek/deepseek-chat", modelId: "deepseek-chat",
+      structuredOutput: "json-object", thinking: "enabled", contextWindow: 4_000,
+    },
+  };
+  const events: AgentEvent[] = [];
+  let streamSteps = 0;
+  const fakeStream = ((options: Parameters<typeof import("ai").streamText>[0]) => {
+    streamSteps += 1;
+    const rejection = new SkillRegistryError(
+      SKILL_TERMINAL_ACTION_ACTIVE,
+      "Skill cannot start while a terminal action is committing",
+    );
+    const stream = (async function* () {
+      yield { type: "start-step" };
+      await options.onStepEnd?.({
+        content: [{ type: "tool-error", toolCallId: "late-skill", toolName: "skill", input: {}, error: rejection }],
+        response: { messages: [] },
+      } as never);
+      yield { type: "tool-error", toolCallId: "late-skill", toolName: "skill", input: {}, error: rejection };
+      yield { type: "finish-step", finishReason: "tool-calls", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+    })();
+    return { stream, totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1, totalTokens: 2 }) };
+  }) as unknown as typeof import("ai").streamText;
+
+  await runAgent({
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    runId: "00000000-0000-4000-8000-000000000002",
+    userId: "00000000-0000-4000-8000-000000000003",
+    capability: "terminal-skill-test",
+    promptVersion: "terminal-skill-test-v1",
+    model: "deepseek/deepseek-chat",
+    systemPrompt: "contract",
+    capabilityConfig: {},
+    maxSteps: 2,
+    signal: new AbortController().signal,
+    events: {
+      async append(type: AgentEventType, payload: Record<string, unknown>) {
+        const event: AgentEvent = {
+          id: events.length + 1,
+          sessionId: "00000000-0000-4000-8000-000000000001",
+          runId: "00000000-0000-4000-8000-000000000002",
+          sequence: events.length + 1,
+          type,
+          payload,
+          dedupeKey: null,
+          schemaVersion: 1,
+          visibility: "model",
+          createdAt: new Date(0),
+        };
+        events.push(event);
+        return event;
+      },
+    },
+  }, {
+    capabilities,
+    skills,
+    loadEvents: async () => events,
+    provider,
+    stream: fakeStream,
+    prepareContext: async () => ({
+      events,
+      messages: [],
+      estimatedTokens: 100,
+      contextWindow: 4_000,
+      maxOutputTokens: 500,
+      compacted: false,
+    }),
+  });
+
+  assert.equal(streamSteps, 1);
+  assert.equal(events.filter(({ type }) => type === "skill_load_failed").length, 0);
+  assert.equal(events.filter(({ type }) => type === "tool_completed").length, 1);
 });
 
 test("runtime restores the persisted catalog instead of resnapshotting the same run", async () => {

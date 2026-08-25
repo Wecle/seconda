@@ -1,21 +1,21 @@
 import { z } from "zod";
 import { AgentToolRegistry, type AgentToolContext } from "@/lib/agent/tool-registry";
 import { submitInterviewActionSchema, type SubmitInterviewAction } from "./action";
-import { CURRENT_AGENT_STEP } from "@/lib/agent/capabilities/types";
+import {
+  AGENT_TERMINAL_ACTION_LATCH,
+  CURRENT_AGENT_STEP,
+  type AgentTerminalActionLatch,
+} from "@/lib/agent/capabilities/types";
 import { SKILL_LOAD_FAILED, SKILL_LOADED_STEP, SKILL_LOADING_STEP } from "@/lib/agent/skills/tool";
 
 export const INTERVIEW_ACTION_COMMITTED = Symbol("interview-action-committed");
 export const INTERVIEW_DOMAIN_ACTION_BLOCKED = Symbol("interview-domain-action-blocked");
 export const INTERVIEW_SKILL_RETRY_STEP = Symbol("interview-skill-retry-step");
 export const INTERVIEW_FATAL_ACTION_ERROR = Symbol("interview-fatal-action-error");
-export const INTERVIEW_TERMINAL_LATCH = Symbol("interview-terminal-latch");
+export const INTERVIEW_TERMINAL_LATCH = AGENT_TERMINAL_ACTION_LATCH;
 export const INTERVIEW_RETRIEVAL_FENCE = Symbol("interview-retrieval-fence");
 
-export type InterviewTerminalLatch =
-  | "idle"
-  | "committing"
-  | "committed"
-  | "fatal";
+export type InterviewTerminalLatch = AgentTerminalActionLatch;
 
 export type InterviewRetrievalFence = {
   activeByStep: Map<number, number>;
@@ -117,7 +117,6 @@ const REPAIRABLE_ACTION_ERROR_PREFIXES = [
 ];
 
 export function isFatalInterviewActionError(error: unknown): boolean {
-  if (error instanceof z.ZodError) return false;
   if (error instanceof RepairableInterviewActionError) return false;
   if (error instanceof Error && REPAIRABLE_ACTION_ERROR_PREFIXES.some((prefix) => error.message.startsWith(prefix))) {
     return false;
@@ -482,6 +481,9 @@ export function createInterviewToolRegistry(dependencies: InterviewToolRegistryD
             attemptGeneration: context.config.attemptGeneration,
             action: proposal,
           });
+          if (getTerminalLatch(context) === "fatal") {
+            throw new FatalInterviewActionError("Interview agent entered a fatal state during domain commit");
+          }
         } catch (error) {
           if (isFatalInterviewActionError(error)) {
             setTerminalLatch(context, "fatal");

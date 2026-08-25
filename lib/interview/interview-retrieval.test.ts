@@ -6,6 +6,7 @@ import {
   createInterviewToolRegistry,
   getTerminalLatch,
   hasSameStepRetrievalActivity,
+  INTERVIEW_ACTION_COMMITTED,
   INTERVIEW_FATAL_ACTION_ERROR,
   RepairableInterviewRetrievalError,
   retrieveInterviewHistoryInputSchema,
@@ -1023,6 +1024,97 @@ test("Test E: infrastructure errors in retrieval and commit default to fatal, lo
   );
   await assert.rejects(
     toolsCommit.retrieve_resume_evidence.execute!({ query: "test" }, {} as never),
+    /Interview agent is in a fatal error state/,
+  );
+});
+
+test("fatal state raised while commit is pending cannot be overwritten by committed", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+  ]);
+  const commitStarted = createDeferred<void>();
+  const releaseCommit = createDeferred<void>();
+  const registry = createInterviewToolRegistry({
+    commitAction: async () => {
+      commitStarted.resolve();
+      await releaseCommit.promise;
+      return { id: "00000000-0000-4000-8000-000000000099", sequence: 1 };
+    },
+  });
+  const tools = registry.toAISDKTools({
+    userId: "valid-user",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    agentRunId: "00000000-0000-4000-8000-000000000002",
+    config: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    skillLoadStep: 1,
+    signal: new AbortController().signal,
+  });
+  const proposal = {
+    answerAnalysis: null,
+    action: {
+      type: "ask_question" as const,
+      kind: "main" as const,
+      question: "Question text",
+      topic: "Topic",
+      resumeEvidenceIds: ["ev_0123456789abcdef"],
+    },
+  };
+
+  const pendingSubmit = tools.submit_interview_action.execute!(proposal, {} as never);
+  await commitStarted.promise;
+  state.set(INTERVIEW_FATAL_ACTION_ERROR, true);
+  releaseCommit.resolve();
+
+  await assert.rejects(pendingSubmit, /entered a fatal state during domain commit/);
+  assert.equal(getTerminalLatch({ state } as never), "fatal");
+  assert.equal(state.has(INTERVIEW_ACTION_COMMITTED), false);
+});
+
+test("an internal ZodError from commit defaults to fatal", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+  ]);
+  const registry = createInterviewToolRegistry({
+    commitAction: async () => z.string().parse(42) as never,
+  });
+  const tools = registry.toAISDKTools({
+    userId: "valid-user",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    agentRunId: "00000000-0000-4000-8000-000000000002",
+    config: {
+      interviewId: "00000000-0000-4000-8000-000000000004",
+      interviewRunId: "00000000-0000-4000-8000-000000000005",
+      triggerType: "opening",
+      attemptGeneration: 1,
+    },
+    state,
+    skillLoadStep: 1,
+    signal: new AbortController().signal,
+  });
+  const proposal = {
+    answerAnalysis: null,
+    action: {
+      type: "ask_question" as const,
+      kind: "main" as const,
+      question: "Question text",
+      topic: "Topic",
+      resumeEvidenceIds: ["ev_0123456789abcdef"],
+    },
+  };
+
+  await assert.rejects(
+    tools.submit_interview_action.execute!(proposal, {} as never),
+    z.ZodError,
+  );
+  assert.equal(getTerminalLatch({ state } as never), "fatal");
+  await assert.rejects(
+    tools.submit_interview_action.execute!(proposal, {} as never),
     /Interview agent is in a fatal error state/,
   );
 });

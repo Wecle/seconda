@@ -6,9 +6,15 @@ import { buildOpeningModelMessage, createInterviewContextProviders } from "./age
 import { submitInterviewActionSchema } from "./agent/action";
 import { INTERVIEW_SKILL_NAMES } from "./agent/skills/built-ins";
 import { buildInterviewSystemPrompt } from "./agent/prompt";
-import { CURRENT_AGENT_STEP } from "@/lib/agent/capabilities/types";
+import { AGENT_TERMINAL_ACTION_LATCH, CURRENT_AGENT_STEP } from "@/lib/agent/capabilities/types";
 import { AgentSkillRegistry, skillContentHash } from "@/lib/agent/skills/registry";
-import { createSkillToolRegistry, SKILL_ALLOWED_STEP, SKILL_LOAD_FAILED, SKILL_LOADED_STEP } from "@/lib/agent/skills/tool";
+import {
+  createSkillToolRegistry,
+  SKILL_ALLOWED_STEP,
+  SKILL_LOAD_FAILED,
+  SKILL_LOADED_STEP,
+  SKILL_TERMINAL_ACTION_ACTIVE,
+} from "@/lib/agent/skills/tool";
 import {
   INTERVIEW_DOMAIN_ACTION_BLOCKED,
   INTERVIEW_FATAL_ACTION_ERROR,
@@ -177,7 +183,7 @@ test("interview terminal action is fenced from same-step Skill activity", async 
   await assert.rejects(execute(baseAction, {} as never), /blocked after a Skill load failure/);
 });
 
-test("a delayed recovery-step Skill load fences an action that starts first", async () => {
+test("a delayed recovery-step Skill load that starts first fences the terminal action", async () => {
   let releaseLoad!: () => void;
   let markStarted!: () => void;
   const loadGate = new Promise<void>((resolve) => { releaseLoad = resolve; });
@@ -251,10 +257,45 @@ test("a delayed recovery-step Skill load fences an action that starts first", as
     events: { append: async () => { throw new Error("not used"); } },
   }).toAISDKTools().submit_interview_action.execute;
   assert.ok(actionExecute);
-  const pendingAction = actionExecute(baseAction, {} as never);
   const pendingSkill = skillExecute({ name: "resume-deep-dive" }, {} as never);
   await loadStarted;
-  await assert.rejects(pendingAction, /next model step/);
+  await assert.rejects(actionExecute(baseAction, {} as never), /next model step/);
   releaseLoad();
   await pendingSkill;
+});
+
+test("a terminal action latch prevents a late Skill from starting", async () => {
+  const state = new Map<PropertyKey, unknown>([
+    [CURRENT_AGENT_STEP, 2],
+    [SKILL_ALLOWED_STEP, 2],
+    [AGENT_TERMINAL_ACTION_LATCH, "committing"],
+  ]);
+  let eventCalls = 0;
+  const execute = createSkillToolRegistry().toAISDKTools({
+    sessionId: "session",
+    runId: "run",
+    userId: "user",
+    capability: "interview",
+    snapshot: {} as never,
+    registry: {} as never,
+    loadStep: 1,
+    state,
+    signal: new AbortController().signal,
+    events: {
+      append: async () => {
+        eventCalls += 1;
+        return {} as never;
+      },
+    },
+  }).skill.execute;
+  assert.ok(execute);
+
+  await assert.rejects(
+    execute({ name: "resume-deep-dive" }, {} as never),
+    (error: unknown) => error instanceof Error
+      && "code" in error
+      && error.code === SKILL_TERMINAL_ACTION_ACTIVE,
+  );
+  assert.equal(state.has(SKILL_LOAD_FAILED), false);
+  assert.equal(eventCalls, 0);
 });

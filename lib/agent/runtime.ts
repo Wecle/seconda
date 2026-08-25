@@ -7,9 +7,14 @@ import { CURRENT_AGENT_STEP, type CapabilityContext } from "./capabilities/types
 import { ContextProviderRegistry, renderSystemPrompt } from "./context-providers";
 import { prepareModelContext } from "./context-lifecycle";
 import { isContextOverflowError } from "./runtime-policy";
-import { skillCatalogEventPayload, type AgentSkillRegistry } from "./skills/registry";
+import { SkillRegistryError, skillCatalogEventPayload, type AgentSkillRegistry } from "./skills/registry";
 import { createSkillCatalogContextProvider } from "./skills/context";
-import { createSkillToolRegistry, SKILL_LOAD_FAILED, SKILL_TOOL_ERROR } from "./skills/tool";
+import {
+  createSkillToolRegistry,
+  SKILL_LOAD_FAILED,
+  SKILL_TERMINAL_ACTION_ACTIVE,
+  SKILL_TOOL_ERROR,
+} from "./skills/tool";
 import type { SkillCatalogSnapshot } from "./skills/types";
 
 function getQualityApiKey() {
@@ -291,7 +296,10 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
               });
               break;
             case "tool-error":
-              if (part.toolName === "skill" && !capabilityContext.state.has(SKILL_LOAD_FAILED)) {
+              if (part.toolName === "skill"
+                && !(part.error instanceof SkillRegistryError
+                  && part.error.code === SKILL_TERMINAL_ACTION_ACTIVE)
+                && !capabilityContext.state.has(SKILL_LOAD_FAILED)) {
                 capabilityContext.state.set(SKILL_LOAD_FAILED, SKILL_TOOL_ERROR);
                 await input.events.append("skill_load_failed", {
                   name: "invalid-input",

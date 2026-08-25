@@ -11,6 +11,13 @@ export const BUILT_IN_CAPABILITIES = {
 } as const;
 
 export const CURRENT_AGENT_STEP = Symbol("current-agent-step");
+export const AGENT_TERMINAL_ACTION_LATCH = Symbol("agent-terminal-action-latch");
+
+export type AgentTerminalActionLatch =
+  | "idle"
+  | "committing"
+  | "committed"
+  | "fatal";
 
 export type CapabilityContext = {
   sessionId: string;

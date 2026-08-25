@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AgentToolRegistry, type AgentToolContext } from "../tool-registry";
 import type { AgentEventSink } from "../types";
-import { CURRENT_AGENT_STEP } from "../capabilities/types";
+import { AGENT_TERMINAL_ACTION_LATCH, CURRENT_AGENT_STEP } from "../capabilities/types";
 import { SkillRegistryError, skillToolOutput, type AgentSkillRegistry } from "./registry";
 import type { SkillCatalogSnapshot } from "./types";
 
@@ -23,6 +23,7 @@ export const SKILL_WRONG_STEP = "SKILL_WRONG_STEP";
 export const SKILL_TOOL_ERROR = "SKILL_TOOL_ERROR";
 export const SKILL_ALLOWED_STEP = Symbol("skill-allowed-step");
 export const SKILL_LOADING_STEP = Symbol("skill-loading-step");
+export const SKILL_TERMINAL_ACTION_ACTIVE = "SKILL_TERMINAL_ACTION_ACTIVE";
 
 const inputSchema = z.object({ name: z.string().min(1).max(100) }).strict();
 const outputSchema = z.object({
@@ -42,6 +43,13 @@ export function createSkillToolRegistry() {
     outputSchema,
     async execute(input, context) {
       const { name } = inputSchema.parse(input);
+      const terminalLatch = context.state.get(AGENT_TERMINAL_ACTION_LATCH);
+      if (terminalLatch === "committing" || terminalLatch === "committed" || terminalLatch === "fatal") {
+        throw new SkillRegistryError(
+          SKILL_TERMINAL_ACTION_ACTIVE,
+          `Skill cannot start while a terminal action is ${terminalLatch}`,
+        );
+      }
       try {
         const allowedStep = context.state.get(SKILL_ALLOWED_STEP) ?? context.loadStep;
         if (allowedStep !== undefined && context.state.get(CURRENT_AGENT_STEP) !== allowedStep) {
