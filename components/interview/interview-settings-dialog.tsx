@@ -1,7 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { CheckCircle2, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -30,7 +31,6 @@ import {
   resolveInterviewCreationAttempt,
   validateInterviewTargetRole,
   type InterviewCreationAttempt,
-  type InterviewCreationResponse,
 } from "@/lib/interview/client/create-interview";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +56,7 @@ export function InterviewSettingsDialog({
   resumeVersionId,
   defaultTargetRole,
 }: InterviewSettingsDialogProps) {
+  const router = useRouter();
   const { locale, t } = useTranslation();
   const [settings, setSettings] = useState<InterviewSettings>(() => ({
     language: locale,
@@ -69,7 +70,6 @@ export function InterviewSettingsDialog({
   }));
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [creation, setCreation] = useState<InterviewCreationResponse | null>(null);
   const creationAttempt = useRef<InterviewCreationAttempt | null>(null);
   const targetRoleError = validateInterviewTargetRole(settings.targetRole);
 
@@ -95,7 +95,6 @@ export function InterviewSettingsDialog({
     onOpenChange(nextOpen);
     if (!nextOpen) {
       setError(null);
-      setCreation(null);
       creationAttempt.current = resetInterviewCreationAttempt();
     }
   };
@@ -117,10 +116,12 @@ export function InterviewSettingsDialog({
     setSubmitting(true);
     setError(null);
     try {
-      setCreation(await requestInterviewCreation({
+      const creation = await requestInterviewCreation({
         idempotencyKey: creationAttempt.current.idempotencyKey,
         request,
-      }));
+      });
+      creationAttempt.current = resetInterviewCreationAttempt();
+      router.push(`/interviews/${creation.interviewId}`);
     } catch (cause) {
       if (
         cause instanceof InterviewCreationClientError
@@ -146,48 +147,7 @@ export function InterviewSettingsDialog({
           if (submitting) event.preventDefault();
         }}
       >
-        {creation ? (
-          <div className="space-y-6 p-6 sm:p-8">
-            <DialogHeader className="items-center text-center sm:text-center">
-              <div className="flex size-12 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
-                <CheckCircle2 className="size-6" />
-              </div>
-              <DialogTitle className="text-xl">
-                {t.interview.creationSucceeded}
-              </DialogTitle>
-              <DialogDescription className="max-w-md leading-6">
-                {t.interview.creationSucceededDescription}
-              </DialogDescription>
-            </DialogHeader>
-            <dl className="grid gap-3 rounded-lg border bg-muted/30 p-4 text-sm">
-              <div className="grid gap-1 sm:grid-cols-[8rem_1fr] sm:items-center">
-                <dt className="text-muted-foreground">{t.interview.interviewId}</dt>
-                <dd className="break-all font-mono text-xs">{creation.interviewId}</dd>
-              </div>
-              <div className="grid gap-1 sm:grid-cols-[8rem_1fr] sm:items-center">
-                <dt className="text-muted-foreground">{t.interview.creationStatus}</dt>
-                <dd className="font-medium">{t.interview.statusActive}</dd>
-              </div>
-            </dl>
-            <div className="space-y-2 rounded-lg border bg-background p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {t.interview.firstQuestion}
-              </p>
-              <p className="leading-7">{creation.question.question}</p>
-              {creation.question.tip ? (
-                <p className="text-sm text-muted-foreground">
-                  {t.interview.tip}: {creation.question.tip}
-                </p>
-              ) : null}
-            </div>
-            <DialogFooter>
-              <Button type="button" onClick={() => handleOpenChange(false)}>
-                {t.common.close}
-              </Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <form
+        <form
             className="flex min-h-0 flex-col"
             onSubmit={(event) => {
               event.preventDefault();
@@ -382,8 +342,7 @@ export function InterviewSettingsDialog({
                 {submitting ? t.interview.creatingInterview : t.interview.createInterview}
               </Button>
             </DialogFooter>
-          </form>
-        )}
+        </form>
       </DialogContent>
     </Dialog>
   );

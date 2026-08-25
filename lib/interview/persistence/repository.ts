@@ -1,10 +1,11 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
 import {
   agentRuns,
   agentSessions,
+  agentEvents,
   interviewAgentRuns,
   interviewQuestions,
   interviewResumeSnapshots,
@@ -300,4 +301,71 @@ export async function failInterviewOpeningRun(input: {
     eq(interviewAgentRuns.id, input.openingRunId),
     eq(interviewAgentRuns.status, "running"),
   ));
+}
+
+export async function loadOwnedInterviewRoomData(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewId: string;
+}) {
+  return input.database.transaction(async (transaction) => {
+    const [interview] = await transaction.select({
+      id: interviews.id,
+      agentSessionId: interviews.agentSessionId,
+      status: interviews.status,
+      answeredRoundCount: interviews.answeredRoundCount,
+      targetRoundCount: interviews.targetRoundCount,
+    }).from(interviews)
+      .innerJoin(agentSessions, and(
+        eq(agentSessions.id, interviews.agentSessionId),
+        eq(agentSessions.userId, interviews.userId),
+        eq(agentSessions.capability, "interview"),
+      ))
+      .where(and(
+        eq(interviews.id, input.interviewId),
+        eq(interviews.userId, input.userId),
+      )).limit(1);
+    if (!interview) return null;
+
+    const questions = await transaction.select({
+      id: interviewQuestions.id,
+      sequence: interviewQuestions.sequence,
+      kind: interviewQuestions.kind,
+      topic: interviewQuestions.topic,
+      question: interviewQuestions.question,
+      tip: interviewQuestions.tip,
+      status: interviewQuestions.status,
+    }).from(interviewQuestions).where(and(
+      eq(interviewQuestions.interviewId, interview.id),
+      eq(interviewQuestions.status, "awaiting_answer"),
+    )).limit(1);
+    const runs = await transaction.select({
+      id: interviewAgentRuns.id,
+      triggerType: interviewAgentRuns.triggerType,
+      status: interviewAgentRuns.status,
+    }).from(interviewAgentRuns)
+      .where(eq(interviewAgentRuns.interviewId, interview.id))
+      .orderBy(desc(interviewAgentRuns.createdAt), desc(interviewAgentRuns.id))
+      .limit(1);
+    const events = await transaction.select({
+      sequence: agentEvents.sequence,
+      type: agentEvents.type,
+      payload: agentEvents.payload,
+      schemaVersion: agentEvents.schemaVersion,
+      visibility: agentEvents.visibility,
+    }).from(agentEvents).where(and(
+      eq(agentEvents.sessionId, interview.agentSessionId),
+      inArray(agentEvents.visibility, ["user", "model_and_user"]),
+    )).orderBy(asc(agentEvents.sequence));
+
+    return {
+      interview,
+      currentQuestion: questions[0] ?? null,
+      currentRun: runs[0] ?? null,
+      events,
+    };
+  }, {
+    isolationLevel: "repeatable read",
+    accessMode: "read only",
+  });
 }
