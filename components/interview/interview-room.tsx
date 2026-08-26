@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
   Bot,
   BrainCircuit,
+  CheckCircle2,
   ChevronRight,
+  FileBarChart2,
   Loader2,
   Puzzle,
   RotateCcw,
@@ -25,7 +28,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
-import { InterviewReportView } from "./interview-report-view";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
@@ -83,6 +85,8 @@ function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: strin
 
 export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const { t } = useTranslation();
+  const router = useRouter();
+  const initialPhaseRef = useRef(view.room.phase);
   const [currentView, setCurrentView] = useState(view);
   const [answer, setAnswer] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -124,6 +128,12 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   }, [view]);
 
   useEffect(() => {
+    if (initialPhaseRef.current !== "completed" && room.phase === "completed") {
+      router.push(`/interviews/${room.interviewId}/report`);
+    }
+  }, [room.phase, room.interviewId, router]);
+
+  useEffect(() => {
     if (answerAcceptedRef.current && room.phase !== "awaiting_answer") {
       answerAcceptedRef.current = false;
       setSubmitting(false);
@@ -153,10 +163,6 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       console.error("Failed to start interview opening", error instanceof Error ? error.name : "Unknown error");
     });
   }, [room.interviewId, room.phase]);
-
-  if (room.phase === "completed") {
-    return <InterviewReportView interviewId={room.interviewId} />;
-  }
 
   async function submitCurrentAnswer(skipped: boolean) {
     if (!room.currentQuestion || !room.canSubmitAnswer || submitting) return;
@@ -260,16 +266,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             >
               {phaseLabels[room.phase]}
             </Badge>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!room.canEnd || submitting}
-              onClick={endInterview}
-              className="hidden sm:inline-flex"
-            >
-              <Square className="size-3.5" />
-              {t.interview.endInterview}
-            </Button>
+            {room.canEnd ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={submitting}
+                onClick={endInterview}
+                className="hidden sm:inline-flex"
+              >
+                <Square className="size-3.5" />
+                {t.interview.endInterview}
+              </Button>
+            ) : null}
             <Button variant="ghost" size="icon" asChild aria-label={t.interview.returnDashboard}>
               <Link href="/dashboard"><ArrowLeft className="size-4" /></Link>
             </Button>
@@ -384,7 +392,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               );
             })}
 
-            {room.phase !== "awaiting_answer" ? (
+            {room.phase !== "awaiting_answer" && room.phase !== "completed" ? (
               <div className="space-y-3">
                 <PhaseStatus phase={room.phase} label={phaseLabels[room.phase]} />
                 {room.phase === "run_failed" && room.retryableRunId ? (
@@ -424,58 +432,80 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         </main>
       </ScrollArea>
 
-      <div className="shrink-0 border-t bg-card/95 p-3 backdrop-blur md:p-4">
-        <div className="mx-auto max-w-3xl">
-          {submissionError ? (
-            <p className="mb-2 text-sm text-destructive" role="alert">{submissionError}</p>
-          ) : null}
-          <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
-            <Textarea
-              value={answer}
-              disabled={!room.canSubmitAnswer || submitting}
-              onChange={(event) => setAnswer(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                  event.preventDefault();
-                  void submitCurrentAnswer(false);
-                }
-              }}
-              aria-label={t.interview.answerPlaceholder}
-              placeholder={room.canSubmitAnswer ? t.interview.answerPlaceholder : phaseLabels[room.phase]}
-              className="max-h-40 min-h-11 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-            />
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!room.canSkip || submitting}
-              onClick={() => void submitCurrentAnswer(true)}
-              aria-label={t.interview.skipQuestion}
-            >
-              <SkipForward className="size-4" />
-            </Button>
-            <Button
-              size="icon"
-              disabled={!room.canSubmitAnswer || submitting || !answer.trim()}
-              onClick={() => void submitCurrentAnswer(false)}
-              aria-label={t.interview.submitAnswer}
-            >
-              {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-            </Button>
-          </div>
-          <div className="mt-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
-            <span>{t.interview.submitShortcut}</span>
-            <Button
-              variant="link"
-              size="sm"
-              disabled={!room.canEnd || submitting}
-              onClick={endInterview}
-              className="h-auto px-0 py-0 sm:hidden"
-            >
-              {t.interview.endInterview}
-            </Button>
+      {room.phase === "completed" ? (
+        <div className="shrink-0 border-t bg-card/95 p-4 backdrop-blur">
+          <div className="mx-auto flex max-w-3xl flex-col items-center justify-between gap-3 sm:flex-row">
+            <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
+              <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
+              <span>{t.interview.completedBannerDescription}</span>
+            </div>
+            <div className="flex w-full shrink-0 items-center justify-end gap-2 sm:w-auto">
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/dashboard">{t.interview.returnDashboard}</Link>
+              </Button>
+              <Button size="sm" className="gap-1.5 font-medium" asChild>
+                <Link href={`/interviews/${room.interviewId}/report`}>
+                  <FileBarChart2 className="size-3.5" />
+                  {t.interview.viewFullReport}
+                </Link>
+              </Button>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="shrink-0 border-t bg-card/95 p-3 backdrop-blur md:p-4">
+          <div className="mx-auto max-w-3xl">
+            {submissionError ? (
+              <p className="mb-2 text-sm text-destructive" role="alert">{submissionError}</p>
+            ) : null}
+            <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
+              <Textarea
+                value={answer}
+                disabled={!room.canSubmitAnswer || submitting}
+                onChange={(event) => setAnswer(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void submitCurrentAnswer(false);
+                  }
+                }}
+                aria-label={t.interview.answerPlaceholder}
+                placeholder={room.canSubmitAnswer ? t.interview.answerPlaceholder : phaseLabels[room.phase]}
+                className="max-h-40 min-h-11 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                disabled={!room.canSkip || submitting}
+                onClick={() => void submitCurrentAnswer(true)}
+                aria-label={t.interview.skipQuestion}
+              >
+                <SkipForward className="size-4" />
+              </Button>
+              <Button
+                size="icon"
+                disabled={!room.canSubmitAnswer || submitting || !answer.trim()}
+                onClick={() => void submitCurrentAnswer(false)}
+                aria-label={t.interview.submitAnswer}
+              >
+                {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
+              </Button>
+            </div>
+            <div className="mt-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
+              <span>{t.interview.submitShortcut}</span>
+              <Button
+                variant="link"
+                size="sm"
+                disabled={!room.canEnd || submitting}
+                onClick={endInterview}
+                className="h-auto px-0 py-0 sm:hidden"
+              >
+                {t.interview.endInterview}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

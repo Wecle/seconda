@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  History,
   Lightbulb,
   Loader2,
   RefreshCw,
@@ -265,6 +266,12 @@ export function InterviewReportView({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/interviews/${interviewId}`}>
+                <History className="size-3.5" />
+                {t.report.reviewInterview}
+              </Link>
+            </Button>
             <Button variant="outline" size="sm" asChild>
               <Link href="/dashboard">{t.report.dashboard}</Link>
             </Button>

@@ -380,9 +380,12 @@ export const zh = {
     skippedAnswer: "已跳过此题",
     interviewProgress: "面试进度",
     refreshRecovery: "此页面读取已提交的面试事件。刷新页面不会丢失当前问题。",
+    completedBannerTitle: "面试已完成",
+    completedBannerDescription: "你已完成本次模拟面试。评估报告与能力维度分析已生成，可随时查看复盘。",
   },
   report: {
     title: "面试评估报告",
+    reviewInterview: "回顾对话",
     loadFailed: "报告加载失败，请稍后重试。",
     aiMockInterviewer: "AI 模拟面试官",
     dashboard: "控制台",

@@ -395,9 +395,12 @@ export const en = {
     skippedAnswer: "Question skipped",
     interviewProgress: "Interview progress",
     refreshRecovery: "This page reads committed interview events. Refreshing will not lose the current question.",
+    completedBannerTitle: "Interview Completed",
+    completedBannerDescription: "You have finished this mock interview. The evaluation report and competency analysis are ready for review.",
   },
   report: {
     title: "Interview Evaluation",
+    reviewInterview: "Review Transcript",
     loadFailed: "Failed to load the report. Please try again.",
     aiMockInterviewer: "AI Mock Interviewer",
     dashboard: "Dashboard",
