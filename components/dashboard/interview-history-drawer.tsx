@@ -212,21 +212,19 @@ export function InterviewHistoryDrawer({
                 <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <History className="size-4" />
                 </div>
-                <div>
-                  <div className="flex items-center gap-2">
-                    <SheetTitle className="text-base font-semibold">
-                      {t.dashboard.interviewDrawer.title}
-                    </SheetTitle>
-                    {interviews.length > 0 && (
-                      <Badge
-                        variant="secondary"
-                        className="px-1.5 py-0 text-[10px] font-mono font-medium"
-                      >
-                        {interviews.length}
-                      </Badge>
-                    )}
-                  </div>
-                  <SheetDescription className="truncate text-xs text-muted-foreground">
+                <div className="flex items-center gap-2">
+                  <SheetTitle className="text-base font-semibold">
+                    {t.dashboard.interviewDrawer.title}
+                  </SheetTitle>
+                  {interviews.length > 0 && (
+                    <Badge
+                      variant="secondary"
+                      className="px-1.5 py-0 text-[10px] font-mono font-medium"
+                    >
+                      {interviews.length}
+                    </Badge>
+                  )}
+                  <SheetDescription className="sr-only">
                     {resumeTitle || t.dashboard.resumes}
                   </SheetDescription>
                 </div>
