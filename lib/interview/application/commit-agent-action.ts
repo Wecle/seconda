@@ -11,6 +11,7 @@ import {
   interviews,
 } from "@/lib/db/schema";
 import { assertOpeningAction, submitInterviewActionSchema, type SubmitInterviewAction } from "../agent/action";
+import { ensureCompletionJobInTransaction } from "../persistence/completion-repository";
 import type { InterviewDatabase } from "../persistence/repository";
 
 async function settleCommittedInterviewAttempt(
@@ -283,6 +284,7 @@ export async function commitInterviewAgentAction(input: {
         version: interview.version + 1,
         updatedAt: committedAt,
       }).where(eq(interviews.id, interview.id));
+      await ensureCompletionJobInTransaction(transaction, interview.id);
       await transaction.update(interviewAgentRuns).set({
         status: "completed",
         completedAt: committedAt,

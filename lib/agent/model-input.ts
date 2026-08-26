@@ -105,7 +105,7 @@ function retainCurrentUnconsumedSkillPair(
   ));
 }
 
-function removeUnpairedTools(nodes: Array<{ sequence: number; message: ModelMessage }>) {
+function removeUnpairedTools<TNode extends { sequence: number; message: ModelMessage }>(nodes: TNode[]): TNode[] {
   const callPositions = new Map<string, number>();
   const resultPositions = new Map<string, number>();
   nodes.forEach(({ message }, index) => {
@@ -129,13 +129,22 @@ function removeUnpairedTools(nodes: Array<{ sequence: number; message: ModelMess
   });
 }
 
+type SurfaceNode = { sequence: number; runId: string | null; message: ModelMessage };
+
+function normalizeModelSurface(
+  nodes: SurfaceNode[],
+  activeRunId?: string,
+): SurfaceNode[] {
+  return removeUnpairedTools(retainCurrentUnconsumedSkillPair(nodes, activeRunId));
+}
+
 /**
  * Pure projection from the append-only event log to the current model-visible
  * surface. Lifecycle, chunks, pressure and compaction bookkeeping never enter
  * model history. Replacement events shadow source nodes without deleting them.
  */
 export function projectModelInput(events: readonly AgentEvent[], options: { activeRunId?: string } = {}): ModelInputProjection {
-  let nodes: Array<{ sequence: number; runId: string | null; message: ModelMessage }> = [];
+  let nodes: SurfaceNode[] = [];
   const ignored = new Set<number>();
 
   for (const event of [...events].sort((left, right) => left.sequence - right.sequence)) {
@@ -150,31 +159,40 @@ export function projectModelInput(events: readonly AgentEvent[], options: { acti
       ignored.add(event.sequence);
       continue;
     }
+
+    const visible = normalizeModelSurface(nodes, options.activeRunId);
     const shadowed = new Set(replace.sequences);
-    const start = nodes.findIndex(({ sequence }) => shadowed.has(sequence));
+    const start = visible.findIndex(({ sequence }) => shadowed.has(sequence));
     const selected = start < 0
       ? []
-      : nodes.slice(start, start + replace.sequences.length).map(({ sequence }) => sequence);
-    if (selected.length !== replace.sequences.length
-      || selected.some((sequence, index) => sequence !== replace.sequences[index])) {
+      : visible.slice(start, start + replace.sequences.length).map(({ sequence }) => sequence);
+
+    if (
+      selected.length !== replace.sequences.length ||
+      selected.some((sequence, index) => sequence !== replace.sequences[index])
+    ) {
       ignored.add(event.sequence);
       continue;
     }
+
     for (const sequence of selected) ignored.add(sequence);
     nodes = [
-      ...nodes.filter((_, index) => index < start && !shadowed.has(nodes[index].sequence)),
+      ...visible.slice(0, start),
       { sequence: event.sequence, runId: event.runId, message: replace.message },
-      ...nodes.filter((_, index) => index >= start && !shadowed.has(nodes[index].sequence)),
+      ...visible.slice(start + replace.sequences.length),
     ];
   }
 
-  nodes = retainCurrentUnconsumedSkillPair(nodes, options.activeRunId);
-  const paired = removeUnpairedTools(nodes);
-  const retained = new Set(paired.map(({ sequence }) => sequence));
-  for (const node of nodes) if (!retained.has(node.sequence)) ignored.add(node.sequence);
+  const finalVisible = normalizeModelSurface(nodes, options.activeRunId);
+  const surfaceSet = new Set(finalVisible.map(({ sequence }) => sequence));
+  const ignoredSequences = events
+    .filter((event) => !surfaceSet.has(event.sequence))
+    .map((event) => event.sequence)
+    .sort((left, right) => left - right);
+
   return {
-    messages: paired.map(({ message }) => message),
-    surfaceSequences: paired.map(({ sequence }) => sequence),
-    ignoredSequences: [...ignored].sort((left, right) => left - right),
+    messages: finalVisible.map(({ message }) => message),
+    surfaceSequences: finalVisible.map(({ sequence }) => sequence),
+    ignoredSequences,
   };
 }

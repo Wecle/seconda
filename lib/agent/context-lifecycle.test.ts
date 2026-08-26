@@ -135,4 +135,88 @@ describe("context lifecycle", () => {
     ]);
     assert.doesNotMatch(JSON.stringify(result.messages), /failed-call|leaked/);
   });
+
+  test("replays compaction and reduces context cleanly even with old consumed skill pairs in history", async () => {
+    const oldSkillCall = {
+      role: "assistant",
+      content: [{ type: "tool-call", toolCallId: "skill-1", toolName: "skill", input: { name: "resume-deep-dive" } }],
+    } as ModelMessage;
+    const oldSkillResult = {
+      role: "tool",
+      content: [{
+        type: "tool-result",
+        toolCallId: "skill-1",
+        toolName: "skill",
+        output: { type: "json", value: { instructions: "private skill instructions" } },
+      }],
+    } as ModelMessage;
+
+    const seed: Array<{ type: AgentEventType; payload: Record<string, unknown>; runId?: string | null }> = [
+      { runId: "old-run", type: "user_message", payload: { message: { role: "user", content: `Q1:${"a".repeat(600)}` } } },
+      { runId: "old-run", type: "assistant_message", payload: { message: oldSkillCall } },
+      { runId: "old-run", type: "tool_result_message", payload: { message: oldSkillResult } },
+      { runId: "old-run", type: "assistant_message", payload: { message: { role: "assistant", content: `A1:${"b".repeat(600)}` } } },
+      { runId: "old-run", type: "user_message", payload: { message: { role: "user", content: `Q2:${"c".repeat(600)}` } } },
+      { runId: "old-run", type: "assistant_message", payload: { message: { role: "assistant", content: `A2:${"d".repeat(600)}` } } },
+      { runId: "old-run", type: "user_message", payload: { message: { role: "user", content: `Q3:${"e".repeat(600)}` } } },
+      { runId: "old-run", type: "assistant_message", payload: { message: { role: "assistant", content: `A3:${"f".repeat(600)}` } } },
+      { runId: "old-run", type: "user_message", payload: { message: { role: "user", content: `Q4:${"g".repeat(600)}` } } },
+      { runId: "old-run", type: "assistant_message", payload: { message: { role: "assistant", content: `A4:${"h".repeat(600)}` } } },
+      { runId: "current-run", type: "user_message", payload: { message: { role: "user", content: `Q5:${"i".repeat(600)}` } } },
+    ];
+
+    const memory = memoryStore(seed);
+    const result = await prepareModelContext({
+      sessionId: "session",
+      runId: "current-run",
+      model: "deepseek/deepseek-v4-flash",
+      contextWindow: 1_048_576,
+      operationalBudget: 1_500,
+      system: "system prompt",
+      toolSchemas: [],
+      signal: new AbortController().signal,
+      store: memory.store,
+      summarize: async () => ({ text: "Summary of Q1-Q4 interactions." }),
+    });
+
+    assert.equal(result.compacted, true);
+    assert.ok(result.messages.some((m) => typeof m.content === "string" && m.content.includes("Summary of Q1-Q4")));
+    assert.ok(result.estimatedTokens < 1_500);
+  });
+
+  test("throws when committed compaction replacement is rejected by model input projection", async () => {
+    const memory = memoryStore(longConversation());
+    // Store that tampers with the replacement event by corrupting shadowedSequences so projection rejects it
+    const corruptingStore: ContextLifecycleStore = {
+      async load() { return memory.store.load("session"); },
+      async append(input) { return memory.store.append(input); },
+      async appendAtomic(input) {
+        const corruptedEvents = input.events.map((e) => {
+          if (e.type === "model_context_replaced") {
+            return {
+              ...e,
+              payload: { ...e.payload, shadowedSequences: [99999] }, // Non-existent sequence!
+            };
+          }
+          return e;
+        });
+        return memory.store.appendAtomic({ ...input, events: corruptedEvents });
+      },
+    };
+
+    await assert.rejects(
+      prepareModelContext({
+        sessionId: "session",
+        runId: "run",
+        model: "test",
+        contextWindow: 2_000,
+        system: "system",
+        toolSchemas: [],
+        signal: new AbortController().signal,
+        store: corruptingStore,
+        summarize: async () => ({ text: "Valid summary text." }),
+      }),
+      /COMPACTION_REPLACEMENT_REJECTED/,
+    );
+  });
 });

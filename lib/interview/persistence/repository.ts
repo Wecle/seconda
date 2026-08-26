@@ -8,6 +8,7 @@ import {
   agentEvents,
   interviewAgentRuns,
   interviewAnswers,
+  interviewCompletionJobs,
   interviewQuestions,
   interviewResumeSnapshots,
   interviews,
@@ -378,19 +379,34 @@ export async function loadOwnedOpeningRunReference(input: {
   return row ?? null;
 }
 
+export type SafeInterviewRunFailure = {
+  code: "INTERVIEW_TURN_FAILED" | "INTERVIEW_OPENING_FAILED" | "INTERVIEW_RUN_LEASE_EXPIRED" | string;
+  stage?:
+    | "prepare_context"
+    | "compact_context"
+    | "model_request"
+    | "tool_execution"
+    | "domain_commit"
+    | "unknown";
+  reasonCode?: string;
+  retryable?: boolean;
+};
+
 async function failInterviewRunAttempt(input: {
   database: InterviewDatabase;
   interviewRunId: string;
   agentRunId: string;
   attemptGeneration: number;
   leaseOwner: string;
-  errorCode: string;
+  error: string | SafeInterviewRunFailure;
 }) {
+  const failureObj = typeof input.error === "string" ? { code: input.error } : input.error;
+  const errorCode = failureObj.code;
   return input.database.transaction(async (transaction) => {
     const failedAt = new Date();
     const [failed] = await transaction.update(interviewAgentRuns).set({
       status: "failed",
-      errorJson: { code: input.errorCode },
+      errorJson: failureObj,
       completedAt: failedAt,
       leaseOwner: null,
       leaseExpiresAt: null,
@@ -405,7 +421,7 @@ async function failInterviewRunAttempt(input: {
     if (!failed) return false;
     const [attempt] = await transaction.update(agentRuns).set({
       status: "failed",
-      errorMessage: input.errorCode,
+      errorMessage: errorCode,
       completedAt: failedAt,
     }).where(and(
       eq(agentRuns.id, input.agentRunId),
@@ -425,7 +441,7 @@ async function failInterviewRunAttempt(input: {
       runId: input.agentRunId,
       events: [{
         type: "run_failed",
-        payload: { code: input.errorCode },
+        payload: failureObj,
         dedupeKey: `interview:attempt-failed:${input.interviewRunId}:${input.attemptGeneration}`,
         visibility: "model",
       }],
@@ -440,9 +456,11 @@ export async function failInterviewOpeningRun(input: {
   agentRunId: string;
   attemptGeneration: number;
   leaseOwner: string;
-  errorCode: string;
+  error?: string | SafeInterviewRunFailure;
+  errorCode?: string;
 }) {
-  return failInterviewRunAttempt({ ...input, interviewRunId: input.openingRunId });
+  const error = input.error ?? input.errorCode ?? "INTERVIEW_OPENING_FAILED";
+  return failInterviewRunAttempt({ ...input, interviewRunId: input.openingRunId, error });
 }
 
 export async function claimInterviewTurnRun(input: {
@@ -655,9 +673,11 @@ export async function failInterviewTurnRun(input: {
   agentRunId: string;
   attemptGeneration: number;
   leaseOwner: string;
-  errorCode: string;
+  error?: string | SafeInterviewRunFailure;
+  errorCode?: string;
 }) {
-  return failInterviewRunAttempt(input);
+  const error = input.error ?? input.errorCode ?? "INTERVIEW_TURN_FAILED";
+  return failInterviewRunAttempt({ ...input, error });
 }
 
 export async function renewInterviewRunLease(input: {
@@ -848,6 +868,10 @@ export async function loadOwnedInterviewRoomData(input: {
         ),
       ),
     )).orderBy(asc(agentEvents.sequence));
+    const completionJobs = await transaction.select({
+      id: interviewCompletionJobs.id,
+      status: interviewCompletionJobs.status,
+    }).from(interviewCompletionJobs).where(eq(interviewCompletionJobs.interviewId, interview.id)).limit(1);
     const [cursorRow] = await transaction.select({
       cursor: sql<number>`coalesce(max(${agentEvents.sequence}), 0)::int`,
     }).from(agentEvents).where(eq(agentEvents.sessionId, interview.agentSessionId));
@@ -856,6 +880,7 @@ export async function loadOwnedInterviewRoomData(input: {
       interview,
       currentQuestion: questions[0] ?? null,
       currentRun: runs[0] ?? null,
+      completionJob: completionJobs[0] ?? null,
       events,
       eventCursor: cursorRow?.cursor ?? 0,
     };

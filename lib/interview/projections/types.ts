@@ -69,6 +69,12 @@ export interface InterviewRoomView {
   canSkip: boolean;
   canEnd: boolean;
   retryableRunId: string | null;
+  canRetryCompletion: boolean;
+}
+
+export interface InterviewCompletionJobSnapshot {
+  id: string;
+  status: "pending" | "scoring" | "reporting" | "completed" | "failed";
 }
 
 export interface InterviewEventSnapshot {

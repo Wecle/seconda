@@ -6,6 +6,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   serial,
   text,
@@ -361,5 +362,95 @@ export const interviewAgentRuns = pgTable("interview_agent_runs", {
   check(
     "interview_agent_runs_trigger_answer_check",
     sql`(${table.triggerType} = 'opening' AND ${table.triggerAnswerId} IS NULL) OR (${table.triggerType} IN ('answer', 'skip') AND ${table.triggerAnswerId} IS NOT NULL)`,
+  ),
+]);
+
+export const questionScores = pgTable("question_scores", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  questionId: uuid("question_id")
+    .notNull()
+    .references(() => interviewQuestions.id, { onDelete: "cascade" }),
+  understanding: integer("understanding"),
+  expression: integer("expression"),
+  logic: integer("logic"),
+  depth: integer("depth"),
+  authenticity: integer("authenticity"),
+  reflection: integer("reflection"),
+  overall: numeric("overall", { precision: 3, scale: 1 }),
+  feedbackJson: jsonb("feedback_json"),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  claimToken: text("claim_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_question_scores_question").on(table.questionId),
+  check(
+    "question_scores_status_check",
+    sql`(${table.status} = 'pending' AND ${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL)
+      OR (${table.status} = 'scoring' AND ${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)
+      OR (${table.status} = 'scored' AND ${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL
+          AND ${table.understanding} IS NOT NULL AND ${table.expression} IS NOT NULL AND ${table.logic} IS NOT NULL
+          AND ${table.depth} IS NOT NULL AND ${table.authenticity} IS NOT NULL AND ${table.reflection} IS NOT NULL
+          AND ${table.overall} IS NOT NULL AND ${table.feedbackJson} IS NOT NULL)
+      OR (${table.status} = 'failed' AND ${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL)`,
+  ),
+  check("question_scores_attempt_count_check", sql`${table.attemptCount} >= 0`),
+  check("question_scores_overall_check", sql`${table.overall} IS NULL OR (${table.overall} >= 0.0 AND ${table.overall} <= 10.0)`),
+  check(
+    "question_scores_dimension_bounds_check",
+    sql`(${table.understanding} IS NULL OR (${table.understanding} >= 0 AND ${table.understanding} <= 10))
+      AND (${table.expression} IS NULL OR (${table.expression} >= 0 AND ${table.expression} <= 10))
+      AND (${table.logic} IS NULL OR (${table.logic} >= 0 AND ${table.logic} <= 10))
+      AND (${table.depth} IS NULL OR (${table.depth} >= 0 AND ${table.depth} <= 10))
+      AND (${table.authenticity} IS NULL OR (${table.authenticity} >= 0 AND ${table.authenticity} <= 10))
+      AND (${table.reflection} IS NULL OR (${table.reflection} >= 0 AND ${table.reflection} <= 10))`,
+  ),
+]);
+
+export const interviewCompletionJobs = pgTable("interview_completion_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  claimToken: text("claim_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+  errorJson: jsonb("error_json"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+}, (table) => [
+  uniqueIndex("idx_interview_completion_jobs_interview").on(table.interviewId),
+  index("idx_interview_completion_jobs_status_claim").on(table.status, table.claimExpiresAt),
+  check(
+    "interview_completion_jobs_status_check",
+    sql`(${table.status} IN ('scoring', 'reporting') AND ${table.claimToken} IS NOT NULL AND ${table.claimExpiresAt} IS NOT NULL)
+      OR (${table.status} IN ('pending', 'failed') AND ${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL)
+      OR (${table.status} = 'completed' AND ${table.claimToken} IS NULL AND ${table.claimExpiresAt} IS NULL AND ${table.completedAt} IS NOT NULL)`,
+  ),
+  check("interview_completion_jobs_attempt_count_check", sql`${table.attemptCount} >= 0`),
+]);
+
+export const interviewReports = pgTable("interview_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  overallScore: integer("overall_score"),
+  dimensionAveragesJson: jsonb("dimension_averages_json"),
+  summaryJson: jsonb("summary_json").notNull(),
+  scoreStatus: text("score_status").notNull(),
+  generatedAt: timestamp("generated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_interview_reports_interview").on(table.interviewId),
+  check("interview_reports_score_status_check", sql`${table.scoreStatus} IN ('scored', 'no_scorable_answers')`),
+  check(
+    "interview_reports_score_consistency_check",
+    sql`(${table.scoreStatus} = 'scored' AND ${table.overallScore} IS NOT NULL AND ${table.overallScore} >= 0 AND ${table.overallScore} <= 100 AND ${table.dimensionAveragesJson} IS NOT NULL)
+      OR (${table.scoreStatus} = 'no_scorable_answers' AND ${table.overallScore} IS NULL AND ${table.dimensionAveragesJson} IS NULL)`,
   ),
 ]);

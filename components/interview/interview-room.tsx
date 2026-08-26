@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
+import { InterviewReportView } from "./interview-report-view";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
@@ -89,8 +90,9 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const submissionRef = useRef<{ signature: string; key: string } | null>(null);
   const answerAcceptedRef = useRef(false);
   const openingRequestRef = useRef(false);
-  const { room, transcript } = currentView;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const { room, transcript } = currentView;
+
   const lastTranscriptItem = transcript.at(-1);
   const latestIncompleteReasoning = transcript.findLast((item) => item.type === "reasoning" && !item.complete);
   const lastTranscriptVersion = lastTranscriptItem?.type === "reasoning"
@@ -151,6 +153,10 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       console.error("Failed to start interview opening", error instanceof Error ? error.name : "Unknown error");
     });
   }, [room.interviewId, room.phase]);
+
+  if (room.phase === "completed") {
+    return <InterviewReportView interviewId={room.interviewId} />;
+  }
 
   async function submitCurrentAnswer(skipped: boolean) {
     if (!room.currentQuestion || !room.canSubmitAnswer || submitting) return;
@@ -387,6 +393,25 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                     size="sm"
                     disabled={submitting}
                     onClick={() => void retryRun()}
+                    className="ml-11"
+                  >
+                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
+                    {t.common.retry}
+                  </Button>
+                ) : null}
+                {room.phase === "completing" && room.canRetryCompletion ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={submitting}
+                    onClick={async () => {
+                      setSubmitting(true);
+                      try {
+                        await fetch(`/api/interviews/${room.interviewId}/completion/retry`, { method: "POST" });
+                      } finally {
+                        setSubmitting(false);
+                      }
+                    }}
                     className="ml-11"
                   >
                     {submitting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}

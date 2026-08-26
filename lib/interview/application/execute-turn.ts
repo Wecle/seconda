@@ -11,8 +11,10 @@ import {
   failInterviewTurnRun,
   loadInterviewTurnRunStatus,
   type InterviewDatabase,
+  type SafeInterviewRunFailure,
 } from "../persistence/repository";
 import { createInterviewLeaseOwner, startInterviewRunLease } from "./run-lease";
+import { executeInterviewCompletion } from "./execute-completion";
 
 class InterviewTurnLeaseExpiredError extends Error {}
 
@@ -34,6 +36,82 @@ async function waitForTurn(input: {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new DOMException("Interview turn did not finish in time", "TimeoutError");
+}
+
+function classifyTurnFailure(error: unknown): SafeInterviewRunFailure {
+  if (error instanceof Error) {
+    if (
+      error.message.includes("COMPACTION_") ||
+      error.message.includes("Compaction") ||
+      error.message.includes("compact")
+    ) {
+      const reasonCode = error.message.includes("COMPACTION_REPLACEMENT_REJECTED")
+        ? "COMPACTION_REPLACEMENT_REJECTED"
+        : error.message.includes("COMPACTION_DID_NOT_REDUCE_CONTEXT")
+          ? "COMPACTION_DID_NOT_REDUCE_CONTEXT"
+          : error.message.includes("CONTEXT_REMAINS_OVER_BUDGET")
+            ? "CONTEXT_REMAINS_OVER_BUDGET"
+            : "COMPACTION_FAILED";
+      return {
+        code: "INTERVIEW_TURN_FAILED",
+        stage: "compact_context",
+        reasonCode,
+        retryable: true,
+      };
+    }
+    if (
+      error.message.includes("Context exceeds") ||
+      error.message.includes("context overflow")
+    ) {
+      return {
+        code: "INTERVIEW_TURN_FAILED",
+        stage: "prepare_context",
+        reasonCode: "CONTEXT_OVERFLOW",
+        retryable: true,
+      };
+    }
+    if (
+      error.message.includes("without committing a turn action") ||
+      error.message.includes("domain")
+    ) {
+      return {
+        code: "INTERVIEW_TURN_FAILED",
+        stage: "domain_commit",
+        reasonCode: "NO_TURN_ACTION_COMMITTED",
+        retryable: true,
+      };
+    }
+    if (
+      error.message.includes("Tool") ||
+      error.message.includes("tool") ||
+      error.name === "RepeatedToolCallError"
+    ) {
+      return {
+        code: "INTERVIEW_TURN_FAILED",
+        stage: "tool_execution",
+        reasonCode: "TOOL_ERROR",
+        retryable: true,
+      };
+    }
+    if (
+      error.message.includes("Model") ||
+      error.message.includes("provider") ||
+      error.message.includes("503") ||
+      error.message.includes("429")
+    ) {
+      return {
+        code: "INTERVIEW_TURN_FAILED",
+        stage: "model_request",
+        reasonCode: "PROVIDER_ERROR",
+        retryable: true,
+      };
+    }
+  }
+  return {
+    code: "INTERVIEW_TURN_FAILED",
+    stage: "unknown",
+    retryable: true,
+  };
 }
 
 export async function executeInterviewTurn(input: {
@@ -157,6 +235,14 @@ export async function executeInterviewTurn(input: {
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
     }).catch(() => false);
+    if (outcome.interviewStatus === "completing") {
+      await executeInterviewCompletion({
+        interviewId: claim.interview.id,
+        userId: input.userId,
+      }).catch((err) => {
+        console.error("Background completion execution failed", err);
+      });
+    }
     return outcome;
   } catch (error) {
     const outcome = await loadInterviewTurnRunStatus({
@@ -173,7 +259,7 @@ export async function executeInterviewTurn(input: {
       agentRunId: claim.agentRun.id,
       attemptGeneration: claim.logicalRun.attemptGeneration,
       leaseOwner,
-      errorCode: "INTERVIEW_TURN_FAILED",
+      error: classifyTurnFailure(error),
     });
     throw error;
   } finally {

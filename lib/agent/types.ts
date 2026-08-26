@@ -35,6 +35,8 @@ export const AGENT_EVENT_TYPES = [
   "interview/completion_requested",
   "interview/completed",
   "interview/run_retried",
+  "interview/completion_failed",
+  "interview/completion_retried",
 ] as const;
 
 export type AgentEventType = (typeof AGENT_EVENT_TYPES)[number];

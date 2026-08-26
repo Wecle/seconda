@@ -30,6 +30,11 @@ const runSchema = z.object({
   agentRunStatus: z.enum(["queued", "running", "completed", "failed", "cancelled"]).nullable().optional(),
 });
 
+const completionJobSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["pending", "scoring", "reporting", "completed", "failed"]),
+});
+
 const eventSchema = z.object({
   runId: z.string().uuid().nullable(),
   sequence: z.number().int().positive(),
@@ -81,9 +86,10 @@ export async function getInterviewRoomEventSnapshot(input: {
   const interview = interviewSchema.parse(data.interview);
   const currentQuestion = data.currentQuestion ? questionSchema.parse(data.currentQuestion) : null;
   const currentRun = data.currentRun ? runSchema.parse(data.currentRun) : null;
+  const completionJob = data.completionJob ? completionJobSchema.parse(data.completionJob) : null;
   const events = z.array(eventSchema).parse(data.events);
 
-  const room = projectInterviewRoom({ interview, currentQuestion, currentRun });
+  const room = projectInterviewRoom({ interview, currentQuestion, currentRun, completionJob });
   if (room.phase === "invalid_state") {
     const details = {
       interviewId: interview.id,

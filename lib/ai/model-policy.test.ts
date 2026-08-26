@@ -20,6 +20,8 @@ const validEnv = {
 const expectedTiers: Record<AITask, AIModelTier> = {
   "resume.parse": "fast",
   "resume.generate": "fast",
+  "interview.question_scoring": "fast",
+  "interview.report_generation": "quality",
 };
 
 test("maps every task to its fixed first-phase tier", () => {

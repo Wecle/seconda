@@ -5,7 +5,8 @@ export type InterviewErrorCode =
   | "RESUME_VERSION_INVALID"
   | "INTERVIEW_NOT_FOUND"
   | "INTERVIEW_SUBMISSION_CONFLICT"
-  | "INTERVIEW_INVALID_STATE";
+  | "INTERVIEW_INVALID_STATE"
+  | "INVALID_REPORT_DATA";
 
 export class InterviewApplicationError extends Error {
   constructor(

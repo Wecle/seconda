@@ -264,3 +264,86 @@ test("transcript keeps reasoning blocks separate across steps and attempts", () 
     { step: 2, attempt: 1, content: "after tool", complete: false },
   ]);
 });
+
+test("completedEventPayloadSchema validates consistency between scoreStatus and overallScore", async () => {
+  const { completedEventPayloadSchema } = await import("./projections/transcript");
+  const testId = randomUUID();
+
+  // 1. scored + overallScore 85 -> pass
+  const scoredValid = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "scored",
+    overallScore: 85,
+  });
+  assert.equal(scoredValid.success, true);
+
+  // 2. scored + overallScore 0 -> pass
+  const scoredZero = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "scored",
+    overallScore: 0,
+  });
+  assert.equal(scoredZero.success, true);
+
+  // 3. no_scorable_answers + null -> pass
+  const noAnswersValid = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "no_scorable_answers",
+    overallScore: null,
+  });
+  assert.equal(noAnswersValid.success, true);
+
+  // 4. scored + null -> reject
+  const scoredNull = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "scored",
+    overallScore: null,
+  });
+  assert.equal(scoredNull.success, false);
+
+  // 5. no_scorable_answers + number -> reject
+  const noAnswersWithScore = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "no_scorable_answers",
+    overallScore: 85,
+  });
+  assert.equal(noAnswersWithScore.success, false);
+
+  // 6. unknown field -> reject (strict)
+  const unknownField = completedEventPayloadSchema.safeParse({
+    interviewId: testId,
+    scoreStatus: "scored",
+    overallScore: 85,
+    extra: "unexpected",
+  });
+  assert.equal(unknownField.success, false);
+});
+
+test("transcript projects interview/completed event produced by commitCompletionReport without error", () => {
+  const events: InterviewEventSnapshot[] = [
+    {
+      runId,
+      sequence: 1,
+      type: "interview/session_initialized",
+      payload: { interviewId, openingRunId: runId, status: "initializing" },
+      schemaVersion: 1,
+      visibility: "model_and_user",
+    },
+    {
+      runId: null,
+      sequence: 2,
+      type: "interview/completed",
+      payload: {
+        interviewId,
+        scoreStatus: "scored",
+        overallScore: 85,
+      },
+      schemaVersion: 1,
+      visibility: "model_and_user",
+    },
+  ];
+
+  // completed event does not add visible transcript items, but validates successfully
+  const transcript = projectInterviewTranscript({ events });
+  assert.equal(transcript.length, 0);
+});

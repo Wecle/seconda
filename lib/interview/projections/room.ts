@@ -1,4 +1,5 @@
 import type {
+  InterviewCompletionJobSnapshot,
   InterviewQuestionSnapshot,
   InterviewRoomPhase,
   InterviewRoomView,
@@ -10,6 +11,7 @@ function resolveRoomPhase(input: {
   interview: InterviewSnapshot;
   currentQuestion: InterviewQuestionSnapshot | null;
   currentRun: InterviewRunSnapshot | null;
+  completionJob?: InterviewCompletionJobSnapshot | null;
 }): InterviewRoomPhase {
   const { interview, currentQuestion, currentRun } = input;
   const currentAttemptActive = currentRun?.agentRunStatus === "queued" || currentRun?.agentRunStatus === "running";
@@ -50,6 +52,7 @@ export function projectInterviewRoom(input: {
   interview: InterviewSnapshot;
   currentQuestion: InterviewQuestionSnapshot | null;
   currentRun: InterviewRunSnapshot | null;
+  completionJob?: InterviewCompletionJobSnapshot | null;
 }): InterviewRoomView {
   const phase = resolveRoomPhase(input);
   const currentRound = input.currentQuestion?.sequence
@@ -75,5 +78,6 @@ export function projectInterviewRoom(input: {
     canSkip: awaitingAnswer,
     canEnd: input.interview.status === "active" && phase !== "invalid_state",
     retryableRunId: phase === "run_failed" ? input.currentRun?.id ?? null : null,
+    canRetryCompletion: input.interview.status === "completing" && input.completionJob?.status === "failed",
   };
 }

@@ -35,9 +35,34 @@ const completionRequestedSchema = z.object({
   closingMessage: z.string().trim().min(1).max(2_000).optional(),
 }).strict();
 
-const completedSchema = z.object({
-  interviewId: z.string().uuid(),
-}).strict();
+export const completedEventPayloadSchema = z
+  .object({
+    interviewId: z.string().uuid(),
+    scoreStatus: z.enum(["scored", "no_scorable_answers"]),
+    overallScore: z.number().int().min(0).max(100).nullable(),
+  })
+  .strict()
+  .superRefine((data, ctx) => {
+    if (data.scoreStatus === "scored") {
+      if (data.overallScore === null || !Number.isInteger(data.overallScore) || data.overallScore < 0 || data.overallScore > 100) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "overallScore must be an integer between 0 and 100 when scoreStatus is 'scored'",
+          path: ["overallScore"],
+        });
+      }
+    } else if (data.scoreStatus === "no_scorable_answers") {
+      if (data.overallScore !== null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "overallScore must be null when scoreStatus is 'no_scorable_answers'",
+          path: ["overallScore"],
+        });
+      }
+    }
+  });
+
+const completedSchema = completedEventPayloadSchema;
 
 const stepStartedSchema = z.object({
   step: z.number().int().positive(),

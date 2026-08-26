@@ -1,14 +1,43 @@
 import postgres from "postgres";
+import {
+  computeInterviewAggregates,
+  DIMENSIONS,
+  dimensionAveragesSchema,
+  questionFeedbackSchema,
+  questionScoresSchema,
+  reportSummarySchema,
+  validateQuestionOverall,
+  type ReportSummary,
+  type ScoredQuestionInput,
+} from "@/lib/interview/domain/scoring";
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  console.error("DATABASE_URL environment variable is not set");
-  process.exit(1);
+const MIGRATION_FALLBACK_REPORT_SUMMARY: ReportSummary = {
+  overallSummary: "Historical report summary is unavailable.",
+  keyStrengths: ["Historical strengths summary is unavailable."],
+  keyImprovements: ["Historical improvement summary is unavailable."],
+  recommendations: "Regenerate the interview report to obtain a complete assessment.",
+};
+
+let defaultSql: postgres.Sql | null = null;
+function getDefaultSql(): postgres.Sql {
+  if (!defaultSql) {
+    const connectionString = process.env.DATABASE_URL;
+    if (!connectionString) {
+      throw new Error("DATABASE_URL environment variable is not set");
+    }
+    defaultSql = postgres(connectionString, { prepare: false });
+  }
+  return defaultSql;
 }
 
-const sql = postgres(connectionString, { prepare: false });
+export async function migrateDatabase(customSql?: postgres.Sql) {
+  const sql = customSql ?? getDefaultSql();
+  await sql.begin(async (tx) => {
+    await runMigration(tx as unknown as postgres.Sql);
+  });
+}
 
-async function migrate() {
+async function runMigration(sql: postgres.Sql) {
   await sql`
     CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -501,6 +530,491 @@ async function migrate() {
       FOREIGN KEY (trigger_answer_id) REFERENCES interview_answers(id) ON DELETE RESTRICT;
   `);
   await sql`
+    CREATE TABLE IF NOT EXISTS question_scores (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      question_id UUID NOT NULL REFERENCES interview_questions(id) ON DELETE CASCADE,
+      understanding INTEGER,
+      expression INTEGER,
+      logic INTEGER,
+      depth INTEGER,
+      authenticity INTEGER,
+      reflection INTEGER,
+      overall NUMERIC(3, 1),
+      feedback_json JSONB,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      claim_token TEXT,
+      claim_expires_at TIMESTAMPTZ,
+      error_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    ALTER TABLE question_scores
+      ADD COLUMN IF NOT EXISTS status TEXT,
+      ADD COLUMN IF NOT EXISTS attempt_count INTEGER,
+      ADD COLUMN IF NOT EXISTS claim_token TEXT,
+      ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS error_json JSONB,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
+  `;
+  await sql`
+    UPDATE question_scores
+    SET status = 'pending'
+    WHERE status IS NULL
+  `;
+  await sql`
+    UPDATE question_scores
+    SET attempt_count = 0
+    WHERE attempt_count IS NULL
+  `;
+  await sql`
+    UPDATE question_scores
+    SET created_at = NOW()
+    WHERE created_at IS NULL
+  `;
+  await sql`
+    UPDATE question_scores
+    SET updated_at = NOW()
+    WHERE updated_at IS NULL
+  `;
+  await sql`
+    UPDATE question_scores
+    SET claim_token = NULL, claim_expires_at = NULL
+    WHERE status IN ('pending', 'scored', 'failed')
+  `;
+  await sql`
+    UPDATE question_scores
+    SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
+    WHERE status = 'scoring' AND (claim_token IS NULL OR claim_expires_at IS NULL)
+  `;
+  await sql`
+    ALTER TABLE question_scores
+      ALTER COLUMN status SET DEFAULT 'pending',
+      ALTER COLUMN status SET NOT NULL,
+      ALTER COLUMN attempt_count SET DEFAULT 0,
+      ALTER COLUMN attempt_count SET NOT NULL,
+      ALTER COLUMN created_at SET DEFAULT NOW(),
+      ALTER COLUMN created_at SET NOT NULL,
+      ALTER COLUMN updated_at SET DEFAULT NOW(),
+      ALTER COLUMN updated_at SET NOT NULL
+  `;
+  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_status_check`;
+  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_attempt_count_check`;
+  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_overall_check`;
+  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_dimension_bounds_check`;
+  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_scored_check`;
+  await sql`
+    ALTER TABLE question_scores
+      ADD CONSTRAINT question_scores_status_check CHECK (
+        (status = 'pending' AND claim_token IS NULL AND claim_expires_at IS NULL)
+        OR (status = 'scoring' AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+        OR (status = 'scored' AND claim_token IS NULL AND claim_expires_at IS NULL
+            AND understanding IS NOT NULL AND expression IS NOT NULL AND logic IS NOT NULL
+            AND depth IS NOT NULL AND authenticity IS NOT NULL AND reflection IS NOT NULL
+            AND overall IS NOT NULL AND feedback_json IS NOT NULL)
+        OR (status = 'failed' AND claim_token IS NULL AND claim_expires_at IS NULL)
+      ),
+      ADD CONSTRAINT question_scores_attempt_count_check CHECK (attempt_count >= 0),
+      ADD CONSTRAINT question_scores_overall_check CHECK (overall IS NULL OR (overall >= 0.0 AND overall <= 10.0)),
+      ADD CONSTRAINT question_scores_dimension_bounds_check CHECK (
+        (understanding IS NULL OR (understanding >= 0 AND understanding <= 10))
+        AND (expression IS NULL OR (expression >= 0 AND expression <= 10))
+        AND (logic IS NULL OR (logic >= 0 AND logic <= 10))
+        AND (depth IS NULL OR (depth >= 0 AND depth <= 10))
+        AND (authenticity IS NULL OR (authenticity >= 0 AND authenticity <= 10))
+        AND (reflection IS NULL OR (reflection >= 0 AND reflection <= 10))
+      )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_question_scores_question
+    ON question_scores(question_id)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_completion_jobs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      status TEXT NOT NULL DEFAULT 'pending',
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      claim_token TEXT,
+      claim_expires_at TIMESTAMPTZ,
+      error_json JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `;
+  await sql`
+    ALTER TABLE interview_completion_jobs
+      ADD COLUMN IF NOT EXISTS status TEXT,
+      ADD COLUMN IF NOT EXISTS attempt_count INTEGER,
+      ADD COLUMN IF NOT EXISTS claim_token TEXT,
+      ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS error_json JSONB,
+      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET status = 'pending'
+    WHERE status IS NULL
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET attempt_count = 0
+    WHERE attempt_count IS NULL
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET created_at = NOW()
+    WHERE created_at IS NULL
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET updated_at = NOW()
+    WHERE updated_at IS NULL
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET completed_at = COALESCE(completed_at, updated_at, created_at, NOW())
+    WHERE status = 'completed' AND completed_at IS NULL
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET claim_token = NULL, claim_expires_at = NULL
+    WHERE status IN ('pending', 'failed', 'completed')
+  `;
+  await sql`
+    UPDATE interview_completion_jobs
+    SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
+    WHERE status IN ('scoring', 'reporting') AND (claim_token IS NULL OR claim_expires_at IS NULL)
+  `;
+  await sql`
+    ALTER TABLE interview_completion_jobs
+      ALTER COLUMN status SET DEFAULT 'pending',
+      ALTER COLUMN status SET NOT NULL,
+      ALTER COLUMN attempt_count SET DEFAULT 0,
+      ALTER COLUMN attempt_count SET NOT NULL,
+      ALTER COLUMN created_at SET DEFAULT NOW(),
+      ALTER COLUMN created_at SET NOT NULL,
+      ALTER COLUMN updated_at SET DEFAULT NOW(),
+      ALTER COLUMN updated_at SET NOT NULL
+  `;
+  await sql`ALTER TABLE interview_completion_jobs DROP CONSTRAINT IF EXISTS interview_completion_jobs_status_check`;
+  await sql`ALTER TABLE interview_completion_jobs DROP CONSTRAINT IF EXISTS interview_completion_jobs_attempt_count_check`;
+  await sql`
+    ALTER TABLE interview_completion_jobs
+      ADD CONSTRAINT interview_completion_jobs_status_check CHECK (
+        (status IN ('scoring', 'reporting') AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+        OR (status IN ('pending', 'failed') AND claim_token IS NULL AND claim_expires_at IS NULL)
+        OR (status = 'completed' AND claim_token IS NULL AND claim_expires_at IS NULL AND completed_at IS NOT NULL)
+      ),
+      ADD CONSTRAINT interview_completion_jobs_attempt_count_check CHECK (attempt_count >= 0)
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_completion_jobs_interview
+    ON interview_completion_jobs(interview_id)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_interview_completion_jobs_status_claim
+    ON interview_completion_jobs(status, claim_expires_at)
+  `;
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_reports (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      overall_score INTEGER,
+      dimension_averages_json JSONB,
+      summary_json JSONB NOT NULL,
+      score_status TEXT NOT NULL,
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    ALTER TABLE interview_reports
+      ADD COLUMN IF NOT EXISTS overall_score INTEGER,
+      ADD COLUMN IF NOT EXISTS dimension_averages_json JSONB,
+      ADD COLUMN IF NOT EXISTS summary_json JSONB,
+      ADD COLUMN IF NOT EXISTS score_status TEXT,
+      ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ
+  `;
+  await sql`
+    UPDATE interview_reports
+    SET generated_at = NOW()
+    WHERE generated_at IS NULL
+  `;
+
+  // 1. Sanitize summary_json with reportSummarySchema
+  const existingReports = await sql<{ id: string; summary_json: unknown }[]>`
+    SELECT id, summary_json FROM interview_reports
+  `;
+  for (const r of existingReports) {
+    const summaryObj =
+      typeof r.summary_json === "string"
+        ? (() => {
+            try {
+              return JSON.parse(r.summary_json);
+            } catch {
+              return null;
+            }
+          })()
+        : r.summary_json;
+    const parseResult = reportSummarySchema.safeParse(summaryObj);
+    if (!parseResult.success) {
+      await sql`
+        UPDATE interview_reports
+        SET summary_json = ${sql.json(MIGRATION_FALLBACK_REPORT_SUMMARY)}
+        WHERE id = ${r.id}
+      `;
+    }
+  }
+
+  // 2. Validate all scored question_scores rows independently
+  const allScoredQuestionRows = await sql<{
+    id: string;
+    understanding: number | null;
+    expression: number | null;
+    logic: number | null;
+    depth: number | null;
+    authenticity: number | null;
+    reflection: number | null;
+    overall: string | number | null;
+    feedback_json: unknown;
+  }[]>`
+    SELECT id, understanding, expression, logic, depth, authenticity, reflection, overall, feedback_json
+    FROM question_scores
+    WHERE status = 'scored'
+  `;
+
+  const inconsistentScoreIds: string[] = [];
+  for (const row of allScoredQuestionRows) {
+    const scoresObj = {
+      understanding: row.understanding,
+      expression: row.expression,
+      logic: row.logic,
+      depth: row.depth,
+      authenticity: row.authenticity,
+      reflection: row.reflection,
+    };
+    const parsedScores = questionScoresSchema.safeParse(scoresObj);
+    if (!parsedScores.success) {
+      inconsistentScoreIds.push(row.id);
+      continue;
+    }
+    const parsedFeedback = questionFeedbackSchema.safeParse(row.feedback_json);
+    if (!parsedFeedback.success) {
+      inconsistentScoreIds.push(row.id);
+      continue;
+    }
+    const overallValidation = validateQuestionOverall(row.overall, parsedScores.data);
+    if (!overallValidation.valid) {
+      inconsistentScoreIds.push(row.id);
+      continue;
+    }
+  }
+
+  if (inconsistentScoreIds.length > 0) {
+    throw new Error(
+      `Inconsistent scored question scores detected (count: ${inconsistentScoreIds.length}). Candidate score data cannot be fabricated.`,
+    );
+  }
+
+  // 3. Validate consistency of aggregate scores & abort on inconsistent reports
+  const allReports = await sql<{
+    id: string;
+    interview_id: string;
+    overall_score: number | null;
+    dimension_averages_json: unknown;
+    score_status: string | null;
+  }[]>`
+    SELECT id, interview_id, overall_score, dimension_averages_json, score_status
+    FROM interview_reports
+  `;
+
+  const inconsistentReportIds: string[] = [];
+
+  for (const rep of allReports) {
+    const hasOverall = rep.overall_score !== null && rep.overall_score !== undefined;
+    const hasDimensions = rep.dimension_averages_json !== null && rep.dimension_averages_json !== undefined;
+
+    if (hasOverall !== hasDimensions) {
+      inconsistentReportIds.push(rep.id);
+      continue;
+    }
+
+    // Query scorable questions and question scores for this interview
+    const scorableQuestions = await sql<{
+      question_id: string;
+      score_status: string | null;
+      understanding: number | null;
+      expression: number | null;
+      logic: number | null;
+      depth: number | null;
+      authenticity: number | null;
+      reflection: number | null;
+      overall: string | number | null;
+    }[]>`
+      SELECT
+        q.id AS question_id,
+        qs.status AS score_status,
+        qs.understanding,
+        qs.expression,
+        qs.logic,
+        qs.depth,
+        qs.authenticity,
+        qs.reflection,
+        qs.overall
+      FROM interview_questions q
+      JOIN interview_answers a ON a.question_id = q.id
+      LEFT JOIN question_scores qs ON qs.question_id = q.id
+      WHERE q.interview_id = ${rep.interview_id}
+        AND q.status = 'answered'
+        AND a.status = 'answered'
+      ORDER BY q.sequence ASC
+    `;
+
+    if (scorableQuestions.length > 0) {
+      // Must have valid scored row for every scorable question
+      const scoredInputs: ScoredQuestionInput[] = [];
+      let allQuestionsValid = true;
+
+      for (const sq of scorableQuestions) {
+        if (sq.score_status !== "scored") {
+          allQuestionsValid = false;
+          break;
+        }
+        const scoreObj = {
+          understanding: sq.understanding,
+          expression: sq.expression,
+          logic: sq.logic,
+          depth: sq.depth,
+          authenticity: sq.authenticity,
+          reflection: sq.reflection,
+        };
+        const parsedScores = questionScoresSchema.safeParse(scoreObj);
+        if (!parsedScores.success) {
+          allQuestionsValid = false;
+          break;
+        }
+        const overallValidation = validateQuestionOverall(sq.overall, parsedScores.data);
+        if (!overallValidation.valid) {
+          allQuestionsValid = false;
+          break;
+        }
+        scoredInputs.push({
+          questionId: sq.question_id,
+          scores: parsedScores.data,
+          questionOverallTenths: overallValidation.questionOverallTenths,
+        });
+      }
+
+      if (!allQuestionsValid) {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+
+      const expectedAggregate = computeInterviewAggregates(scoredInputs);
+      if (expectedAggregate.scoreStatus !== "scored") {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+
+      // Validate report overallScore
+      if (rep.overall_score !== expectedAggregate.overallScore) {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+
+      // Validate dimensionAveragesJson against dimensionAveragesSchema
+      const dimsObj =
+        typeof rep.dimension_averages_json === "string"
+          ? (() => {
+              try {
+                return JSON.parse(rep.dimension_averages_json);
+              } catch {
+                return null;
+              }
+            })()
+          : rep.dimension_averages_json;
+      const parsedDims = dimensionAveragesSchema.safeParse(dimsObj);
+      if (!parsedDims.success) {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+
+      // Check exact mathematical agreement for all 6 dimensions
+      let dimsMatch = true;
+      for (const dim of DIMENSIONS) {
+        if (parsedDims.data[dim] !== expectedAggregate.dimensionAverages[dim]) {
+          dimsMatch = false;
+          break;
+        }
+      }
+      if (!dimsMatch) {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+
+      if (rep.score_status !== null && rep.score_status !== "scored") {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+    } else {
+      // 0 scorable questions -> must be no_scorable_answers
+      if (hasOverall || hasDimensions) {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+      if (rep.score_status !== null && rep.score_status !== "no_scorable_answers") {
+        inconsistentReportIds.push(rep.id);
+        continue;
+      }
+    }
+  }
+
+  if (inconsistentReportIds.length > 0) {
+    throw new Error(
+      `Migration failed: Inconsistent interview reports detected (count: ${inconsistentReportIds.length}). Candidate score data cannot be fabricated.`,
+    );
+  }
+
+  // 3. Only backfill score_status for consistent rows where score_status is NULL
+  await sql`
+    UPDATE interview_reports
+    SET score_status = 'scored'
+    WHERE score_status IS NULL AND overall_score IS NOT NULL
+  `;
+  await sql`
+    UPDATE interview_reports
+    SET score_status = 'no_scorable_answers'
+    WHERE score_status IS NULL AND overall_score IS NULL
+  `;
+
+  await sql`
+    ALTER TABLE interview_reports
+      ALTER COLUMN summary_json SET NOT NULL,
+      ALTER COLUMN score_status SET NOT NULL,
+      ALTER COLUMN generated_at SET DEFAULT NOW(),
+      ALTER COLUMN generated_at SET NOT NULL
+  `;
+  await sql`ALTER TABLE interview_reports DROP CONSTRAINT IF EXISTS interview_reports_score_status_check`;
+  await sql`ALTER TABLE interview_reports DROP CONSTRAINT IF EXISTS interview_reports_score_consistency_check`;
+  await sql`
+    ALTER TABLE interview_reports
+      ADD CONSTRAINT interview_reports_score_status_check CHECK (score_status IN ('scored', 'no_scorable_answers')),
+      ADD CONSTRAINT interview_reports_score_consistency_check CHECK (
+        (score_status = 'scored' AND overall_score IS NOT NULL AND overall_score >= 0 AND overall_score <= 100 AND dimension_averages_json IS NOT NULL)
+        OR (score_status = 'no_scorable_answers' AND overall_score IS NULL AND dimension_averages_json IS NULL)
+      )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_reports_interview
+    ON interview_reports(interview_id)
+  `;
+  await sql`
     CREATE OR REPLACE VIEW ai_slow_operations AS
     SELECT
       runs.id AS task_run_id,
@@ -526,11 +1040,21 @@ async function migrate() {
   console.log("Database migration completed");
 }
 
-migrate()
-  .catch((error) => {
-    console.error("Migration failed:", error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await sql.end();
-  });
+const isDirectRun = process.argv[1]?.endsWith("migrate.ts") || process.argv[1]?.endsWith("migrate.js");
+
+if (isDirectRun) {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    console.error("DATABASE_URL environment variable is not set");
+    process.exit(1);
+  }
+  const client = postgres(connectionString, { prepare: false });
+  migrateDatabase(client)
+    .catch((error) => {
+      console.error("Migration failed:", error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await client.end();
+    });
+}

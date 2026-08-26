@@ -3,6 +3,7 @@ import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
 import { agentRuns, agentSessions, interviewAgentRuns, interviewQuestions, interviews } from "@/lib/db/schema";
 import { db } from "@/lib/db";
 import { InterviewApplicationError } from "../domain/errors";
+import { ensureCompletionJobInTransaction } from "../persistence/completion-repository";
 import type { InterviewDatabase } from "../persistence/repository";
 
 export async function requestInterviewCompletion(input: {
@@ -26,6 +27,7 @@ export async function requestInterviewCompletion(input: {
       .for("update");
     if (!session) throw new InterviewApplicationError("INTERVIEW_NOT_FOUND", "Interview not found");
     if (interview.status === "completing" || interview.status === "completed") {
+      await ensureCompletionJobInTransaction(transaction, interview.id);
       return { status: interview.status, replayed: true as const };
     }
     if (interview.status !== "active") {
@@ -66,6 +68,7 @@ export async function requestInterviewCompletion(input: {
       version: interview.version + 1,
       updatedAt: now,
     }).where(eq(interviews.id, interview.id));
+    await ensureCompletionJobInTransaction(transaction, interview.id);
     await transaction.update(agentSessions).set({ status: "idle", updatedAt: now })
       .where(eq(agentSessions.id, interview.agentSessionId));
     await appendAgentEventsInTransaction(transaction, {
