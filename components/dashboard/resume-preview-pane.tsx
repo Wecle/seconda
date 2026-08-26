@@ -183,25 +183,6 @@ export function ResumePreviewPane({
             </Button>
           )}
 
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 gap-1.5 px-2.5 text-xs"
-            onClick={() => setDrawerOpen(true)}
-          >
-            <History className="size-3.5" />
-            <span>{t.dashboard.interviewHistory}</span>
-            {typeof interviewCount === "number" && interviewCount > 0 && (
-              <Badge
-                variant="secondary"
-                className="ml-0.5 h-4 min-w-4 px-1 text-[10px] font-mono leading-none bg-primary/10 text-primary font-bold"
-              >
-                {interviewCount}
-              </Badge>
-            )}
-          </Button>
-
           <div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
             <Button
               type="button"
@@ -255,6 +236,25 @@ export function ResumePreviewPane({
               </Button>
             )}
           </div>
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2.5 text-xs"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <History className="size-3.5" />
+            <span>{t.dashboard.interviewHistory}</span>
+            {typeof interviewCount === "number" && interviewCount > 0 && (
+              <Badge
+                variant="secondary"
+                className="ml-0.5 h-4 min-w-4 px-1 text-[10px] font-mono leading-none bg-primary/10 text-primary font-bold"
+              >
+                {interviewCount}
+              </Badge>
+            )}
+          </Button>
         </div>
       </header>
 
