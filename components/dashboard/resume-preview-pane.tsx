@@ -1,11 +1,11 @@
-"use client";
-
+import { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import {
   AlertCircle,
   CheckCircle,
   ChevronRight,
   FileText,
+  History,
   Loader2,
   Pencil,
   Sparkles,
@@ -23,7 +23,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { ResumeVersion } from "@/components/dashboard/types";
+import type {
+  InterviewSummaryItem,
+  ResumeVersion,
+} from "@/components/dashboard/types";
+import { InterviewHistoryDrawer } from "@/components/dashboard/interview-history-drawer";
 
 const ResumePdfPreview = dynamic(
   () =>
@@ -41,6 +45,7 @@ const ResumePdfPreview = dynamic(
 );
 
 interface ResumePreviewPaneProps {
+  selectedResumeId?: string;
   selectedResumeTitle?: string;
   selectedVersion: ResumeVersion;
   parsed: ParsedResume | null | undefined;
@@ -60,6 +65,7 @@ interface ResumePreviewPaneProps {
 }
 
 export function ResumePreviewPane({
+  selectedResumeId,
   selectedResumeTitle,
   selectedVersion,
   parsed,
@@ -78,6 +84,46 @@ export function ResumePreviewPane({
   onSaveEdit,
 }: ResumePreviewPaneProps) {
   const { t } = useTranslation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [interviewCountsByVersion, setInterviewCountsByVersion] = useState<
+    Record<string, number>
+  >({});
+
+  const handleInterviewsUpdated = useCallback(
+    (items: InterviewSummaryItem[]) => {
+      const map: Record<string, number> = {};
+      for (const item of items) {
+        map[item.resumeVersionId] = (map[item.resumeVersionId] ?? 0) + 1;
+      }
+      setInterviewCountsByVersion(map);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!selectedResumeId) return;
+    let active = true;
+    fetch(`/api/resumes/${selectedResumeId}/interviews`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: InterviewSummaryItem[]) => {
+        if (active && Array.isArray(data)) {
+          const map: Record<string, number> = {};
+          for (const item of data) {
+            map[item.resumeVersionId] = (map[item.resumeVersionId] ?? 0) + 1;
+          }
+          setInterviewCountsByVersion(map);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [selectedResumeId]);
+
+  const interviewCount = selectedVersion?.id
+    ? interviewCountsByVersion[selectedVersion.id] ?? 0
+    : 0;
+
   const originalFileUrl = selectedVersion.originalFileUrl;
   const originalFilename = selectedVersion.originalFilename;
   const isGenerated = selectedVersion.sourceType === "generated";
@@ -136,6 +182,25 @@ export function ResumePreviewPane({
               {t.dashboard.editResume}
             </Button>
           )}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 px-2.5 text-xs"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <History className="size-3.5" />
+            <span>{t.dashboard.interviewHistory}</span>
+            {typeof interviewCount === "number" && interviewCount > 0 && (
+              <Badge
+                variant="secondary"
+                className="ml-0.5 h-4 min-w-4 px-1 text-[10px] font-mono leading-none bg-primary/10 text-primary font-bold"
+              >
+                {interviewCount}
+              </Badge>
+            )}
+          </Button>
 
           <div className="inline-flex items-center rounded-md border bg-muted/30 p-0.5">
             <Button
@@ -287,6 +352,18 @@ export function ResumePreviewPane({
           </Button>
         </div>
       </div>
+
+      <InterviewHistoryDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        resumeId={selectedResumeId ?? null}
+        resumeTitle={selectedResumeTitle}
+        selectedVersionId={selectedVersion.id}
+        selectedVersionNumber={selectedVersion.versionNumber}
+        onStartInterview={onStartInterview}
+        onInterviewsUpdated={handleInterviewsUpdated}
+      />
     </>
   );
 }
+

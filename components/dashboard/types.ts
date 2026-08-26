@@ -20,3 +20,29 @@ export interface Resume {
   updatedAt: string;
   versions: ResumeVersion[];
 }
+
+export interface InterviewSummaryItem {
+  id: string;
+  resumeId: string;
+  resumeVersionId: string;
+  versionNumber: number;
+  status: "initializing" | "active" | "completing" | "completed" | "failed";
+  language: string;
+  persona: string;
+  interviewType: string;
+  targetLevel: string;
+  targetRole: string;
+  preference: string;
+  preferenceTags: string[];
+  targetRoundCount: number;
+  answeredRoundCount: number;
+  overallScore: number | null;
+  scoreStatus: string | null;
+  completionJobStatus: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  durationSeconds: number;
+}
+

@@ -436,6 +436,7 @@ export default function DashboardPage() {
         <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           {selectedVersion ? (
             <ResumePreviewPane
+              selectedResumeId={selectedResumeId ?? undefined}
               selectedResumeTitle={selectedResume?.title}
               selectedVersion={selectedVersion}
               parsed={parsed}
