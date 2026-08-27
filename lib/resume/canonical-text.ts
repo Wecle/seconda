@@ -34,6 +34,7 @@ export function serializeParsedResume(parsed: ParsedResume): string {
     sections.push(`Projects\n${parsed.projects!.map((project) => [
       project.name,
       project.description,
+      ...(project.bullets?.length ? project.bullets.map((bullet) => `- ${bullet}`) : []),
       ...(project.tags?.length ? [`Tags: ${project.tags.join(", ")}`] : []),
     ].filter(Boolean).join("\n")).join("\n\n")}`);
   }

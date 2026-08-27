@@ -249,6 +249,21 @@ export function ParsedResumePreview({
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
                   {renderText(project.description)}
                 </p>
+                {project.bullets && project.bullets.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {project.bullets.map((bullet, k) => (
+                      <li
+                        key={k}
+                        className={cn(
+                          "rounded-sm text-xs leading-relaxed text-muted-foreground",
+                          hasMatch(bullet) && "bg-amber-50 px-1 py-0.5",
+                        )}
+                      >
+                        • {renderText(bullet)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
                 {project.tags && project.tags.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-1.5">
                     {project.tags.map((tag) => (

@@ -18,7 +18,7 @@ export const parsedResumeSchema = z.object({
     title: z.string().describe("Job title"),
     company: z.string().describe("Company name"),
     period: z.string().describe("Employment period"),
-    bullets: z.array(z.string()).describe("Key responsibilities and achievements"),
+    bullets: z.array(z.string()).default([]).describe("Key responsibilities and achievements"),
   })).describe("Work experience entries"),
   education: z.array(z.object({
     major: z.string().optional(),
@@ -27,9 +27,10 @@ export const parsedResumeSchema = z.object({
     period: z.string().optional(),
   })).optional().describe("Education entries"),
   projects: z.array(z.object({
-    name: z.string(),
-    description: z.string(),
-    tags: z.array(z.string()).optional(),
+    name: z.string().describe("Project name"),
+    description: z.string().describe("Project overview or brief description"),
+    bullets: z.array(z.string()).optional().describe("Key responsibilities, technical highlights, achievements and challenges"),
+    tags: z.array(z.string()).optional().describe("Tech stack tags, tools or keywords"),
   })).optional().describe("All project entries from the resume, in original order"),
 });
 

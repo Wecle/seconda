@@ -59,3 +59,25 @@ test("serializes every populated resume section in stable order", () => {
   assert.deepEqual(sectionOffsets, [...sectionOffsets].sort((left, right) => left - right));
   assert.ok(sectionOffsets.every((offset) => offset >= 0));
 });
+
+test("serializes project bullets when present", () => {
+  const resume = {
+    name: "Ada",
+    title: "Engineer",
+    summary: "",
+    skills: [],
+    experience: [],
+    projects: [{
+      name: "Seconda",
+      description: "AI Mock Interview Platform",
+      bullets: [
+        "Built bounded agent runtime",
+        "Deterministic strategy enforcement",
+      ],
+      tags: ["Next.js", "TypeScript"],
+    }],
+  };
+  const text = serializeParsedResume(resume);
+  assert.match(text, /Projects\nSeconda\nAI Mock Interview Platform\n- Built bounded agent runtime\n- Deterministic strategy enforcement\nTags: Next\.js, TypeScript/);
+});
+

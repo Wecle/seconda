@@ -173,8 +173,46 @@ export function ParsedResumeEditor({
       ...prev,
       projects: [
         ...(prev.projects ?? []),
-        { name: "", description: "", tags: [] },
+        { name: "", description: "", bullets: [""], tags: [] },
       ],
+    }));
+  };
+
+  const updateProjectBullet = (projIndex: number, bulletIndex: number, value: string) => {
+    setData((prev) => ({
+      ...prev,
+      projects: (prev.projects ?? []).map((proj, i) =>
+        i === projIndex
+          ? {
+              ...proj,
+              bullets: (proj.bullets ?? []).map((b, j) =>
+                j === bulletIndex ? value : b,
+              ),
+            }
+          : proj,
+      ),
+    }));
+  };
+
+  const removeProjectBullet = (projIndex: number, bulletIndex: number) => {
+    setData((prev) => ({
+      ...prev,
+      projects: (prev.projects ?? []).map((proj, i) =>
+        i === projIndex
+          ? { ...proj, bullets: (proj.bullets ?? []).filter((_, j) => j !== bulletIndex) }
+          : proj,
+      ),
+    }));
+  };
+
+  const addProjectBullet = (projIndex: number) => {
+    setData((prev) => ({
+      ...prev,
+      projects: (prev.projects ?? []).map((proj, i) =>
+        i === projIndex
+          ? { ...proj, bullets: [...(proj.bullets ?? []), ""] }
+          : proj,
+      ),
     }));
   };
 
@@ -515,7 +553,7 @@ export function ParsedResumeEditor({
 
       <div className="rounded-xl border bg-card p-8">
         <h2 className="mb-4 text-base font-semibold">{t.resume.projects}</h2>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="space-y-6">
           {(data.projects ?? []).map((project, i) => (
             <div
               key={i}
@@ -530,7 +568,7 @@ export function ParsedResumeEditor({
               >
                 <Trash2 />
               </Button>
-              <div className="space-y-3">
+              <div className="space-y-4">
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">
                     {t.resume.projectName}
@@ -553,6 +591,42 @@ export function ParsedResumeEditor({
                     }
                     className="min-h-16"
                   />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-muted-foreground">
+                    {t.resume.bullets}
+                  </label>
+                  {(project.bullets ?? []).map((bullet, j) => (
+                    <div key={j} className="flex items-start gap-2">
+                      <span className="mt-2.5 text-sm text-muted-foreground">
+                        •
+                      </span>
+                      <Textarea
+                        value={bullet}
+                        onChange={(e) => updateProjectBullet(i, j, e.target.value)}
+                        className="min-h-9 flex-1"
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-xs"
+                        className="mt-1.5 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeProjectBullet(i, j)}
+                      >
+                        <Trash2 />
+                      </Button>
+                    </div>
+                  ))}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => addProjectBullet(i)}
+                    className="text-muted-foreground"
+                  >
+                    <Plus />
+                    {t.resume.addBullet}
+                  </Button>
                 </div>
                 <div className="space-y-1.5">
                   <label className="text-xs font-medium text-muted-foreground">
