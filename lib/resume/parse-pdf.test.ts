@@ -25,7 +25,7 @@ const samplePdfBuffer = Buffer.from(
   "%%EOF"
 );
 
-test("extractTextFromPDF extracts text/markdown from PDF buffer using pdf-oxide", async () => {
+test("extractTextFromPDF extracts text/markdown from PDF buffer using pdf-oxide-wasm", async () => {
   const text = await extractTextFromPDF(samplePdfBuffer);
   assert.ok(text.length > 0, "Extracted text should not be empty");
   assert.match(text, /Software Engineer Resume/);

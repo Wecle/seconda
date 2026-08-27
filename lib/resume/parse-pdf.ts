@@ -1,8 +1,8 @@
-let pdfOxidePromise: Promise<typeof import("pdf-oxide")> | null = null;
+let pdfOxidePromise: Promise<typeof import("pdf-oxide-wasm/nodejs")> | null = null;
 
 async function getPdfOxide() {
   if (!pdfOxidePromise) {
-    pdfOxidePromise = import("pdf-oxide");
+    pdfOxidePromise = import("pdf-oxide-wasm/nodejs");
   }
   return pdfOxidePromise;
 }
@@ -21,8 +21,8 @@ function normalizeExtractedPdfText(text: string): string {
 }
 
 export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  const { PdfDocument } = await getPdfOxide();
-  const doc = PdfDocument.openFromBuffer(buffer);
+  const { WasmPdfDocument } = await getPdfOxide();
+  const doc = new WasmPdfDocument(new Uint8Array(buffer));
   try {
     const pageCount = doc.pageCount();
     if (pageCount === 0) {
@@ -46,6 +46,6 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
 
     return normalizeExtractedPdfText(extracted);
   } finally {
-    doc.close();
+    doc.free();
   }
 }
