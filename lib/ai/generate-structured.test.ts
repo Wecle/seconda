@@ -118,7 +118,7 @@ test("records one content-free telemetry task and one successful attempt", async
   });
   assert.deepEqual(result, { value: "generated secret" });
   assert.deepEqual(telemetry.events.attempts, [
-    { attemptNumber: 1, model: "deepseek/fast" },
+    { attemptNumber: 1, model: "zhipu/quality" },
   ]);
   assert.deepEqual(telemetry.events.completedAttempts[0].usage, {
     inputTokens: 7,
@@ -197,7 +197,7 @@ test("records fallback and schema repair as distinct attempts", async () => {
     policy,
     telemetry: fallbackTelemetry.lifecycle,
     classifyError: () => "fallback",
-    invoke: async ({ model }) => model === "deepseek/fast"
+    invoke: async ({ model }) => model === "zhipu/quality"
       ? Promise.reject(Object.assign(new Error("fallback"), { usage }))
       : Promise.resolve({ output: { value: "ok" }, usage }),
   });
@@ -205,8 +205,8 @@ test("records fallback and schema repair as distinct attempts", async () => {
     task: "resume.parse", schema, system: "system", prompt: "prompt",
   });
   assert.deepEqual(fallbackTelemetry.events.attempts, [
-    { attemptNumber: 1, model: "deepseek/fast" },
-    { attemptNumber: 2, model: "deepseek/fast-backup" },
+    { attemptNumber: 1, model: "zhipu/quality" },
+    { attemptNumber: 2, model: "zhipu/quality-backup" },
   ]);
 
   const repairTelemetry = telemetryRecorder();
@@ -357,14 +357,14 @@ test("closing a structured stream after one partial fails its attempt, task, and
   assert.equal(telemetry.events.completedTasks, 0);
 });
 
-test("uses fast candidates in policy order, tier keys, and disabled SDK retries", async () => {
+test("uses quality candidates in policy order, tier keys, and disabled SDK retries", async () => {
   const calls: Array<{ model: string; apiKey: string | undefined; maxRetries: number }> = [];
   const generator = createStructuredGenerator({
     policy,
     getApiKey: (tier) => `${tier}-key`,
     invoke: async (input) => {
       calls.push({ model: input.model, apiKey: input.apiKey, maxRetries: input.maxRetries });
-      if (input.model === "deepseek/fast") throw new Error("missing");
+      if (input.model === "zhipu/quality") throw new Error("missing");
       return { output: { value: "ok" }, usage };
     },
     classifyError: () => "fallback",
@@ -374,12 +374,12 @@ test("uses fast candidates in policy order, tier keys, and disabled SDK retries"
     { value: "ok" },
   );
   assert.deepEqual(calls, [
-    { model: "deepseek/fast", apiKey: "fast-key", maxRetries: 0 },
-    { model: "deepseek/fast-backup", apiKey: "fast-key", maxRetries: 0 },
+    { model: "zhipu/quality", apiKey: "quality-key", maxRetries: 0 },
+    { model: "zhipu/quality-backup", apiKey: "quality-key", maxRetries: 0 },
   ]);
 });
 
-test("uses the first fast candidate when it succeeds", async () => {
+test("uses the first quality candidate when it succeeds", async () => {
   const calls: string[] = [];
   const generator = createStructuredGenerator({
     policy,
@@ -389,7 +389,7 @@ test("uses the first fast candidate when it succeeds", async () => {
     },
   });
   await generator.generateStructured({ task: "resume.parse", schema, system: "system", prompt: "prompt" });
-  assert.deepEqual(calls, ["deepseek/fast"]);
+  assert.deepEqual(calls, ["zhipu/quality"]);
 });
 
 test("repairs malformed output without trusting it as system instructions", async () => {
@@ -458,7 +458,7 @@ test("falls back before the first usable streamed partial", async () => {
   });
   assert.deepEqual(await collect(result.partialOutputStream), [{ value: "ok" }]);
   assert.deepEqual(await result.output, { value: "ok" });
-  assert.deepEqual(calls, ["deepseek/fast", "deepseek/fast-backup"]);
+  assert.deepEqual(calls, ["zhipu/quality", "zhipu/quality-backup"]);
   assert.equal(signals[0].aborted, true);
 });
 
@@ -660,7 +660,7 @@ test("does not fall back after a usable streamed partial", async () => {
   });
   await assert.rejects(collect(result.partialOutputStream));
   await assert.rejects(result.output);
-  assert.deepEqual(calls, ["deepseek/fast"]);
+  assert.deepEqual(calls, ["zhipu/quality"]);
 });
 
 test("commits a valid final object that had no partial output", async () => {
@@ -722,5 +722,5 @@ test("does not fall back after caller cancellation", async () => {
   });
   await assert.rejects(collect(result.partialOutputStream));
   await assert.rejects(result.output);
-  assert.deepEqual(calls, ["deepseek/fast"]);
+  assert.deepEqual(calls, ["zhipu/quality"]);
 });

@@ -24,9 +24,9 @@ const MODEL_ID_PATTERN = /^[^/\s]+\/[^/\s]+$/;
 const supportedProviders = new Set<ModelProvider>(["deepseek", "openai", "zhipu"]);
 
 const taskTiers: Record<AITask, AIModelTier> = {
-  "resume.parse": "fast",
-  "resume.generate": "fast",
-  "interview.question_scoring": "fast",
+  "resume.parse": "quality",
+  "resume.generate": "quality",
+  "interview.question_scoring": "quality",
   "interview.report_generation": "quality",
 };
 
@@ -136,4 +136,45 @@ export function resolveModelCandidates(task: AITask, policy: ModelPolicy): {
   ];
 
   return { tier, candidates: tier === "fast" ? [...fastCandidates, ...qualityCandidates] : qualityCandidates };
+}
+
+export function resolveModelCredential(
+  model: string,
+  env: ModelEnvironment = process.env,
+): {
+  tier: AIModelTier;
+  apiKey: string;
+} {
+  const fastKey = env.FAST_MODEL_API_KEY?.trim();
+  const qualityKey = env.QUALITY_MODEL_API_KEY?.trim();
+
+  try {
+    const policy = loadModelPolicy(env);
+    if (model === policy.qualityModel || model === policy.qualityFallbackModel) {
+      if (!qualityKey) {
+        throw new Error("QUALITY_MODEL_API_KEY must be configured");
+      }
+      return { tier: "quality", apiKey: qualityKey };
+    }
+    if (model === policy.fastModel || model === policy.fastFallbackModel) {
+      if (!fastKey) {
+        throw new Error("FAST_MODEL_API_KEY must be configured");
+      }
+      return { tier: "fast", apiKey: fastKey };
+    }
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message.includes("FAST_MODEL_API_KEY") ||
+        error.message.includes("QUALITY_MODEL_API_KEY"))
+    ) {
+      throw error;
+    }
+  }
+
+  const fallbackKey = fastKey ?? qualityKey;
+  if (!fallbackKey) {
+    throw new Error("FAST_MODEL_API_KEY must be configured");
+  }
+  return { tier: "fast", apiKey: fallbackKey };
 }

@@ -4,6 +4,7 @@ import {
   getTaskTier,
   loadModelPolicy,
   resolveModelCandidates,
+  resolveModelCredential,
   type AITask,
   type AIModelTier,
 } from "./model-policy";
@@ -18,9 +19,9 @@ const validEnv = {
 };
 
 const expectedTiers: Record<AITask, AIModelTier> = {
-  "resume.parse": "fast",
-  "resume.generate": "fast",
-  "interview.question_scoring": "fast",
+  "resume.parse": "quality",
+  "resume.generate": "quality",
+  "interview.question_scoring": "quality",
   "interview.report_generation": "quality",
 };
 
@@ -30,13 +31,11 @@ test("maps every task to its fixed first-phase tier", () => {
   }
 });
 
-test("builds fast candidates in escalation order", () => {
+test("builds quality candidates for structured tasks", () => {
   const policy = loadModelPolicy(validEnv);
   assert.deepEqual(resolveModelCandidates("resume.parse", policy), {
-    tier: "fast",
+    tier: "quality",
     candidates: [
-      { model: "deepseek/fast", credentialTier: "fast" },
-      { model: "deepseek/fast-backup", credentialTier: "fast" },
       { model: "zhipu/quality", credentialTier: "quality" },
       { model: "zhipu/quality-backup", credentialTier: "quality" },
     ],
@@ -135,14 +134,29 @@ test("trims optional fallback values", () => {
   const policy = loadModelPolicy({
     AI_MODEL_FAST: " deepseek/fast ",
     AI_MODEL_QUALITY: " zhipu/quality ",
-    AI_MODEL_FAST_FALLBACK: " ",
+    AI_MODEL_QUALITY_FALLBACK: " ",
     AI_APPROVED_MODELS: "deepseek/fast,zhipu/quality",
   });
   assert.deepEqual(resolveModelCandidates("resume.generate", policy), {
-    tier: "fast",
+    tier: "quality",
     candidates: [
-      { model: "deepseek/fast", credentialTier: "fast" },
       { model: "zhipu/quality", credentialTier: "quality" },
     ],
+  });
+});
+
+test("resolves credential tier and api key for models", () => {
+  const env = {
+    ...validEnv,
+    FAST_MODEL_API_KEY: "fast-key",
+    QUALITY_MODEL_API_KEY: "quality-key",
+  };
+  assert.deepEqual(resolveModelCredential("deepseek/fast", env), {
+    tier: "fast",
+    apiKey: "fast-key",
+  });
+  assert.deepEqual(resolveModelCredential("zhipu/quality", env), {
+    tier: "quality",
+    apiKey: "quality-key",
   });
 });

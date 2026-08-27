@@ -33,7 +33,7 @@ export async function POST(request: Request) {
     const session = await createAgentSession({
       userId,
       title: parsed.data.title ?? "New agent task",
-      model: policy.qualityModel,
+      model: policy.fastModel,
       capability: BUILT_IN_CAPABILITIES.workspace,
       promptVersion: WORKSPACE_AGENT_PROMPT_VERSION,
       systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,

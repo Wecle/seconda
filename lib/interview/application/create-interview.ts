@@ -89,7 +89,7 @@ export async function createInterview(input: {
     }
     const canonicalText = serializeParsedResume(parsed.data);
     const evidenceJson = buildResumeEvidence(parsed.data);
-    const model = dependencies.model ?? loadModelPolicy().qualityModel;
+    const model = dependencies.model ?? loadModelPolicy().fastModel;
     const creation = await insertInterviewCreation(transaction, {
       userId: input.userId,
       idempotencyKey,

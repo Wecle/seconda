@@ -1,5 +1,6 @@
 import { generateText, type ModelMessage } from "ai";
 import { createProviderModel } from "@/lib/ai/provider-registry";
+import { resolveModelCredential } from "@/lib/ai/model-policy";
 import { compactionSummaryMessage, COMPACTION_SYSTEM_PROMPT, renderCompactionTranscript, selectCompactionRegion } from "./compaction";
 import { contextPressure, cropToolResultMessage, measureRequestTokens, resolveContextBudget, resolveContextWindow } from "./context-budget";
 import { projectModelInput } from "./model-input";
@@ -62,17 +63,12 @@ const defaultStore: ContextLifecycleStore = {
   },
 };
 
-function apiKey() {
-  const key = process.env.QUALITY_MODEL_API_KEY?.trim();
-  if (!key) throw new Error("QUALITY_MODEL_API_KEY must be configured");
-  return key;
-}
-
 async function defaultSummarize(model: string, messages: readonly ModelMessage[], signal: AbortSignal) {
+  const credential = resolveModelCredential(model);
   const provider = createProviderModel({
     model,
-    credentialTier: "quality",
-    apiKey: apiKey(),
+    credentialTier: credential.tier,
+    apiKey: credential.apiKey,
     responseMode: "conversational",
   });
   const result = await generateText({

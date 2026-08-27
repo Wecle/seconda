@@ -1,6 +1,7 @@
 import { stepCountIs, streamText, type LanguageModelUsage, type ModelMessage } from "ai";
 import { z } from "zod";
 import { createProviderModel } from "@/lib/ai/provider-registry";
+import { resolveModelCredential } from "@/lib/ai/model-policy";
 import type { AgentEventSink, AgentRunInput } from "./types";
 import type { AgentCapabilityRegistry } from "./capabilities/registry";
 import { CURRENT_AGENT_STEP, type CapabilityContext } from "./capabilities/types";
@@ -16,13 +17,6 @@ import {
   SKILL_TOOL_ERROR,
 } from "./skills/tool";
 import type { SkillCatalogSnapshot } from "./skills/types";
-
-function getQualityApiKey() {
-  const key = process.env.QUALITY_MODEL_API_KEY?.trim();
-  if (!key) throw new Error("QUALITY_MODEL_API_KEY must be configured");
-  return key;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return value as Record<string, unknown>;
@@ -68,10 +62,11 @@ export type AgentRuntimeDependencies = {
 
 export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies) {
   const capability = dependencies.capabilities.resolve(input.capability);
+  const credential = resolveModelCredential(input.model);
   const provider = dependencies.provider ?? createProviderModel({
     model: input.model,
-    credentialTier: "quality",
-    apiKey: getQualityApiKey(),
+    credentialTier: credential.tier,
+    apiKey: credential.apiKey,
     responseMode: "conversational",
   });
   if (capability.skillAllowlist?.length && !dependencies.skills) {
