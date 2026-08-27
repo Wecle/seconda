@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
+  Award,
   CheckCircle2,
   Clock,
   FileBarChart2,
@@ -17,6 +18,7 @@ import { useTranslation } from "@/lib/i18n/context";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { InterviewSummaryItem } from "@/components/dashboard/types";
+import { cn } from "@/lib/utils";
 
 interface InterviewCardProps {
   interview: InterviewSummaryItem;
@@ -121,10 +123,29 @@ export function InterviewCard({
   const isInitializing = interview.status === "initializing";
   const isActive = interview.status === "active";
 
+  const score = interview.overallScore;
+  const scoreBadgeClass =
+    typeof score === "number"
+      ? score >= 80
+        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+        : score >= 60
+          ? "bg-primary/10 text-primary border-primary/20"
+          : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+      : "";
+
+  const progressPercent = Math.min(
+    100,
+    interview.targetRoundCount > 0
+      ? Math.round(
+          (interview.answeredRoundCount / interview.targetRoundCount) * 100,
+        )
+      : 0,
+  );
+
   return (
-    <div className="group relative flex flex-col rounded-xl border bg-card p-4 transition-all duration-200 hover:border-primary/40 hover:shadow-sm">
+    <div className="group relative flex flex-col rounded-xl border border-border/70 bg-card p-4 transition-all duration-200 hover:border-primary/40 hover:shadow-xs">
       {/* Header row: Role, Level, Tags */}
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1 space-y-1">
           <div className="flex flex-wrap items-center gap-1.5">
             {showVersionBadge && (
@@ -135,7 +156,7 @@ export function InterviewCard({
                 v{interview.versionNumber}
               </Badge>
             )}
-            <h4 className="truncate text-sm font-semibold text-foreground">
+            <h4 className="truncate text-sm font-bold text-foreground">
               {interview.targetRole || t.dashboard.generator.targetRole}
             </h4>
             <Badge
@@ -148,7 +169,7 @@ export function InterviewCard({
 
           <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
             <span>{getInterviewTypeLabel(interview.interviewType)}</span>
-            <span>·</span>
+            <span className="opacity-40">·</span>
             <span>{getPersonaLabel(interview.persona)}</span>
           </div>
         </div>
@@ -157,12 +178,18 @@ export function InterviewCard({
         <div className="flex shrink-0 flex-col items-end gap-1">
           {isCompleted && (
             <>
-              {typeof interview.overallScore === "number" ? (
-                <div className="flex items-baseline gap-1 rounded-md bg-emerald-500/10 px-2 py-0.5 text-emerald-600 dark:text-emerald-400">
-                  <span className="text-sm font-bold tracking-tight">
-                    {interview.overallScore}
+              {typeof score === "number" ? (
+                <div
+                  className={cn(
+                    "flex items-baseline gap-1 rounded-lg border px-2.5 py-0.5",
+                    scoreBadgeClass,
+                  )}
+                >
+                  <Award className="size-3.5 mr-0.5 self-center" />
+                  <span className="text-base font-bold font-mono tracking-tight">
+                    {score}
                   </span>
-                  <span className="text-[10px] opacity-80">/ 100</span>
+                  <span className="text-[10px] opacity-75">/ 100</span>
                 </div>
               ) : (
                 <Badge
@@ -181,7 +208,7 @@ export function InterviewCard({
               variant="secondary"
               className="gap-1 bg-amber-500/10 text-[10px] text-amber-600 dark:text-amber-400"
             >
-              <Loader2 className="size-3 animate-spin" />
+              <Loader2 className="size-3 animate-spin text-amber-500" />
               {t.dashboard.interviewDrawer.statusCompleting}
             </Badge>
           )}
@@ -199,10 +226,7 @@ export function InterviewCard({
           )}
 
           {isFailed && (
-            <Badge
-              variant="destructive"
-              className="gap-1 text-[10px]"
-            >
+            <Badge variant="destructive" className="gap-1 text-[10px]">
               <AlertCircle className="size-3" />
               {t.dashboard.interviewDrawer.statusFailed}
             </Badge>
@@ -210,8 +234,25 @@ export function InterviewCard({
         </div>
       </div>
 
+      {/* Progress Bar (Visualizer) */}
+      <div className="mt-2.5 space-y-1">
+        <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full transition-all duration-300",
+              isCompleted
+                ? "bg-emerald-500"
+                : isFailed
+                  ? "bg-destructive"
+                  : "bg-primary",
+            )}
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+      </div>
+
       {/* Meta row: Duration, Rounds, Date */}
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t pt-2.5 text-xs text-muted-foreground">
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <div className="flex items-center gap-3">
           <span className="inline-flex items-center gap-1">
             <Clock className="size-3.5 opacity-70" />
@@ -224,17 +265,17 @@ export function InterviewCard({
               .replace("{total}", String(interview.targetRoundCount))}
           </span>
         </div>
-        <span className="text-[11px] opacity-80">{formattedDate}</span>
+        <span className="font-mono text-[11px] opacity-75">{formattedDate}</span>
       </div>
 
       {/* Action Buttons row */}
-      <div className="mt-3 flex items-center justify-between gap-2">
+      <div className="mt-3 flex items-center justify-between gap-2 border-t pt-2.5">
         <div className="flex items-center gap-2">
           {isCompleted && (
             <>
               <Button
                 size="sm"
-                className="h-7 gap-1 px-2.5 text-xs font-medium"
+                className="h-7 gap-1.5 px-2.5 text-xs font-semibold shadow-xs"
                 asChild
               >
                 <Link href={`/interviews/${interview.id}/report`}>
@@ -245,7 +286,7 @@ export function InterviewCard({
               <Button
                 variant="outline"
                 size="sm"
-                className="h-7 gap-1 px-2.5 text-xs"
+                className="h-7 gap-1 px-2.5 text-xs font-medium"
                 asChild
               >
                 <Link href={`/interviews/${interview.id}`}>
@@ -259,7 +300,7 @@ export function InterviewCard({
           {(isActive || isInitializing || isCompleting) && (
             <Button
               size="sm"
-              className="h-7 gap-1 px-3 text-xs font-medium"
+              className="h-7 gap-1 px-3 text-xs font-semibold shadow-xs"
               asChild
             >
               <Link href={`/interviews/${interview.id}`}>
@@ -288,7 +329,7 @@ export function InterviewCard({
           type="button"
           variant="ghost"
           size="icon-xs"
-          className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
           onClick={() => onDeleteClick(interview)}
           disabled={deleting}
           aria-label={t.dashboard.interviewDrawer.deleteInterview}
@@ -303,3 +344,4 @@ export function InterviewCard({
     </div>
   );
 }
+

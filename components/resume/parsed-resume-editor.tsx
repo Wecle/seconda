@@ -241,8 +241,8 @@ export function ParsedResumeEditor({
   };
 
   return (
-    <div className="w-full max-w-[850px] space-y-6 pb-20">
-      <div className="rounded-xl border bg-card p-8">
+    <div className="w-full max-w-[850px] space-y-6 pb-24">
+      <div className="rounded-2xl border border-border/70 bg-card p-6 md:p-8 shadow-xs">
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
@@ -315,8 +315,8 @@ export function ParsedResumeEditor({
         </div>
       </div>
 
-      <div className="rounded-xl border bg-card p-8">
-        <h2 className="mb-4 text-base font-semibold">{t.resume.skills}</h2>
+      <div className="rounded-2xl border border-border/70 bg-card p-6 md:p-8 shadow-xs">
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">{t.resume.skills}</h2>
         <div className="flex flex-wrap gap-2">
           {data.skills.map((skill, i) => (
             <span
@@ -473,13 +473,13 @@ export function ParsedResumeEditor({
         </Button>
       </div>
 
-      <div className="rounded-xl border bg-card p-8">
-        <h2 className="mb-4 text-base font-semibold">{t.resume.education}</h2>
+      <div className="rounded-2xl border border-border/70 bg-card p-6 md:p-8 shadow-xs">
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">{t.resume.education}</h2>
         <div className="space-y-4">
           {(data.education ?? []).map((edu, i) => (
             <div
               key={i}
-              className="relative rounded-lg border bg-card p-5"
+              className="relative rounded-xl border bg-card p-5"
             >
               <Button
                 type="button"
@@ -551,13 +551,13 @@ export function ParsedResumeEditor({
         </Button>
       </div>
 
-      <div className="rounded-xl border bg-card p-8">
-        <h2 className="mb-4 text-base font-semibold">{t.resume.projects}</h2>
+      <div className="rounded-2xl border border-border/70 bg-card p-6 md:p-8 shadow-xs">
+        <h2 className="mb-4 text-sm font-bold uppercase tracking-wider text-muted-foreground">{t.resume.projects}</h2>
         <div className="space-y-6">
           {(data.projects ?? []).map((project, i) => (
             <div
               key={i}
-              className="relative rounded-lg border bg-card p-5"
+              className="relative rounded-xl border bg-card p-5"
             >
               <Button
                 type="button"
@@ -670,11 +670,12 @@ export function ParsedResumeEditor({
         </Button>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-50 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <div className="fixed inset-x-0 bottom-0 z-50 border-t bg-card/90 backdrop-blur-md">
         <div className="mx-auto flex max-w-[850px] items-center justify-end gap-3 px-8 py-3">
           <Button
             type="button"
             variant="outline"
+            size="sm"
             onClick={onCancel}
             disabled={saving}
           >
@@ -682,12 +683,14 @@ export function ParsedResumeEditor({
           </Button>
           <Button
             type="button"
+            size="sm"
             onClick={() => onSave(data)}
             disabled={saving}
+            className="font-medium shadow-xs"
           >
             {saving ? (
               <>
-                <Loader2 className="animate-spin" />
+                <Loader2 className="size-3.5 animate-spin mr-1.5" />
                 {t.resume.saving}
               </>
             ) : (

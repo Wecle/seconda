@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { FilePlus2, Loader2, Plus } from "lucide-react";
+import {
+  Award,
+  Briefcase,
+  Loader2,
+  Sparkles,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n/context";
@@ -18,6 +24,7 @@ import {
 import type { GeneratedResumeDraft } from "@/lib/resume/generation-contract";
 import type { ParsedResume } from "@/lib/resume/types";
 import { InterviewSettingsDialog } from "@/components/interview/interview-settings-dialog";
+import { cn } from "@/lib/utils";
 
 const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
   name: "",
@@ -35,6 +42,7 @@ export default function DashboardPage() {
   );
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [loading, setLoading] = useState(true);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(
     null,
@@ -147,6 +155,11 @@ export default function DashboardPage() {
     if (!open && (uploading || generating)) return;
     setUploadOpen(open);
     if (!open) resetNewResumeDialog();
+  };
+
+  const openNewResumeWithMode = (mode: NewResumeMode) => {
+    setNewResumeMode(mode);
+    setUploadOpen(true);
   };
 
   const handleUpload = async () => {
@@ -448,6 +461,8 @@ export default function DashboardPage() {
         selectedVersionId={selectedVersionId}
         deletingResumeId={deletingResumeId}
         currentUser={currentUser}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         onToggleFolder={toggleFolder}
         onSelectVersion={selectVersion}
         onRequestDelete={setPendingDeleteResume}
@@ -488,21 +503,116 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="text-center space-y-4">
-                <FilePlus2 className="mx-auto size-12 text-muted-foreground/30" />
-                <div>
-                  <h2 className="text-lg font-semibold">
-                    {t.dashboard.noResumeSelected}
-                  </h2>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    {t.dashboard.uploadToStart}
+            /* Bento Grid Onboarding Canvas when no resume is selected */
+            <div className="flex flex-1 items-center justify-center overflow-y-auto p-6 md:p-12">
+              <div className="mx-auto w-full max-w-4xl space-y-8">
+                {/* Hero Header */}
+                <div className="text-center space-y-2.5 max-w-xl mx-auto">
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/8 px-3 py-1 text-xs font-semibold text-primary">
+                    <Sparkles className="size-3.5" />
+                    <span>Seconda AI Interview</span>
+                  </div>
+                  <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-foreground font-sans">
+                    {t.dashboard.bento.title}
+                  </h1>
+                  <p className="text-xs sm:text-sm text-muted-foreground leading-relaxed">
+                    {t.dashboard.bento.subtitle}
                   </p>
                 </div>
-                <Button onClick={() => setUploadOpen(true)}>
-                  <Plus className="size-4" />
-                  {t.dashboard.uploadResume}
-                </Button>
+
+                {/* Bento Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Card 1: Upload PDF */}
+                  <div
+                    onClick={() => openNewResumeWithMode("upload")}
+                    className="group relative flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 transition-all duration-200 hover:border-primary/50 hover:shadow-md cursor-pointer"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary transition-transform group-hover:scale-105">
+                        <Upload className="size-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-foreground group-hover:text-primary transition-colors">
+                          {t.dashboard.bento.uploadCardTitle}
+                        </h3>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                          {t.dashboard.bento.uploadCardDesc}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center justify-between border-t border-border/60 pt-4">
+                      <span className="text-xs font-semibold text-primary">
+                        {t.dashboard.bento.uploadCardAction} →
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground bg-muted/60 px-2 py-0.5 rounded">
+                        PDF max 10MB
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Card 2: AI Generate */}
+                  <div
+                    onClick={() => openNewResumeWithMode("generate")}
+                    className="group relative flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 transition-all duration-200 hover:border-primary/50 hover:shadow-md cursor-pointer"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex size-11 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 transition-transform group-hover:scale-105">
+                        <Sparkles className="size-5" />
+                      </div>
+                      <div>
+                        <h3 className="text-base font-bold text-foreground group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors">
+                          {t.dashboard.bento.generateCardTitle}
+                        </h3>
+                        <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                          {t.dashboard.bento.generateCardDesc}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 flex items-center justify-between border-t border-border/60 pt-4">
+                      <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
+                        {t.dashboard.bento.generateCardAction} →
+                      </span>
+                      <span className="font-mono text-[10px] text-muted-foreground bg-muted/60 px-2 py-0.5 rounded">
+                        No PDF needed
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Feature Highlights Wide Card */}
+                  <div className="md:col-span-2 rounded-2xl border border-border/70 bg-card/60 p-6 backdrop-blur-xs">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                      <div className="flex items-start gap-3">
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <Award className="size-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-bold text-foreground">
+                            {t.dashboard.bento.feature1Title}
+                          </h4>
+                          <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                            {t.dashboard.bento.feature1Desc}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-start gap-3">
+                        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                          <Briefcase className="size-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs sm:text-sm font-bold text-foreground">
+                            {t.dashboard.bento.feature2Title}
+                          </h4>
+                          <p className="mt-0.5 text-xs text-muted-foreground leading-relaxed">
+                            {t.dashboard.bento.feature2Desc}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -579,3 +689,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+
