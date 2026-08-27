@@ -14,9 +14,6 @@ importers:
       '@ai-sdk/openai-compatible':
         specifier: ^3.0.7
         version: 3.0.7(zod@4.3.6)
-      '@napi-rs/canvas':
-        specifier: ^0.1.91
-        version: 0.1.91
       '@vercel/blob':
         specifier: ^2.2.0
         version: 2.2.0
@@ -5011,6 +5008,7 @@ snapshots:
       '@napi-rs/canvas-linux-x64-musl': 0.1.91
       '@napi-rs/canvas-win32-arm64-msvc': 0.1.91
       '@napi-rs/canvas-win32-x64-msvc': 0.1.91
+    optional: true
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
