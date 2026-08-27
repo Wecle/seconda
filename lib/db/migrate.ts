@@ -73,7 +73,9 @@ async function runMigration(sql: postgres.Sql) {
   `;
   await sql`
     ALTER TABLE resumes
-      ADD COLUMN IF NOT EXISTS interview_settings JSONB
+      ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+      ADD COLUMN IF NOT EXISTS interview_settings JSONB,
+      ADD COLUMN IF NOT EXISTS creation_idempotency_key TEXT
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_creation_owner_key
@@ -101,6 +103,12 @@ async function runMigration(sql: postgres.Sql) {
         OR (original_filename IS NULL AND stored_path IS NULL AND mime_type IS NULL AND file_size IS NULL)
       )
     )
+  `;
+  await sql`
+    ALTER TABLE resume_versions
+      ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'uploaded',
+      ALTER COLUMN original_filename DROP NOT NULL,
+      ALTER COLUMN stored_path DROP NOT NULL
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_versions_resume_number
@@ -324,6 +332,46 @@ async function runMigration(sql: postgres.Sql) {
     CREATE INDEX IF NOT EXISTS idx_agent_events_session_type_sequence
     ON agent_events(session_id, type, sequence)
   `;
+  await sql.unsafe(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'interviews'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'interviews' AND column_name = 'user_id'
+      ) THEN
+        DROP TABLE IF EXISTS interview_reports CASCADE;
+        DROP TABLE IF EXISTS interview_completion_jobs CASCADE;
+        DROP TABLE IF EXISTS question_scores CASCADE;
+        DROP TABLE IF EXISTS interview_answers CASCADE;
+        DROP TABLE IF EXISTS interview_questions CASCADE;
+        DROP TABLE IF EXISTS interview_agent_runs CASCADE;
+        DROP TABLE IF EXISTS interview_resume_snapshots CASCADE;
+        DROP TABLE IF EXISTS interviews CASCADE;
+      END IF;
+
+      IF EXISTS (
+        SELECT 1
+        FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_name = 'interview_questions'
+      ) AND NOT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'interview_questions' AND column_name = 'source_interview_run_id'
+      ) THEN
+        DROP TABLE IF EXISTS interview_reports CASCADE;
+        DROP TABLE IF EXISTS interview_completion_jobs CASCADE;
+        DROP TABLE IF EXISTS question_scores CASCADE;
+        DROP TABLE IF EXISTS interview_answers CASCADE;
+        DROP TABLE IF EXISTS interview_questions CASCADE;
+      END IF;
+    END
+    $$;
+  `);
   await sql`
     CREATE TABLE IF NOT EXISTS interviews (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -361,6 +409,14 @@ async function runMigration(sql: postgres.Sql) {
         jsonb_typeof(preference_tags) = 'array' AND jsonb_array_length(preference_tags) <= 3
       )
     )
+  `;
+  await sql`
+    ALTER TABLE interviews
+      ADD COLUMN IF NOT EXISTS target_role TEXT,
+      ADD COLUMN IF NOT EXISTS preference TEXT NOT NULL DEFAULT '',
+      ADD COLUMN IF NOT EXISTS preference_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS answered_round_count INTEGER NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_owner_creation_key
