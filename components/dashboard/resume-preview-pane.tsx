@@ -8,6 +8,7 @@ import {
   History,
   Loader2,
   Pencil,
+  Settings,
   Sparkles,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
@@ -54,8 +55,10 @@ interface ResumePreviewPaneProps {
   hasOriginalPreview: boolean;
   parseFailureHint: string;
   retryingParse: boolean;
+  hasSavedSettings?: boolean;
   onPreviewModeChange: (mode: "parsed" | "original") => void;
   onRetryParse: () => void;
+  onOpenSettings?: () => void;
   onStartInterview: () => void;
   editing: boolean;
   savingEdit: boolean;
@@ -74,8 +77,10 @@ export function ResumePreviewPane({
   hasOriginalPreview,
   parseFailureHint,
   retryingParse,
+  hasSavedSettings,
   onPreviewModeChange,
   onRetryParse,
+  onOpenSettings,
   onStartInterview,
   editing,
   savingEdit,
@@ -344,8 +349,34 @@ export function ResumePreviewPane({
           </span>
         </div>
         <div className="flex items-center gap-2">
+          {hasSavedSettings && (
+            <Badge variant="secondary" className="h-7 text-xs font-normal">
+              {t.dashboard.settingsSaved}
+            </Badge>
+          )}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="size-8"
+                  onClick={onOpenSettings}
+                  disabled={selectedVersion.parseStatus !== "parsed"}
+                >
+                  <Settings className="size-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {t.interview.settingsTitle}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+
           <Button
             size="sm"
+            disabled={selectedVersion.parseStatus !== "parsed"}
             onClick={onStartInterview}
           >
             {t.dashboard.startInterview}

@@ -268,6 +268,17 @@ export const en = {
     settingsTitle: "Interview Settings",
     settingsDescription:
       "Set the interviewer style and focus; the Agent adapts to your resume and answers.",
+    settingsDescriptionEdit:
+      "Configure interviewer persona and focus; saved settings will serve as the default for future mock interviews on this resume.",
+    startConfirmTitle: "Start Mock Interview",
+    startConfirmDescription:
+      "This interview session will be generated based on the current resume version and the following settings:",
+    noPreference: "Default comprehensive evaluation",
+    editSettingsPrompt: "Edit Settings",
+    saveSettings: "Save Settings",
+    savingSettings: "Saving...",
+    saveSettingsSuccess: "Interview settings saved",
+    saveSettingsFailed: "Failed to save settings. Please try again.",
     targetRole: "Target Role",
     targetRoleDescription:
       "Filled from this resume. Adjust it for the role you want to practice.",

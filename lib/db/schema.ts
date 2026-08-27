@@ -37,11 +37,23 @@ export const oauthAccounts = pgTable("oauth_accounts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.provider, table.providerAccountId)]);
 
+export interface ResumeInterviewSettings {
+  language: "zh" | "en" | "es" | "de";
+  persona: "friendly" | "standard" | "stressful";
+  interviewType: "behavioral" | "technical" | "mixed";
+  targetLevel: "Junior" | "Mid" | "Senior";
+  targetRole?: string;
+  preference: string;
+  preferenceTags: string[];
+  targetRoundCount: number;
+}
+
 export const resumes = pgTable("resumes", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   currentVersionId: uuid("current_version_id"),
+  interviewSettings: jsonb("interview_settings").$type<ResumeInterviewSettings>(),
   creationIdempotencyKey: text("creation_idempotency_key"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

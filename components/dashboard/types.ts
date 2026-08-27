@@ -1,4 +1,7 @@
 import type { ParsedResume, ResumeSourceType } from "@/lib/resume/types";
+import type { ResumeInterviewSettings } from "@/lib/db/schema";
+
+export type { ResumeInterviewSettings };
 
 export interface ResumeVersion {
   id: string;
@@ -16,6 +19,7 @@ export interface Resume {
   id: string;
   title: string;
   currentVersionId: string | null;
+  interviewSettings?: ResumeInterviewSettings | null;
   createdAt: string;
   updatedAt: string;
   versions: ResumeVersion[];

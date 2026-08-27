@@ -65,10 +65,15 @@ async function runMigration(sql: postgres.Sql) {
       user_id UUID REFERENCES users(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       current_version_id UUID,
+      interview_settings JSONB,
       creation_idempotency_key TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+  await sql`
+    ALTER TABLE resumes
+      ADD COLUMN IF NOT EXISTS interview_settings JSONB
   `;
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_creation_owner_key

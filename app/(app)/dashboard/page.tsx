@@ -9,7 +9,7 @@ import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog"
 import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
 import { ResumePreviewPane } from "@/components/dashboard/resume-preview-pane";
 import { ResumeSidebar } from "@/components/dashboard/resume-sidebar";
-import type { Resume } from "@/components/dashboard/types";
+import type { Resume, ResumeInterviewSettings } from "@/components/dashboard/types";
 import type { UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import {
   NewResumeDialog,
@@ -72,6 +72,9 @@ export default function DashboardPage() {
   const [editing, setEditing] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [interviewSettingsOpen, setInterviewSettingsOpen] = useState(false);
+  const [interviewSettingsMode, setInterviewSettingsMode] = useState<
+    "settings" | "create"
+  >("create");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const resumeGenerationRef = useRef<{ signature: string; key: string } | null>(
     null,
@@ -293,12 +296,31 @@ export default function DashboardPage() {
     }
   };
 
+  const handleOpenSettings = () => {
+    if (!selectedVersion || selectedVersion.parseStatus !== "parsed" || !parsed) {
+      toast.error(t.dashboard.resumeNotReady);
+      return;
+    }
+    setInterviewSettingsMode("settings");
+    setInterviewSettingsOpen(true);
+  };
+
   const handleStartInterview = () => {
     if (!selectedVersion || selectedVersion.parseStatus !== "parsed" || !parsed) {
       toast.error(t.dashboard.resumeNotReady);
       return;
     }
+    setInterviewSettingsMode("create");
     setInterviewSettingsOpen(true);
+  };
+
+  const handleSettingsSaved = (saved: ResumeInterviewSettings) => {
+    if (!selectedResumeId) return;
+    setResumes((prev) =>
+      prev.map((r) =>
+        r.id === selectedResumeId ? { ...r, interviewSettings: saved } : r,
+      ),
+    );
   };
 
   const handleRetryParse = async () => {
@@ -445,8 +467,10 @@ export default function DashboardPage() {
               hasOriginalPreview={hasOriginalPreview}
               parseFailureHint={parseFailureHint}
               retryingParse={retryingVersionId === selectedVersion.id}
+              hasSavedSettings={Boolean(selectedResume?.interviewSettings)}
               onPreviewModeChange={setPreviewMode}
               onRetryParse={handleRetryParse}
+              onOpenSettings={handleOpenSettings}
               onStartInterview={handleStartInterview}
               editing={editing}
               savingEdit={savingEdit}
@@ -538,13 +562,18 @@ export default function DashboardPage() {
         }}
       />
 
-      {selectedVersion && parsed ? (
+      {selectedResumeId && selectedVersion && parsed ? (
         <InterviewSettingsDialog
-          key={selectedVersion.id}
+          key={`${selectedResumeId}-${selectedVersion.id}-${interviewSettingsMode}`}
           open={interviewSettingsOpen}
           onOpenChange={setInterviewSettingsOpen}
+          mode={interviewSettingsMode}
+          resumeId={selectedResumeId}
           resumeVersionId={selectedVersion.id}
-          defaultTargetRole={parsed.title}
+          defaultTargetRole={parsed.title || selectedResume?.title || ""}
+          savedSettings={selectedResume?.interviewSettings}
+          onSettingsSaved={handleSettingsSaved}
+          onSwitchToSettings={() => setInterviewSettingsMode("settings")}
         />
       ) : null}
     </div>
