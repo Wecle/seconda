@@ -9,7 +9,6 @@ import {
   Upload,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { useTranslation } from "@/lib/i18n/context";
 import { DeleteResumeDialog } from "@/components/dashboard/delete-resume-dialog";
 import { ErrorAlertDialog } from "@/components/dashboard/error-alert-dialog";
@@ -24,7 +23,6 @@ import {
 import type { GeneratedResumeDraft } from "@/lib/resume/generation-contract";
 import type { ParsedResume } from "@/lib/resume/types";
 import { InterviewSettingsDialog } from "@/components/interview/interview-settings-dialog";
-import { cn } from "@/lib/utils";
 
 const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
   name: "",

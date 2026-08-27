@@ -4,7 +4,6 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
-  CheckCircle2,
   ChevronRight,
   FileText,
   Folder,
@@ -396,10 +395,12 @@ export function ResumeSidebar({
                                   )}
 
                                   {version.parseStatus === "failed" && (
-                                    <AlertCircle
-                                      className="size-3 text-destructive shrink-0"
+                                    <span
+                                      className="inline-flex shrink-0"
                                       title={t.dashboard.parsingFailed}
-                                    />
+                                    >
+                                      <AlertCircle className="size-3 text-destructive" />
+                                    </span>
                                   )}
 
                                   {version.parseStatus === "parsing" && (

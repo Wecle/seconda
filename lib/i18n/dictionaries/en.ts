@@ -364,6 +364,8 @@ export const en = {
     interviewMaintenance: "The interview system is under maintenance. Please try again later.",
     configureFirst: "Configure Settings First",
     interviewHistory: "Interview History",
+    interviewRecords: "Interview History",
+    versionsCount: "versions",
     noInterviews: "No interviews yet",
     sessionDuration: "Duration",
     interviewScore: "{score}/100",

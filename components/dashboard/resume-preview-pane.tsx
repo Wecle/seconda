@@ -4,7 +4,6 @@ import {
   AlertCircle,
   ArrowRight,
   Briefcase,
-  CheckCircle,
   ChevronRight,
   Code,
   FileText,
@@ -33,7 +32,6 @@ import type {
   ResumeVersion,
 } from "@/components/dashboard/types";
 import { InterviewHistoryDrawer } from "@/components/dashboard/interview-history-drawer";
-import { cn } from "@/lib/utils";
 
 const ResumePdfPreview = dynamic(
   () =>
@@ -326,6 +324,18 @@ export function ResumePreviewPane({
                           "{count}",
                           String(parsed.education.length),
                         )}
+                      </span>
+                    </div>
+                  </>
+                )}
+
+                {highestScore !== null && (
+                  <>
+                    <div className="hidden h-3.5 w-px bg-border sm:block" />
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <Sparkles className="size-3.5 text-amber-500" />
+                      <span>
+                        {t.dashboard.insights.latestScore}: <span className="font-mono font-semibold text-foreground">{highestScore}</span>
                       </span>
                     </div>
                   </>

@@ -356,6 +356,8 @@ export const zh = {
     interviewMaintenance: "面试系统正在维护中，请稍后再试。",
     configureFirst: "请先配置面试设置",
     interviewHistory: "面试记录",
+    interviewRecords: "面试记录",
+    versionsCount: "个版本",
     noInterviews: "暂无面试记录",
     sessionDuration: "时长",
     interviewScore: "{score}/100",
