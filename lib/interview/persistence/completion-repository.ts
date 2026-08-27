@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
 import {
@@ -1325,3 +1325,55 @@ export async function loadInterviewReportData(input: {
     };
   });
 }
+
+export async function claimNextAvailableCompletionJob(input: {
+  database: InterviewDatabase;
+}): Promise<{
+  found: boolean;
+  job?: {
+    id: string;
+    interviewId: string;
+    userId: string;
+  };
+}> {
+  return input.database.transaction(async (tx) => {
+    const now = new Date();
+    const candidateJobs = await tx
+      .select({
+        id: interviewCompletionJobs.id,
+        interviewId: interviewCompletionJobs.interviewId,
+        status: interviewCompletionJobs.status,
+        userId: interviews.userId,
+      })
+      .from(interviewCompletionJobs)
+      .innerJoin(interviews, eq(interviews.id, interviewCompletionJobs.interviewId))
+      .where(
+        or(
+          eq(interviewCompletionJobs.status, "pending"),
+          and(
+            inArray(interviewCompletionJobs.status, ["scoring", "reporting"]),
+            isNotNull(interviewCompletionJobs.claimExpiresAt),
+            lt(interviewCompletionJobs.claimExpiresAt, now),
+          ),
+        ),
+      )
+      .orderBy(asc(interviewCompletionJobs.createdAt), asc(interviewCompletionJobs.id))
+      .limit(1)
+      .for("update", { skipLocked: true });
+
+    const candidate = candidateJobs[0];
+    if (!candidate) {
+      return { found: false };
+    }
+
+    return {
+      found: true,
+      job: {
+        id: candidate.id,
+        interviewId: candidate.interviewId,
+        userId: candidate.userId,
+      },
+    };
+  });
+}
+

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { after } from "next/server";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { executeInterviewTurn } from "@/lib/interview/application/execute-turn";
+import { submitAnswerRateLimiter } from "@/lib/interview/application/rate-limit";
 import { submitInterviewAnswer } from "@/lib/interview/application/submit-answer";
 import { InterviewApplicationError } from "@/lib/interview/domain/errors";
 
@@ -28,6 +29,20 @@ export async function POST(
   if (!userId) return Response.json({ error: "Unauthorized" }, { status: 401 });
   const parsedId = interviewIdSchema.safeParse((await params).id);
   if (!parsedId.success) return Response.json({ error: "Interview not found" }, { status: 404 });
+
+  const limitResult = submitAnswerRateLimiter.check(`${userId}:${parsedId.data}`);
+  if (!limitResult.allowed) {
+    return Response.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(limitResult.retryAfterSeconds ?? 60),
+        },
+      },
+    );
+  }
+
   const idempotencyKey = request.headers.get("Idempotency-Key") ?? "";
   let submitted: Awaited<ReturnType<typeof submitInterviewAnswer>>;
   try {

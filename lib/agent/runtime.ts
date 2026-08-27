@@ -62,13 +62,15 @@ export type AgentRuntimeDependencies = {
 
 export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies) {
   const capability = dependencies.capabilities.resolve(input.capability);
-  const credential = resolveModelCredential(input.model);
-  const provider = dependencies.provider ?? createProviderModel({
-    model: input.model,
-    credentialTier: credential.tier,
-    apiKey: credential.apiKey,
-    responseMode: "conversational",
-  });
+  const provider = dependencies.provider ?? (() => {
+    const credential = resolveModelCredential(input.model);
+    return createProviderModel({
+      model: input.model,
+      credentialTier: credential.tier,
+      apiKey: credential.apiKey,
+      responseMode: "conversational",
+    });
+  })();
   if (capability.skillAllowlist?.length && !dependencies.skills) {
     throw new Error(`Capability ${capability.id} requires a skill registry`);
   }

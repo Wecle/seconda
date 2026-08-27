@@ -9,9 +9,24 @@ import {
 } from "@/lib/interview/domain/create-interview";
 import { InterviewApplicationError } from "@/lib/interview/domain/errors";
 
+import { createInterviewRateLimiter } from "@/lib/interview/application/rate-limit";
+
 export async function POST(request: Request) {
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const limitResult = createInterviewRateLimiter.check(userId);
+  if (!limitResult.allowed) {
+    return NextResponse.json(
+      { error: "Too many requests. Please try again later." },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(limitResult.retryAfterSeconds ?? 60),
+        },
+      },
+    );
+  }
 
   const idempotencyKey = creationIdempotencyKeySchema.safeParse(
     request.headers.get("Idempotency-Key"),

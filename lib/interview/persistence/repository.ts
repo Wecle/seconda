@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { appendAgentEventsInTransaction } from "@/lib/agent/repository";
@@ -1103,4 +1103,58 @@ export async function loadInterviewHistoryEntries(input: {
     count: results.length,
     history: results,
   };
+}
+
+export async function claimNextAvailableInterviewRun(input: {
+  database: InterviewDatabase;
+}): Promise<{
+  found: boolean;
+  run?: {
+    id: string;
+    interviewId: string;
+    userId: string;
+    triggerType: "opening" | "answer" | "skip";
+  };
+}> {
+  return input.database.transaction(async (tx) => {
+    const now = new Date();
+    const candidateRuns = await tx
+      .select({
+        id: interviewAgentRuns.id,
+        interviewId: interviewAgentRuns.interviewId,
+        triggerType: interviewAgentRuns.triggerType,
+        status: interviewAgentRuns.status,
+        userId: interviews.userId,
+      })
+      .from(interviewAgentRuns)
+      .innerJoin(interviews, eq(interviews.id, interviewAgentRuns.interviewId))
+      .where(
+        or(
+          eq(interviewAgentRuns.status, "queued"),
+          and(
+            eq(interviewAgentRuns.status, "running"),
+            isNotNull(interviewAgentRuns.leaseExpiresAt),
+            lt(interviewAgentRuns.leaseExpiresAt, now),
+          ),
+        ),
+      )
+      .orderBy(asc(interviewAgentRuns.createdAt), asc(interviewAgentRuns.id))
+      .limit(1)
+      .for("update", { skipLocked: true });
+
+    const candidate = candidateRuns[0];
+    if (!candidate) {
+      return { found: false };
+    }
+
+    return {
+      found: true,
+      run: {
+        id: candidate.id,
+        interviewId: candidate.interviewId,
+        userId: candidate.userId,
+        triggerType: candidate.triggerType as "opening" | "answer" | "skip",
+      },
+    };
+  });
 }
