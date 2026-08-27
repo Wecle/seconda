@@ -23,15 +23,159 @@ export const zh = {
     export: "导出",
   },
   landing: {
-    badge: "AI 驱动的模拟面试",
-    heroTitle1: "每一次面试，",
-    heroTitle2: "都是一次跃迁",
+    badge: "AI 驱动的高拟真模拟面试 Agent",
+    heroTitle1: "每一次深度对练，",
+    heroTitle2: "都是一次职业跃迁",
     heroDescription:
-      "基于简历的定制化面试、结构化评分与 AI 深度反馈，助你在真实面试中脱颖而出",
-    startButton: "开始模拟面试",
-    learnMore: "了解更多",
+      "基于简历真实事实锚定、自适应多轮追问与六维能力模型，彻底告别模板化八股文，助你在真实顶级面试中从容胜出。",
+    startButton: "开启模拟面试",
+    learnMore: "探索核心能力",
     startUsing: "开始使用",
-    freeStart: "免费开始",
+    freeStart: "立即免费体验",
+    stats: {
+      grounded: { value: "100%", label: "简历事实锚定" },
+      dimensions: { value: "6 维", label: "结构化全维评估" },
+      scoring: { value: "0–100", label: "确定性量化总分" },
+      speed: { value: "实时", label: "自适应连续追问" },
+    },
+    heroMockup: {
+      interviewerRole: "资深技术专家 / AI 面试官",
+      candidateRole: "候选人 · 前端架构师",
+      statusLive: "实时面试中 · 第 2/5 轮",
+      questionExcerpt:
+        "“在你的简历中提到曾重构核心状态流并降低 40% 渲染耗时，能谈谈在复杂嵌套组件树下，你如何设计状态边界以避免级联渲染吗？”",
+      resumeContextTitle: "简历锚定上下文",
+      resumeContextSnippet:
+        "主导重构核心交易链路前端架构，通过原子状态拆分与细粒度订阅将重渲染耗时降低 40%...",
+      scoreTitle: "即时维度评分",
+      overallScore: "8.8",
+      dimensions: {
+        logic: "逻辑性 9.0",
+        depth: "深度 8.5",
+        authenticity: "真实性 9.0",
+      },
+      waveformLive: "实时语音输入中...",
+      thinkingState: "AI 面试官正在基于回答进行深度分析...",
+    },
+    bento: {
+      badge: "核心优势",
+      title: "告别模板化八股文，开启真正的深度对练",
+      subtitle:
+        "从简历事实深度解析到自适应多轮追问，每一处细节皆为还原真实顶级面试现场。",
+      card1: {
+        tag: "简历事实锚定",
+        title: "精准定位你的真实项目与技术决策",
+        description:
+          "AI 深度解析 PDF 或结构化事实，拒绝泛泛而谈，针对你亲历的项目难点、技术选型与性能指标层层剖析。",
+        previewTag1: "微前端架构演进",
+        previewTag2: "分布式状态治理",
+        previewQuestion:
+          "面试官提问：在面对高并发流量突发时，你的重试熔断策略是如何做容量保护的？",
+      },
+      card2: {
+        tag: "六维评分模型",
+        title: "理解力、表达力、逻辑性等 6 维量化",
+        description:
+          "每一道回答均由确定性算法加权计算，杜绝模糊评价，提供明确且可落地的针对性改进建议。",
+      },
+      card3: {
+        tag: "自适应 Agent 追问",
+        title: "像顶级面试官一样发现破绽并持续深挖",
+        description:
+          "针对回答中模糊不清或一笔带过的部分，Agent 会立即发起精准追问，检验你的底层理解与实战功底。",
+        interviewerPill: "AI 追问",
+        followupText:
+          "“刚才提到了乐观更新机制，如果在弱网或并发写冲突时，客户端的具体回滚与补偿策略是什么？”",
+      },
+      card4: {
+        tag: "多元面试官风格",
+        title: "灵活切换友好型、标准型与高压测试",
+        description:
+          "自由调节面试难度、岗位偏好与面试官性格，全方位淬炼你的临场应变能力与心理素质。",
+      },
+    },
+    dimensions: {
+      badge: "评估模型",
+      title: "严谨科学的六维综合评估矩阵",
+      subtitle:
+        "不仅告诉你‘对不对’，更让你明白‘如何答得更有深度、结构与说服力’。",
+      items: [
+        {
+          key: "understanding",
+          name: "理解力",
+          enName: "Understanding",
+          desc: "是否精准捕捉问题核心与隐含考点，避免答非所问与概念偏航",
+          score: 9.2,
+        },
+        {
+          key: "expression",
+          name: "表达力",
+          enName: "Expression",
+          desc: "语言是否精炼流畅，能否用准确的技术术语清晰呈现复杂架构",
+          score: 8.8,
+        },
+        {
+          key: "logic",
+          name: "逻辑性",
+          enName: "Logic",
+          desc: "论述是否有条理，是否采用 STAR 法则或总分总等严密推演结构",
+          score: 9.0,
+        },
+        {
+          key: "depth",
+          name: "深度",
+          enName: "Depth",
+          desc: "是否触及底层原理、边界条件、性能瓶颈与架构权衡思考",
+          score: 8.5,
+        },
+        {
+          key: "authenticity",
+          name: "真实性",
+          enName: "Authenticity",
+          desc: "是否基于真实项目实践与亲身经历，具备具体细节与量化数据佐证",
+          score: 9.5,
+        },
+        {
+          key: "reflection",
+          name: "反思力",
+          enName: "Reflection",
+          desc: "是否具备事后复盘、技术迭代、方案反思与自我进化的认知习惯",
+          score: 8.7,
+        },
+      ],
+    },
+    journey: {
+      badge: "训练流程",
+      title: "闭环沉浸式训练，4 步达成实战质变",
+      subtitle:
+        "从简历输入到深度复盘，构建可复现的高分面试习惯与思维框架。",
+      steps: [
+        {
+          step: "01",
+          title: "智能解析简历",
+          desc: "上传 PDF 简历或输入真实履历事实，AI 秒级提炼技术栈与项目亮点，构建知识图谱。",
+          badge: "PDF / Facts",
+        },
+        {
+          step: "02",
+          title: "个性化配置",
+          desc: "定制目标职级、技术偏好（项目深挖/基础夯实/行为面试）、多语言与面试官风格。",
+          badge: "Settings",
+        },
+        {
+          step: "03",
+          title: "Agent 实战模拟",
+          desc: "沉浸式对练，支持富文本/语音输入，自适应多轮追问直击技术盲区与思维漏洞。",
+          badge: "Live Agent",
+        },
+        {
+          step: "04",
+          title: "深度复盘报告",
+          desc: "查看六维雷达图与逐题评分，开启教练模式学习标准答案结构与常见误区。",
+          badge: "Debrief Report",
+        },
+      ],
+    },
     featuresTitle: "为面试者精心设计",
     features: [
       {
@@ -69,8 +213,9 @@ export const zh = {
         description: "获取详细评分报告和针对性改进建议",
       },
     ],
-    ctaTitle: "准备好了吗？",
-    ctaDescription: "现在就开始你的第一场模拟面试",
+    ctaTitle: "准备好在下一次面试中惊艳全场了吗？",
+    ctaDescription: "立即导入你的简历，开启你的第一场 AI 模拟深度对练。",
+    ctaHint: "无需繁琐绑定 · 即开即练 · 专属隐私保障",
     footer: {
       copyright: "© 2026 Seconda. All rights reserved.",
       privacy: "隐私政策",

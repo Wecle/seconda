@@ -23,15 +23,159 @@ export const en = {
     export: "Export",
   },
   landing: {
-    badge: "AI-Powered Mock Interview",
-    heroTitle1: "Every interview,",
-    heroTitle2: "a leap forward",
+    badge: "AI-Powered High-Fidelity Mock Interview Agent",
+    heroTitle1: "Every high-stakes session,",
+    heroTitle2: "a career breakthrough",
     heroDescription:
-      "Customized interviews based on your resume, structured scoring and AI deep feedback to help you stand out in real interviews",
+      "Grounded in your real resume, guided by adaptive multi-turn probing, and calibrated on a 6-dimension evaluation rubric. No generic trivia—just authentic interview mastery.",
     startButton: "Start Mock Interview",
-    learnMore: "Learn More",
+    learnMore: "Explore Capabilities",
     startUsing: "Get Started",
-    freeStart: "Start Free",
+    freeStart: "Try For Free",
+    stats: {
+      grounded: { value: "100%", label: "Resume Grounded" },
+      dimensions: { value: "6-Dim", label: "Competency Matrix" },
+      scoring: { value: "0–100", label: "Deterministic Score" },
+      speed: { value: "Live", label: "Adaptive Follow-ups" },
+    },
+    heroMockup: {
+      interviewerRole: "Staff Tech Lead / AI Interviewer",
+      candidateRole: "Candidate · Frontend Architect",
+      statusLive: "Live Session · Round 2/5",
+      questionExcerpt:
+        "“In your resume, you noted restructuring core state flows to reduce render latency by 40%. In deeply nested component trees, how did you design state boundaries to prevent cascading re-renders?”",
+      resumeContextTitle: "Resume Grounded Context",
+      resumeContextSnippet:
+        "Led refactoring of core checkout UI architecture, splitting atomic state slices and fine-grained subscriptions to reduce re-rendering latency by 40%...",
+      scoreTitle: "Real-Time Competency Score",
+      overallScore: "8.8",
+      dimensions: {
+        logic: "Logic 9.0",
+        depth: "Depth 8.5",
+        authenticity: "Authenticity 9.0",
+      },
+      waveformLive: "Live audio input active...",
+      thinkingState: "AI interviewer analyzing candidate response...",
+    },
+    bento: {
+      badge: "Core Capabilities",
+      title: "Beyond Generic Questions: True Deep-Dive Practice",
+      subtitle:
+        "From resume fact extraction to continuous adaptive follow-ups, engineered to mirror high-bar engineering interviews.",
+      card1: {
+        tag: "Resume Fact Grounding",
+        title: "Targeting your actual architecture & trade-offs",
+        description:
+          "AI extracts deep facts from your PDF or verified inputs. No shallow trivia—every question scrutinizes your real system constraints and engineering choices.",
+        previewTag1: "Micro-Frontend Evolution",
+        previewTag2: "Distributed State Governance",
+        previewQuestion:
+          "Interviewer: Under burst traffic spikes, how did your circuit breaker strategy protect downstream service capacity?",
+      },
+      card2: {
+        tag: "6-Dimension Scoring Model",
+        title: "Quantified across Understanding, Expression, Logic & more",
+        description:
+          "Every response is deterministically evaluated across 6 dimensions with zero hand-waving, providing actionable feedback to level up your answers.",
+      },
+      card3: {
+        tag: "Adaptive Agent Follow-ups",
+        title: "Catches ambiguities and probes deeper like a real lead",
+        description:
+          "Vague assertions or hand-waving explanations trigger instant contextual follow-up challenges to test your foundational depth.",
+        interviewerPill: "AI Follow-up",
+        followupText:
+          "“You mentioned optimistic UI updates—in case of concurrent write conflicts or packet loss, what was your exact rollback and reconciliation strategy?”",
+      },
+      card4: {
+        tag: "Interviewer Persona Sandbox",
+        title: "Switch between Friendly, Standard, and Stress testing",
+        description:
+          "Freely configure interviewer temperament, target seniority, and domain preferences to test your composure under pressure.",
+      },
+    },
+    dimensions: {
+      badge: "Evaluation Model",
+      title: "Rigorous 6-Dimension Evaluation Matrix",
+      subtitle:
+        "Not just whether you're correct, but how to structure your response with depth, clarity, and authority.",
+      items: [
+        {
+          key: "understanding",
+          name: "理解力",
+          enName: "Understanding",
+          desc: "Did the candidate accurately grasp core requirements and unstated edge conditions?",
+          score: 9.2,
+        },
+        {
+          key: "expression",
+          name: "表达力",
+          enName: "Expression",
+          desc: "Is articulation concise, fluid, and backed by accurate domain terminology?",
+          score: 8.8,
+        },
+        {
+          key: "logic",
+          name: "逻辑性",
+          enName: "Logic",
+          desc: "Is reasoning structured coherently using frameworks like STAR or top-down deduction?",
+          score: 9.0,
+        },
+        {
+          key: "depth",
+          name: "深度",
+          enName: "Depth",
+          desc: "Does the answer address underlying mechanisms, trade-offs, and boundary cases?",
+          score: 8.5,
+        },
+        {
+          key: "authenticity",
+          name: "真实性",
+          enName: "Authenticity",
+          desc: "Is it grounded in genuine engineering experience with specific metrics and lessons?",
+          score: 9.5,
+        },
+        {
+          key: "reflection",
+          name: "反思力",
+          enName: "Reflection",
+          desc: "Does the candidate demonstrate self-awareness, post-mortem insights, and growth?",
+          score: 8.7,
+        },
+      ],
+    },
+    journey: {
+      badge: "Workflow",
+      title: "Closed-Loop Training: 4 Steps to Interview Mastery",
+      subtitle:
+        "From resume ingestion to deep coaching, build repeatable high-scoring interview reflexes.",
+      steps: [
+        {
+          step: "01",
+          title: "Resume Ingestion",
+          desc: "Upload PDF or input verified facts. AI builds an experience graph and extracts tech stack highlights in seconds.",
+          badge: "PDF / Facts",
+        },
+        {
+          step: "02",
+          title: "Custom Setup",
+          desc: "Customize target level, question count, language (ZH/EN/ES/DE), focus domain, and interviewer persona.",
+          badge: "Settings",
+        },
+        {
+          step: "03",
+          title: "Live Agent Session",
+          desc: "Engage in continuous dialogue via rich text or speech with real-time adaptive follow-up probing.",
+          badge: "Live Agent",
+        },
+        {
+          step: "04",
+          title: "Comprehensive Debrief",
+          desc: "Review radar charts, per-question dimension scores, and enter coach mode for model answers.",
+          badge: "Debrief Report",
+        },
+      ],
+    },
     featuresTitle: "Designed for Interviewees",
     features: [
       {
@@ -73,8 +217,9 @@ export const en = {
           "Get detailed scoring report and targeted improvement suggestions",
       },
     ],
-    ctaTitle: "Ready?",
-    ctaDescription: "Start your first mock interview now",
+    ctaTitle: "Ready to Ace Your Next High-Stakes Interview?",
+    ctaDescription: "Import your resume and start your first resume-grounded AI mock interview today.",
+    ctaHint: "No friction setup · Instant practice · Full privacy protection",
     footer: {
       copyright: "© 2026 Seconda. All rights reserved.",
       privacy: "Privacy Policy",

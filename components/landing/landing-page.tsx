@@ -1,18 +1,17 @@
 "use client";
 
 import Link from "next/link";
-import { FileText, Brain, Target, ArrowRight } from "lucide-react";
+import { ArrowRight, Sparkles, Zap } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { AuthRequiredLink } from "@/components/auth/auth-required-link";
 import { BrandIcon } from "@/components/brand/brand-icon";
 import { StartInterviewButton } from "@/components/auth/start-interview-button";
 import { UserAvatarMenu } from "@/components/auth/user-avatar-menu";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
-
-const featureIcons = [FileText, Brain, Target];
-const stepNumbers = ["01", "02", "03", "04"];
+import { HeroMockup } from "@/components/landing/hero-mockup";
+import { BentoFeatures } from "@/components/landing/bento-features";
+import { DimensionMatrix } from "@/components/landing/dimension-matrix";
+import { InteractiveJourney } from "@/components/landing/interactive-journey";
 
 interface LandingPageProps {
   isAuthenticated: boolean;
@@ -25,193 +24,279 @@ interface LandingPageProps {
 
 export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) {
   const { t } = useTranslation();
+  const landing = t.landing;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-background text-foreground selection:bg-primary/20 selection:text-primary">
       {/* Navigation */}
-      <nav className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-xl">
+      <nav className="sticky top-0 z-50 border-b border-border/80 bg-background/80 backdrop-blur-xl transition-all">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <Link
             href="/"
-            className="flex items-center gap-2 text-xl font-bold tracking-tight"
+            className="flex items-center gap-2.5 text-lg font-bold tracking-tight text-foreground transition-opacity hover:opacity-90"
           >
             <BrandIcon size={28} priority />
-            <span>Seconda</span>
+            <span className="font-sans font-bold">Seconda</span>
           </Link>
-          <div className="flex items-center gap-6">
+
+          {/* Center Navigation Links (Hidden on small screens) */}
+          <div className="hidden md:flex items-center gap-8 text-sm font-medium text-muted-foreground">
+            <Link
+              href="#features"
+              className="transition-colors hover:text-foreground"
+            >
+              {landing.bento.badge}
+            </Link>
+            <Link
+              href="#dimensions"
+              className="transition-colors hover:text-foreground"
+            >
+              {landing.dimensions.badge}
+            </Link>
+            <Link
+              href="#journey"
+              className="transition-colors hover:text-foreground"
+            >
+              {landing.journey.badge}
+            </Link>
+          </div>
+
+          {/* Right Action Menu */}
+          <div className="flex items-center gap-4 sm:gap-5">
             <LanguageSwitcher />
+
             {isAuthenticated && currentUser ? (
               <UserAvatarMenu user={currentUser} />
             ) : (
               <AuthRequiredLink
                 isAuthenticated={false}
                 href="/dashboard"
-                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+                className="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
               >
                 {t.common.login}
               </AuthRequiredLink>
             )}
-            <StartInterviewButton isAuthenticated={isAuthenticated} size="sm">
-              {t.landing.startUsing}
+
+            <StartInterviewButton
+              isAuthenticated={isAuthenticated}
+              size="sm"
+              className="font-medium shadow-xs transition-transform active:scale-[0.98]"
+            >
+              {landing.startUsing}
             </StartInterviewButton>
           </div>
         </div>
       </nav>
 
-      {/* Hero */}
-      <section className="relative overflow-hidden">
+      {/* Hero Section */}
+      <section className="relative overflow-hidden pt-20 pb-24 sm:pt-28 sm:pb-32">
+        {/* Background Ambient Mesh & Radial Glow */}
         <div
-          className="pointer-events-none absolute inset-0"
+          className="pointer-events-none absolute inset-0 -z-10 overflow-hidden"
           aria-hidden="true"
         >
-          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[600px] w-[600px] rounded-full bg-primary/[0.06] blur-[120px]" />
+          <div className="absolute left-1/2 -top-[100px] -translate-x-1/2 h-[500px] w-[800px] rounded-full bg-gradient-to-tr from-primary/15 via-blue-500/10 to-indigo-500/10 blur-[130px]" />
           <div
             className="absolute inset-0 opacity-[0.03]"
             style={{
               backgroundImage:
                 "radial-gradient(circle, currentColor 1px, transparent 1px)",
-              backgroundSize: "32px 32px",
+              backgroundSize: "36px 36px",
             }}
           />
         </div>
 
-        <div className="relative mx-auto flex max-w-4xl flex-col items-center px-6 py-32 text-center">
-          <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/[0.05] px-4 py-1.5 text-sm text-primary">
-            <span
-              className="inline-block h-1.5 w-1.5 rounded-full bg-primary"
-              aria-hidden="true"
-            />
-            {t.landing.badge}
+        <div className="mx-auto flex max-w-5xl flex-col items-center px-6 text-center">
+          {/* Badge */}
+          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/25 bg-primary/[0.06] px-4 py-1.5 text-xs font-semibold text-primary shadow-xs backdrop-blur-md">
+            <Sparkles className="size-3.5 animate-pulse" />
+            <span>{landing.badge}</span>
           </div>
 
-          <h1 className="text-5xl font-bold tracking-tight md:text-6xl lg:text-7xl">
-            {t.landing.heroTitle1}
+          {/* Main Display Headline (Banned narrow multi-line wrap, wide typography) */}
+          <h1 className="text-4xl font-extrabold tracking-tight sm:text-5xl md:text-6xl lg:text-7xl leading-[1.12] text-balance">
+            {landing.heroTitle1}
             <br />
-            <span className="text-primary">{t.landing.heroTitle2}</span>
+            <span className="bg-gradient-to-r from-primary via-blue-600 to-indigo-600 bg-clip-text text-transparent">
+              {landing.heroTitle2}
+            </span>
           </h1>
 
-          <p className="mt-6 max-w-2xl text-lg leading-relaxed text-muted-foreground">
-            {t.landing.heroDescription}
+          {/* Subtitle */}
+          <p className="mt-6 max-w-2xl text-base sm:text-lg leading-relaxed text-muted-foreground text-balance">
+            {landing.heroDescription}
           </p>
 
-          <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+          {/* CTA with tactile feedback */}
+          <div className="mt-10 flex items-center justify-center">
             <StartInterviewButton
               isAuthenticated={isAuthenticated}
               size="lg"
-              className="gap-2 px-6"
+              className="gap-2 px-8 text-base font-semibold shadow-lg shadow-primary/25 transition-all duration-200 hover:shadow-primary/35 hover:-translate-y-0.5 active:scale-[0.98]"
             >
-              {t.landing.startButton}
-              <ArrowRight className="size-4" />
+              {landing.startButton}
+              <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
             </StartInterviewButton>
-            <Button asChild variant="outline" size="lg" className="px-6">
-              <Link href="#features">{t.landing.learnMore}</Link>
-            </Button>
+          </div>
+
+          {/* Trust / Quantitative Metrics Bar */}
+          <div className="mt-14 grid w-full max-w-3xl grid-cols-2 gap-4 rounded-2xl border border-border/80 bg-card/60 p-4 backdrop-blur-md sm:grid-cols-4">
+            <div className="flex flex-col items-center p-2">
+              <span className="font-mono text-2xl font-black text-foreground">
+                {landing.stats.grounded.value}
+              </span>
+              <span className="text-xs text-muted-foreground mt-0.5">
+                {landing.stats.grounded.label}
+              </span>
+            </div>
+            <div className="flex flex-col items-center p-2 border-l border-border/50 sm:border-l">
+              <span className="font-mono text-2xl font-black text-foreground">
+                {landing.stats.dimensions.value}
+              </span>
+              <span className="text-xs text-muted-foreground mt-0.5">
+                {landing.stats.dimensions.label}
+              </span>
+            </div>
+            <div className="flex flex-col items-center p-2 border-t border-border/50 sm:border-t-0 sm:border-l">
+              <span className="font-mono text-2xl font-black text-foreground">
+                {landing.stats.scoring.value}
+              </span>
+              <span className="text-xs text-muted-foreground mt-0.5">
+                {landing.stats.scoring.label}
+              </span>
+            </div>
+            <div className="flex flex-col items-center p-2 border-t border-l border-border/50 sm:border-t-0">
+              <span className="font-mono text-2xl font-black text-foreground">
+                {landing.stats.speed.value}
+              </span>
+              <span className="text-xs text-muted-foreground mt-0.5">
+                {landing.stats.speed.label}
+              </span>
+            </div>
           </div>
         </div>
-      </section>
 
-      {/* Features */}
-      <section id="features" className="mx-auto max-w-6xl px-6 py-24">
-        <h2 className="mb-16 text-center text-3xl font-bold tracking-tight">
-          {t.landing.featuresTitle}
-        </h2>
-        <div className="grid gap-6 md:grid-cols-3">
-          {t.landing.features.map((feature, i) => {
-            const Icon = featureIcons[i];
-            return (
-              <div
-                key={i}
-                className="group rounded-xl border bg-card p-8 transition-all duration-300 hover:-translate-y-1 hover:shadow-lg"
-              >
-                <div className="mb-5 flex h-11 w-11 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors duration-300 group-hover:bg-primary group-hover:text-primary-foreground">
-                  <Icon className="size-5" />
-                </div>
-                <h3 className="mb-2 text-lg font-semibold">{feature.title}</h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {feature.description}
-                </p>
-              </div>
-            );
-          })}
+        {/* Hero Mockup Live Preview */}
+        <div className="mt-16 sm:mt-20 px-4 sm:px-6">
+          <HeroMockup />
         </div>
       </section>
 
-      {/* How it works */}
-      <section className="bg-card py-24">
-        <div className="mx-auto max-w-6xl px-6">
-          <h2 className="mb-16 text-center text-3xl font-bold tracking-tight">
-            {t.landing.stepsTitle}
-          </h2>
-          <div className="grid gap-px overflow-hidden rounded-2xl border bg-border md:grid-cols-4">
-            {t.landing.steps.map((step, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "relative bg-card p-8 transition-colors hover:bg-accent/50",
-                )}
-              >
-                <span className="mb-4 block font-mono text-3xl font-bold text-primary/25">
-                  {stepNumbers[i]}
-                </span>
-                <h3 className="mb-2 font-semibold">{step.title}</h3>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  {step.description}
-                </p>
-                {i < t.landing.steps.length - 1 && (
-                  <ArrowRight className="absolute right-4 top-8 hidden size-4 text-muted-foreground/40 md:block" />
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* Asymmetric Bento Features */}
+      <BentoFeatures />
 
-      {/* CTA */}
-      <section className="py-24">
-        <div className="relative mx-auto max-w-6xl px-6">
-          <div className="relative overflow-hidden rounded-2xl border bg-card px-8 py-16 text-center">
+      {/* 6-Dimension Score Matrix */}
+      <div id="dimensions">
+        <DimensionMatrix />
+      </div>
+
+      {/* Interactive 4-Step Journey */}
+      <div id="journey">
+        <InteractiveJourney />
+      </div>
+
+      {/* Magnetic High-Contrast CTA Section */}
+      <section className="py-24 sm:py-32 relative">
+        <div className="mx-auto max-w-5xl px-6">
+          <div className="relative overflow-hidden rounded-3xl border border-primary/30 bg-gradient-to-b from-card via-card/95 to-card p-8 sm:p-14 text-center shadow-2xl">
+            {/* Ambient inner glow */}
             <div
-              className="pointer-events-none absolute inset-0"
+              className="pointer-events-none absolute inset-0 -z-10"
               aria-hidden="true"
             >
-              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[300px] w-[500px] rounded-full bg-primary/[0.05] blur-[80px]" />
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[350px] w-[500px] rounded-full bg-primary/10 blur-[90px]" />
             </div>
-            <div className="relative">
-              <h2 className="text-3xl font-bold tracking-tight">
-                {t.landing.ctaTitle}
+
+            <div className="relative mx-auto max-w-2xl space-y-4">
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1 text-xs font-semibold text-primary">
+                <Zap className="size-3.5" />
+                <span>立即开始实战对练</span>
+              </div>
+
+              <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl lg:text-5xl text-balance">
+                {landing.ctaTitle}
               </h2>
-              <p className="mt-3 text-muted-foreground">
-                {t.landing.ctaDescription}
+
+              <p className="text-base sm:text-lg text-muted-foreground leading-relaxed text-balance">
+                {landing.ctaDescription}
               </p>
-              <div className="mt-8">
+
+              <div className="pt-4 flex flex-col sm:flex-row items-center justify-center gap-4">
                 <StartInterviewButton
                   isAuthenticated={isAuthenticated}
                   size="lg"
-                  className="gap-2 px-8"
+                  className="gap-2 px-8 text-base font-semibold shadow-lg shadow-primary/25 transition-all duration-200 hover:shadow-primary/35 hover:-translate-y-0.5 active:scale-[0.98]"
                 >
-                  {t.landing.freeStart}
+                  {landing.freeStart}
                   <ArrowRight className="size-4" />
                 </StartInterviewButton>
               </div>
+
+              <p className="text-xs text-muted-foreground/80 pt-2">
+                {landing.ctaHint}
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t py-8">
-        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 text-sm text-muted-foreground md:flex-row">
-          <p>{t.landing.footer.copyright}</p>
-          <div className="flex gap-6">
-            <Link href="#" className="transition-colors hover:text-foreground">
-              {t.landing.footer.privacy}
+      {/* Polished Footer */}
+      <footer className="border-t border-border/80 bg-card/40 py-12">
+        <div className="mx-auto max-w-6xl px-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-6 pb-8 border-b border-border/50">
+            <Link
+              href="/"
+              className="flex items-center gap-2.5 text-base font-bold text-foreground"
+            >
+              <BrandIcon size={24} />
+              <span>Seconda</span>
             </Link>
-            <Link href="#" className="transition-colors hover:text-foreground">
-              {t.landing.footer.terms}
-            </Link>
-            <Link href="#" className="transition-colors hover:text-foreground">
-              {t.landing.footer.contact}
-            </Link>
+
+            <div className="flex flex-wrap items-center justify-center gap-8 text-xs sm:text-sm text-muted-foreground">
+              <Link
+                href="#features"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.bento.badge}
+              </Link>
+              <Link
+                href="#dimensions"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.dimensions.badge}
+              </Link>
+              <Link
+                href="#journey"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.journey.badge}
+              </Link>
+              <Link
+                href="#"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.footer.privacy}
+              </Link>
+              <Link
+                href="#"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.footer.terms}
+              </Link>
+              <Link
+                href="#"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.footer.contact}
+              </Link>
+            </div>
+          </div>
+
+          <div className="mt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-muted-foreground">
+            <p>{landing.footer.copyright}</p>
+            <p className="font-mono text-[11px]">
+              Engineered with Impeccable & Taste Standards
+            </p>
           </div>
         </div>
       </footer>
