@@ -1075,8 +1075,14 @@ async function runMigration(sql: postgres.Sql) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_reports_interview
     ON interview_reports(interview_id)
   `;
+  await sql`DROP VIEW IF EXISTS ai_interview_observability CASCADE`;
+  await sql`DROP VIEW IF EXISTS ai_failure_summary CASCADE`;
+  await sql`DROP VIEW IF EXISTS ai_cache_efficiency CASCADE`;
+  await sql`DROP VIEW IF EXISTS ai_completion_health CASCADE`;
+  await sql`DROP VIEW IF EXISTS ai_budget_warnings CASCADE`;
+  await sql`DROP VIEW IF EXISTS ai_slow_operations CASCADE`;
   await sql`
-    CREATE OR REPLACE VIEW ai_slow_operations AS
+    CREATE VIEW ai_slow_operations AS
     SELECT
       runs.id AS task_run_id,
       attempts.id AS attempt_id,
