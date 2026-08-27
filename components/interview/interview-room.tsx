@@ -6,11 +6,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
-  Bot,
   BrainCircuit,
   CheckCircle2,
-  ChevronRight,
+  ChevronDown,
   FileBarChart2,
+  Lightbulb,
   Loader2,
   Puzzle,
   RotateCcw,
@@ -21,6 +21,7 @@ import {
   UserRound,
 } from "lucide-react";
 import { UserAvatarMenu, type UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
+import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -41,42 +42,150 @@ function reasoningSummary(text: string, running: boolean) {
 }
 
 function ReasoningRow({ text, running }: { text: string; running: boolean }) {
+  const [userToggled, setUserToggled] = useState<boolean | null>(null);
+  const expanded = userToggled !== null ? userToggled : running;
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (running && scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+    }
+  }, [text, running]);
+
   return (
-    <article className="flex gap-3">
-      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
-        <Bot className="size-4" />
+    <article className="flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300">
+      {/* Brain Icon Avatar */}
+      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-muted-foreground/20 to-muted-foreground/10 text-foreground ring-1 ring-border/80">
+        <BrainCircuit className={running ? "size-4 text-primary animate-pulse" : "size-4 text-primary"} />
       </div>
-      <details className="group min-w-0 max-w-[85%] text-muted-foreground">
-        <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 overflow-hidden rounded-md py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-          <BrainCircuit className={running ? "size-3.5 shrink-0 animate-pulse motion-reduce:animate-none" : "size-3.5 shrink-0"} />
-          <span className="shrink-0">Think</span>
-          <span aria-hidden className="size-0.5 shrink-0 rounded-full bg-muted-foreground/50" />
-          <span className="min-w-0 flex-1 truncate text-xs">{reasoningSummary(text, running)}</span>
-          <ChevronRight className="size-3.5 shrink-0 transition-transform motion-reduce:transition-none group-open:rotate-90" />
-        </summary>
-        <div className="ml-[1.35rem] whitespace-pre-wrap break-words border-l pl-3 text-xs leading-5 [overflow-wrap:anywhere]">
-          {text}
+
+      <div className="min-w-0 max-w-[90%] flex-1">
+        <div className="overflow-hidden rounded-xl border border-border/70 bg-card/60 shadow-2xs transition-all hover:border-border">
+          <button
+            type="button"
+            onClick={() => setUserToggled(!expanded)}
+            className="flex w-full cursor-pointer items-center justify-between gap-2.5 px-3.5 py-2 text-left text-xs transition-colors hover:bg-muted/40"
+          >
+            <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden text-muted-foreground">
+              <span
+                className={`size-2 shrink-0 rounded-full bg-primary ${
+                  running ? "animate-ping" : "opacity-80"
+                }`}
+              />
+              <span className="shrink-0 font-medium text-foreground/80">
+                {running ? "思考中" : "思考链路"}
+              </span>
+
+              {/* Summary text with smooth downward glide */}
+              <div
+                className={`flex min-w-0 flex-1 items-center gap-1.5 transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                  expanded
+                    ? "pointer-events-none translate-y-3.5 opacity-0"
+                    : "translate-y-0 opacity-100"
+                }`}
+              >
+                <span aria-hidden="true" className="size-0.5 shrink-0 rounded-full bg-muted-foreground/50" />
+                <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground/80">
+                  {reasoningSummary(text, running)}
+                </span>
+              </div>
+            </div>
+            <ChevronDown
+              className={`size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-350 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                expanded ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+
+          <div
+            className={`grid transition-[grid-template-rows,opacity] duration-350 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+              expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+            }`}
+          >
+            <div className="overflow-hidden">
+              <div className="border-t border-border/50 bg-muted/20 px-3.5 py-2.5">
+                <div
+                  ref={scrollContainerRef}
+                  className={`max-h-64 overflow-y-auto overscroll-contain border-l-2 border-primary/40 pl-3 pr-1 font-mono text-[12px] leading-relaxed text-muted-foreground whitespace-pre-wrap break-words [overflow-wrap:anywhere] transition-all duration-400 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                    expanded ? "translate-y-0 opacity-100" : "-translate-y-3.5 opacity-0"
+                  }`}
+                >
+                  {text}
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-      </details>
+      </div>
     </article>
+  );
+}
+
+function QuestionTipCard({ tip }: { tip: string }) {
+  const [expanded, setExpanded] = useState(true);
+  const { t } = useTranslation();
+
+  return (
+    <div className="mt-3.5 pt-3 border-t border-border/60">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full cursor-pointer items-center justify-between gap-2 text-xs font-medium text-amber-700 dark:text-amber-400 hover:opacity-80 transition-opacity"
+      >
+        <span className="flex items-center gap-1.5">
+          <Lightbulb className="size-3.5" />
+          {t.interview.tip}
+        </span>
+        <ChevronDown
+          className={`size-3.5 transition-transform duration-300 ease-out ${
+            expanded ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+
+      <div
+        className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out ${
+          expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"
+        }`}
+      >
+        <div className="overflow-hidden">
+          <div className="mt-2 rounded-lg bg-amber-500/8 border border-amber-500/20 p-3 text-xs leading-relaxed text-amber-950 dark:text-amber-200 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {tip}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: string }) {
   const failed = phase === "run_failed" || phase === "invalid_state";
-  const pending = phase === "initializing"
-    || phase === "generating_question"
-    || phase === "evaluating_answer"
-    || phase === "completing";
+  const pending =
+    phase === "initializing" ||
+    phase === "generating_question" ||
+    phase === "evaluating_answer" ||
+    phase === "completing";
 
   return (
-    <div className="flex gap-3" role="status" aria-live="polite">
-      <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
-        <Bot className="size-4" />
-      </div>
-      <div className="flex min-h-8 items-center gap-2 text-sm text-muted-foreground">
+    <div className="flex items-center gap-3.5 pl-0.5 animate-in fade-in duration-300" role="status" aria-live="polite">
+      <div className="grid size-8 shrink-0 place-items-center rounded-xl bg-primary/10 text-primary">
         {pending ? <Loader2 className="size-4 animate-spin motion-reduce:animate-none" /> : null}
         {failed ? <AlertCircle className="size-4 text-destructive" /> : null}
+      </div>
+      <div
+        className={`flex items-center gap-2.5 rounded-xl border px-3.5 py-2 text-xs font-medium ${
+          failed
+            ? "border-destructive/30 bg-destructive/5 text-destructive"
+            : "border-primary/20 bg-primary/5 text-primary"
+        }`}
+      >
+        {pending ? (
+          <div className="flex items-center gap-0.5">
+            <span className="size-1 rounded-full bg-primary animate-bounce [animation-delay:-0.3s]" />
+            <span className="size-1 rounded-full bg-primary animate-bounce [animation-delay:-0.15s]" />
+            <span className="size-1 rounded-full bg-primary animate-bounce" />
+          </div>
+        ) : null}
         <span>{label}</span>
       </div>
     </div>
@@ -99,14 +208,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
 
   const lastTranscriptItem = transcript.at(-1);
   const latestIncompleteReasoning = transcript.findLast((item) => item.type === "reasoning" && !item.complete);
-  const lastTranscriptVersion = lastTranscriptItem?.type === "reasoning"
-    ? `${lastTranscriptItem.endSequence}:${lastTranscriptItem.content.length}:${lastTranscriptItem.complete}`
-    : String(lastTranscriptItem?.sequence ?? 0);
-  const progress = room.phase === "completed" || room.phase === "completing"
-    ? 100
-    : room.totalRounds > 0
+  const lastTranscriptVersion =
+    lastTranscriptItem?.type === "reasoning"
+      ? `${lastTranscriptItem.endSequence}:${lastTranscriptItem.content.length}:${lastTranscriptItem.complete}`
+      : String(lastTranscriptItem?.sequence ?? 0);
+
+  const progress =
+    room.phase === "completed" || room.phase === "completing"
+      ? 100
+      : room.totalRounds > 0
       ? Math.max(0, Math.min(100, Math.round(((room.currentRound - 1) / room.totalRounds) * 100)))
       : 0;
+
   const phaseLabels: Record<InterviewRoomPhase, string> = {
     initializing: t.interview.roomPhases.initializing,
     generating_question: t.interview.roomPhases.generatingQuestion,
@@ -156,12 +269,14 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   useEffect(() => {
     if (openingRequestRef.current || (room.phase !== "initializing" && room.phase !== "generating_question")) return;
     openingRequestRef.current = true;
-    fetch(`/api/interviews/${room.interviewId}/opening`, { method: "POST" }).then((response) => {
-      if (!response.ok) throw new Error("Interview opening failed to start");
-    }).catch((error) => {
-      openingRequestRef.current = false;
-      console.error("Failed to start interview opening", error instanceof Error ? error.name : "Unknown error");
-    });
+    fetch(`/api/interviews/${room.interviewId}/opening`, { method: "POST" })
+      .then((response) => {
+        if (!response.ok) throw new Error("Interview opening failed to start");
+      })
+      .catch((error) => {
+        openingRequestRef.current = false;
+        console.error("Failed to start interview opening", error instanceof Error ? error.name : "Unknown error");
+      });
   }, [room.interviewId, room.phase]);
 
   async function submitCurrentAnswer(skipped: boolean) {
@@ -239,19 +354,23 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   }
 
   return (
-    <div className="flex h-dvh min-h-0 flex-col overflow-hidden bg-background">
-      <header className="shrink-0 border-b bg-card">
-        <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
+    <div className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground selection:bg-primary/20">
+      {/* Header */}
+      <header className="sticky top-0 z-20 shrink-0 border-b border-border/80 bg-background/80 backdrop-blur-md">
+        <div className="mx-auto flex h-15 max-w-4xl items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <Link href="/dashboard" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
-              <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
-                <Sparkles className="size-4" />
-              </span>
-              <span className="hidden sm:inline">Seconda</span>
+            <Link
+              href="/dashboard"
+              className="flex shrink-0 items-center gap-2.5 font-semibold tracking-tight transition-opacity hover:opacity-90"
+            >
+              <BrandIcon size={28} priority />
+              <span className="hidden font-bold tracking-tight sm:inline">Seconda</span>
             </Link>
-            <div className="h-6 w-px bg-border" aria-hidden="true" />
+
+            <div className="h-4 w-px bg-border/80" aria-hidden="true" />
+
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-semibold">{t.interview.agentInterview}</h1>
+              <h1 className="truncate text-sm font-semibold tracking-tight">{t.interview.agentInterview}</h1>
               <p className="truncate text-xs text-muted-foreground">
                 {t.interview.questionOf
                   .replace("{current}", String(room.currentRound))
@@ -259,33 +378,47 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               </p>
             </div>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+
+          <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
             <Badge
               variant={room.phase === "run_failed" || room.phase === "invalid_state" ? "destructive" : "secondary"}
-              className="max-w-28 truncate"
+              className="max-w-28 truncate font-medium"
             >
               {phaseLabels[room.phase]}
             </Badge>
+
             {room.canEnd ? (
               <Button
                 variant="ghost"
                 size="sm"
                 disabled={submitting}
                 onClick={endInterview}
-                className="hidden sm:inline-flex"
+                className="hidden h-8 gap-1.5 text-xs text-muted-foreground hover:bg-muted/80 hover:text-foreground sm:inline-flex"
               >
                 <Square className="size-3.5" />
-                {t.interview.endInterview}
+                <span>{t.interview.endInterview}</span>
               </Button>
             ) : null}
-            <Button variant="ghost" size="icon" asChild aria-label={t.interview.returnDashboard}>
-              <Link href="/dashboard"><ArrowLeft className="size-4" /></Link>
+
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-foreground"
+              asChild
+              aria-label={t.interview.returnDashboard}
+            >
+              <Link href="/dashboard">
+                <ArrowLeft className="size-4" />
+              </Link>
             </Button>
+
             <UserAvatarMenu user={user} panelAlign="right" avatarSize="sm" />
           </div>
         </div>
+
+        {/* Smooth Glow Progress Bar */}
         <div
-          className="h-0.5 bg-muted"
+          className="relative h-1 w-full bg-muted/60 overflow-hidden"
           role="progressbar"
           aria-label={t.interview.interviewProgress}
           aria-valuemin={0}
@@ -293,20 +426,21 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           aria-valuenow={progress}
         >
           <div
-            className="h-full bg-primary transition-[width] motion-reduce:transition-none"
+            className="h-full bg-gradient-to-r from-primary/80 to-primary transition-all duration-500 ease-out"
             style={{ width: `${progress}%` }}
           />
         </div>
       </header>
 
+      {/* Main Conversation Stream Area */}
       <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
-        <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-8 sm:px-6 md:py-10">
-          <div className="space-y-7">
+        <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-6 md:py-8">
+          <div className="space-y-6">
             {transcript.map((item) => {
               if (item.type === "reasoning") {
-                const running = item === latestIncompleteReasoning && (
-                  room.phase === "generating_question" || room.phase === "evaluating_answer"
-                );
+                const running =
+                  item === latestIncompleteReasoning &&
+                  (room.phase === "generating_question" || room.phase === "evaluating_answer");
                 return (
                   <ReasoningRow
                     key={`reasoning-${item.runId}-${item.step}-${item.attempt}-${item.blockIndex}`}
@@ -315,78 +449,114 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   />
                 );
               }
+
               if (item.type === "answer") {
                 return (
-                  <article key={`answer-${item.answerId}`} className="flex justify-end gap-3">
-                    <div className="max-w-[85%] min-w-0 rounded-xl bg-muted px-4 py-2.5 [overflow-wrap:anywhere]">
-                      <p className="whitespace-pre-wrap break-words text-sm leading-6">
-                        {item.skipped ? t.interview.skippedAnswer : item.content}
-                      </p>
+                  <article
+                    key={`answer-${item.answerId}`}
+                    className="flex items-start justify-end gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  >
+                    <div className="min-w-0 max-w-[85%] space-y-1">
+                      <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+                        <span className="font-medium">你 (候选人)</span>
+                      </div>
+                      <div
+                        className={`rounded-2xl rounded-tr-xs px-4.5 py-3 shadow-xs [overflow-wrap:anywhere] ${
+                          item.skipped
+                            ? "border border-dashed border-border bg-muted/40 text-muted-foreground text-xs italic"
+                            : "bg-primary text-primary-foreground text-sm leading-relaxed"
+                        }`}
+                      >
+                        <p className="whitespace-pre-wrap break-words">
+                          {item.skipped ? t.interview.skippedAnswer : item.content}
+                        </p>
+                      </div>
                     </div>
-                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg border bg-card">
-                      <UserRound className="size-4" />
+
+                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl border border-border/80 bg-card text-foreground shadow-2xs">
+                      <UserRound className="size-4 text-muted-foreground" />
                     </div>
                   </article>
                 );
               }
+
               if (item.type === "skill") {
-                const label = item.status === "loaded"
-                  ? t.interview.skillLoaded.replace("{name}", item.name)
-                  : t.interview.skillLoadFailed.replace("{name}", item.name);
+                const label =
+                  item.status === "loaded"
+                    ? t.interview.skillLoaded.replace("{name}", item.name)
+                    : t.interview.skillLoadFailed.replace("{name}", item.name);
                 return (
-                  <article key={`skill-${item.runId}-${item.sequence}`} className="flex gap-3">
-                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
-                      <Bot className="size-4" />
+                  <div
+                    key={`skill-${item.runId}-${item.sequence}`}
+                    className="flex items-center gap-2 pl-12 text-xs animate-in fade-in slide-in-from-bottom-1 duration-200"
+                  >
+                    <div className="inline-flex items-center gap-1.5 rounded-lg border border-border/60 bg-muted/30 px-2.5 py-1 text-muted-foreground transition-colors hover:bg-muted/60">
+                      <Puzzle className="size-3.5 text-primary/70" />
+                      <span className="font-mono text-[11px]">{label}</span>
+                      {item.status === "loaded" ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-medium">
+                          <CheckCircle2 className="size-3" />
+                        </span>
+                      ) : null}
                     </div>
-                    <div className="flex min-h-8 items-center gap-2 text-xs text-muted-foreground">
-                      <Puzzle className="size-3.5" />
-                      <span>{label}</span>
-                    </div>
-                  </article>
+                  </div>
                 );
               }
+
               if (item.type === "closing") {
                 return (
-                  <article key={`closing-${item.sequence}`} className="flex gap-3">
-                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
-                      <Bot className="size-4" />
+                  <article
+                    key={`closing-${item.sequence}`}
+                    className="flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  >
+                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-tr from-primary to-blue-600 text-primary-foreground shadow-xs ring-2 ring-primary/20">
+                      <Sparkles className="size-4" />
                     </div>
-                    <p className="min-w-0 max-w-[85%] whitespace-pre-wrap break-words pt-1 text-[15px] leading-7">
-                      {item.content}
-                    </p>
+                    <div className="min-w-0 max-w-[88%] rounded-2xl rounded-tl-xs border border-border/80 bg-card p-4 sm:p-5 shadow-xs">
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground/95 [overflow-wrap:anywhere]">
+                        {item.content}
+                      </p>
+                    </div>
                   </article>
                 );
               }
 
               const isCurrent = item.questionId === room.currentQuestion?.id;
               return (
-                <article key={`question-${item.questionId}`} className="flex gap-3">
-                  <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-foreground text-background">
-                    <Bot className="size-4" />
+                <article
+                  key={`question-${item.questionId}`}
+                  className="flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                >
+                  {/* Modern Interviewer Persona Avatar */}
+                  <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-tr from-primary to-blue-600 text-primary-foreground shadow-xs ring-2 ring-primary/20">
+                    <Sparkles className="size-4" />
                   </div>
-                  <div className="min-w-0 max-w-[85%] space-y-2 pt-1 [overflow-wrap:anywhere]">
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      <span className="font-medium text-foreground">{t.interview.aiInterviewer}</span>
+
+                  <div className="min-w-0 max-w-[88%] space-y-3">
+                    <div className="flex flex-wrap items-center gap-2 text-xs">
+                      <span className="font-semibold text-foreground">{t.interview.aiInterviewer}</span>
                       {isCurrent && room.currentQuestion?.topic ? (
                         <>
-                          <span aria-hidden="true">·</span>
-                          <span className="break-words">{room.currentQuestion.topic}</span>
+                          <span className="text-muted-foreground/50">·</span>
+                          <Badge
+                            variant="secondary"
+                            className="rounded-md border border-primary/20 bg-primary/5 px-2 py-0.5 text-[11px] font-medium text-primary break-words"
+                          >
+                            {room.currentQuestion.topic}
+                          </Badge>
                         </>
                       ) : null}
                     </div>
-                    <p className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground">
-                      {item.content}
-                    </p>
-                    {isCurrent && room.currentQuestion?.tip ? (
-                      <details className="group text-sm text-muted-foreground">
-                        <summary className="w-fit cursor-pointer list-none rounded-md py-1 font-medium hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
-                          {t.interview.tip}
-                        </summary>
-                        <p className="mt-1 break-words border-l pl-3 leading-6 [overflow-wrap:anywhere]">
-                          {room.currentQuestion.tip}
-                        </p>
-                      </details>
-                    ) : null}
+
+                    <div className="rounded-2xl rounded-tl-xs border border-border/80 bg-card p-4 sm:p-5 shadow-xs transition-all">
+                      <p className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground/95 [overflow-wrap:anywhere]">
+                        {item.content}
+                      </p>
+
+                      {isCurrent && room.currentQuestion?.tip ? (
+                        <QuestionTipCard tip={room.currentQuestion.tip} />
+                      ) : null}
+                    </div>
                   </div>
                 </article>
               );
@@ -401,10 +571,10 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                     size="sm"
                     disabled={submitting}
                     onClick={() => void retryRun()}
-                    className="ml-11"
+                    className="ml-11.5 h-8 gap-1.5 text-xs shadow-xs"
                   >
-                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-                    {t.common.retry}
+                    {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+                    <span>{t.common.retry}</span>
                   </Button>
                 ) : null}
                 {room.phase === "completing" && room.canRetryCompletion ? (
@@ -420,10 +590,10 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                         setSubmitting(false);
                       }
                     }}
-                    className="ml-11"
+                    className="ml-11.5 h-8 gap-1.5 text-xs shadow-xs"
                   >
-                    {submitting ? <Loader2 className="size-4 animate-spin" /> : <RotateCcw className="size-4" />}
-                    {t.common.retry}
+                    {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+                    <span>{t.common.retry}</span>
                   </Button>
                 ) : null}
               </div>
@@ -432,8 +602,9 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         </main>
       </ScrollArea>
 
+      {/* Completed Banner or Floating Composer Dock */}
       {room.phase === "completed" ? (
-        <div className="shrink-0 border-t bg-card/95 p-4 backdrop-blur">
+        <div className="shrink-0 border-t border-border/80 bg-card/95 p-4 backdrop-blur-md">
           <div className="mx-auto flex max-w-3xl flex-col items-center justify-between gap-3 sm:flex-row">
             <div className="flex items-center gap-2.5 text-sm text-muted-foreground">
               <CheckCircle2 className="size-4 shrink-0 text-emerald-500" />
@@ -443,7 +614,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               <Button variant="outline" size="sm" asChild>
                 <Link href="/dashboard">{t.interview.returnDashboard}</Link>
               </Button>
-              <Button size="sm" className="gap-1.5 font-medium" asChild>
+              <Button size="sm" className="gap-1.5 font-medium shadow-xs" asChild>
                 <Link href={`/interviews/${room.interviewId}/report`}>
                   <FileBarChart2 className="size-3.5" />
                   {t.interview.viewFullReport}
@@ -453,12 +624,12 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           </div>
         </div>
       ) : (
-        <div className="shrink-0 border-t bg-card/95 p-3 backdrop-blur md:p-4">
+        <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border/80 bg-background/85 p-3 backdrop-blur-md md:p-4">
           <div className="mx-auto max-w-3xl">
             {submissionError ? (
               <p className="mb-2 text-sm text-destructive" role="alert">{submissionError}</p>
             ) : null}
-            <div className="flex items-end gap-2 rounded-xl border bg-background p-2 shadow-sm focus-within:ring-2 focus-within:ring-ring/30">
+            <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/90 shadow-lg ring-1 ring-black/5 dark:ring-white/5 transition-all focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20">
               <Textarea
                 value={answer}
                 disabled={!room.canSubmitAnswer || submitting}
@@ -471,26 +642,52 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                 }}
                 aria-label={t.interview.answerPlaceholder}
                 placeholder={room.canSubmitAnswer ? t.interview.answerPlaceholder : phaseLabels[room.phase]}
-                className="max-h-40 min-h-11 resize-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                className="max-h-36 min-h-16 resize-none border-0 bg-transparent px-3.5 py-2.5 text-sm shadow-none focus-visible:ring-0 placeholder:text-muted-foreground/60"
               />
-              <Button
-                variant="ghost"
-                size="icon"
-                disabled={!room.canSkip || submitting}
-                onClick={() => void submitCurrentAnswer(true)}
-                aria-label={t.interview.skipQuestion}
-              >
-                <SkipForward className="size-4" />
-              </Button>
-              <Button
-                size="icon"
-                disabled={!room.canSubmitAnswer || submitting || !answer.trim()}
-                onClick={() => void submitCurrentAnswer(false)}
-                aria-label={t.interview.submitAnswer}
-              >
-                {submitting ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-              </Button>
+
+              <div className="flex items-center justify-between border-t border-border/40 bg-muted/20 px-3 py-2 text-xs">
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <span className="font-mono text-[11px]">{answer.length} 字</span>
+                  <span className="size-1 rounded-full bg-border" />
+                  <span className="hidden sm:inline-flex items-center gap-1 text-[11px]">
+                    <kbd className="rounded border bg-card px-1 py-0.5 text-[10px] font-mono shadow-2xs">
+                      ⌘ / Ctrl
+                    </kbd>
+                    +
+                    <kbd className="rounded border bg-card px-1 py-0.5 text-[10px] font-mono shadow-2xs">
+                      Enter
+                    </kbd>
+                    发送
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!room.canSkip || submitting}
+                    onClick={() => void submitCurrentAnswer(true)}
+                    aria-label={t.interview.skipQuestion}
+                    className="h-8 gap-1 text-xs text-muted-foreground hover:text-foreground"
+                  >
+                    <SkipForward className="size-3.5" />
+                    <span>{t.interview.skipQuestion}</span>
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    disabled={!room.canSubmitAnswer || submitting || !answer.trim()}
+                    onClick={() => void submitCurrentAnswer(false)}
+                    aria-label={t.interview.submitAnswer}
+                    className="h-8 gap-1.5 px-3 text-xs font-medium shadow-xs"
+                  >
+                    {submitting ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+                    <span>{t.interview.submitAnswer}</span>
+                  </Button>
+                </div>
+              </div>
             </div>
+
             <div className="mt-2 flex items-center justify-between px-1 text-xs text-muted-foreground">
               <span>{t.interview.submitShortcut}</span>
               <Button
@@ -504,7 +701,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               </Button>
             </div>
           </div>
-        </div>
+        </footer>
       )}
     </div>
   );
