@@ -79,5 +79,6 @@ export function projectInterviewRoom(input: {
     canEnd: input.interview.status === "active" && phase !== "invalid_state",
     retryableRunId: phase === "run_failed" ? input.currentRun?.id ?? null : null,
     canRetryCompletion: input.interview.status === "completing" && input.completionJob?.status === "failed",
+    resumeTitle: input.interview.resumeTitle ?? null,
   };
 }

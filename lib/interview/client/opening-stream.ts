@@ -30,6 +30,7 @@ const roomSchema = z.object({
   canEnd: z.boolean(),
   retryableRunId: z.string().uuid().nullable(),
   canRetryCompletion: z.boolean(),
+  resumeTitle: z.string().nullable().optional(),
 }).strict();
 
 const transcriptItemSchema = z.discriminatedUnion("type", [

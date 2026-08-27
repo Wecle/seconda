@@ -816,12 +816,14 @@ export async function loadOwnedInterviewRoomData(input: {
       status: interviews.status,
       answeredRoundCount: interviews.answeredRoundCount,
       targetRoundCount: interviews.targetRoundCount,
+      resumeTitle: interviewResumeSnapshots.resumeTitle,
     }).from(interviews)
       .innerJoin(agentSessions, and(
         eq(agentSessions.id, interviews.agentSessionId),
         eq(agentSessions.userId, interviews.userId),
         eq(agentSessions.capability, "interview"),
       ))
+      .leftJoin(interviewResumeSnapshots, eq(interviewResumeSnapshots.interviewId, interviews.id))
       .where(and(
         eq(interviews.id, input.interviewId),
         eq(interviews.userId, input.userId),

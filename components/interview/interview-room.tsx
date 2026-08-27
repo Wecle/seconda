@@ -370,7 +370,12 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             <div className="h-4 w-px bg-border/80" aria-hidden="true" />
 
             <div className="min-w-0">
-              <h1 className="truncate text-sm font-semibold tracking-tight">{t.interview.agentInterview}</h1>
+              <h1
+                title={room.resumeTitle || t.interview.agentInterview}
+                className="truncate text-sm font-semibold tracking-tight"
+              >
+                {room.resumeTitle || t.interview.agentInterview}
+              </h1>
               <p className="truncate text-xs text-muted-foreground">
                 {t.interview.questionOf
                   .replace("{current}", String(room.currentRound))

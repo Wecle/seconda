@@ -50,7 +50,7 @@ export function HeroMockup() {
 
               <div className="min-w-0">
                 <h2 className="truncate text-xs sm:text-sm font-semibold tracking-tight">
-                  自适应 Agent 面试
+                  Senior_Frontend_Architect.pdf
                 </h2>
                 <p className="truncate text-[11px] text-muted-foreground">
                   第 2 题 / 共 5 题

@@ -11,6 +11,7 @@ const interviewSchema = z.object({
   status: z.enum(["initializing", "active", "completing", "completed"]),
   answeredRoundCount: z.number().int().nonnegative(),
   targetRoundCount: z.number().int().positive(),
+  resumeTitle: z.string().nullable().optional(),
 });
 
 const questionSchema = z.object({

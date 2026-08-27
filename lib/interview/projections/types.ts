@@ -70,6 +70,7 @@ export interface InterviewRoomView {
   canEnd: boolean;
   retryableRunId: string | null;
   canRetryCompletion: boolean;
+  resumeTitle?: string | null;
 }
 
 export interface InterviewCompletionJobSnapshot {
@@ -91,6 +92,7 @@ export interface InterviewSnapshot {
   status: "initializing" | "active" | "completing" | "completed";
   answeredRoundCount: number;
   targetRoundCount: number;
+  resumeTitle?: string | null;
 }
 
 export interface InterviewQuestionSnapshot {
