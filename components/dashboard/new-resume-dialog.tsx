@@ -67,7 +67,7 @@ export function NewResumeDialog({
     "transition-[width,max-width,height] duration-300 ease-out motion-reduce:transition-none",
     mode === "generate"
       ? "h-[90vh] sm:max-w-5xl"
-      : "h-[min(29.0625rem,calc(100vh-2rem))] sm:max-w-md",
+      : "h-[min(30.5rem,calc(100vh-2rem))] sm:max-w-md",
   );
 
   return (
@@ -106,7 +106,12 @@ export function NewResumeDialog({
           <TabsContent
             value="upload"
             forceMount
-            className="min-h-0 flex-1 overflow-y-auto p-6 data-[state=inactive]:hidden"
+            className={cn(
+              "min-h-0 flex-1 flex-col data-[state=active]:flex data-[state=inactive]:hidden",
+              "data-[state=active]:animate-in data-[state=active]:fade-in-0",
+              "data-[state=active]:delay-150 data-[state=active]:duration-150 data-[state=active]:fill-mode-both",
+              "motion-reduce:data-[state=active]:animate-none motion-reduce:data-[state=active]:delay-0",
+            )}
           >
             <UploadResumeForm
               uploadTitle={uploadTitle}
