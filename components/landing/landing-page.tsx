@@ -12,6 +12,7 @@ import { HeroMockup } from "@/components/landing/hero-mockup";
 import { BentoFeatures } from "@/components/landing/bento-features";
 import { DimensionMatrix } from "@/components/landing/dimension-matrix";
 import { InteractiveJourney } from "@/components/landing/interactive-journey";
+import { FaqSection } from "@/components/landing/faq-section";
 
 interface LandingPageProps {
   isAuthenticated: boolean;
@@ -58,6 +59,12 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
               className="transition-colors hover:text-foreground"
             >
               {landing.journey.badge}
+            </Link>
+            <Link
+              href="#faq"
+              className="transition-colors hover:text-foreground"
+            >
+              {landing.faq.badge}
             </Link>
           </div>
 
@@ -195,6 +202,9 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
         <InteractiveJourney />
       </div>
 
+      {/* FAQ Section */}
+      <FaqSection />
+
       {/* Magnetic High-Contrast CTA Section */}
       <section className="py-24 sm:py-32 relative">
         <div className="mx-auto max-w-5xl px-6">
@@ -272,6 +282,12 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
                 {landing.journey.badge}
               </Link>
               <Link
+                href="#faq"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.faq.badge}
+              </Link>
+              <Link
                 href="#"
                 className="transition-colors hover:text-foreground"
               >
@@ -284,7 +300,7 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
                 {landing.footer.terms}
               </Link>
               <Link
-                href="#"
+                href="mailto:zyx19981379@gmail.com"
                 className="transition-colors hover:text-foreground"
               >
                 {landing.footer.contact}

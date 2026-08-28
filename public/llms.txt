@@ -1,0 +1,21 @@
+# Seconda — AI Mock Interview System
+
+> Seconda is an AI-powered mock interview system engineered for deep, resume-grounded practice, adaptive multi-round follow-ups, and deterministic 6-dimension evaluation.
+
+## Core Overview
+Seconda moves beyond superficial, template-based Q&A. It analyzes candidate resumes (PDF or structured facts), extracts real experience and architectural choices, generates grounded interview questions, probes answers with an autonomous Agent, and scores performance across 6 distinct dimensions.
+
+## Key Capabilities
+- **Resume Fact Grounding**: 100% anchored on real projects, technical stacks, and metrics extracted from the candidate's resume.
+- **Adaptive Multi-Round Probing**: Autonomous Agent identifies gaps, ambiguities, and trade-offs in candidate answers to ask targeted follow-up questions.
+- **6-Dimension Scoring Model**: Deterministic evaluation (0–10 per question, 0–100 overall score) on Understanding, Expression, Logic, Depth, Authenticity, and Reflection.
+- **Coach Mode & Deep Dive**: Actionable step-by-step feedback, model answer structures (STAR framework), and common pitfall analysis.
+- **Flexible Persona & Focus**: Configurable interviewer styles (Friendly, Standard, Stressful) and focus areas (Project Deep Dive, Technical Foundations, Behavioral Evidence).
+
+## Machine-Readable Resources
+- [Full System Knowledge Base](/llms-full.txt): Complete breakdown of the 6-dimension scoring model, interviewer personas, and evaluation rubrics.
+- [Pricing and Plans](/pricing.md): Transparent tier details, features, and token limits.
+
+## Target Audience
+- Software engineers, architects, and technical leaders preparing for top-tier tech interviews.
+- Job seekers wanting realistic, high-pressure practice with objective quantitative feedback.

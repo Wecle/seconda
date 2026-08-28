@@ -1,0 +1,61 @@
+# Seconda — AI Mock Interview System (Full Knowledge Base)
+
+## 1. Product Philosophy & Problem Statement
+Traditional interview preparation relies heavily on static question banks or superficial generic chat prompts. In actual top-tier technical interviews, interviewers anchor tightly on candidates' resumes, detect vague explanations, and challenge architectural decisions through multi-turn probing.
+
+Seconda is built to simulate this authentic dynamic. It parses resumes into structured knowledge graphs, conducts rigorous interviews with an autonomous Agent, and computes objective scores via a 6-dimension mathematical model.
+
+---
+
+## 2. The 6-Dimension Scoring Model
+
+Every question response is evaluated across 6 dimensions with an integer score of 0–10:
+
+| Dimension | Chinese Name | Evaluation Criteria |
+|---|---|---|
+| **Understanding** | 理解力 | Did the candidate accurately identify the question's core intent, constraints, and implicit technical criteria? |
+| **Expression** | 表达力 | Is the language precise, structured, and technically accurate? Are thoughts communicated fluently without fluff? |
+| **Logic** | 逻辑性 | Is reasoning rigorous and self-consistent? Does it leverage structured frameworks like STAR (Situation, Task, Action, Result) or Top-Down synthesis? |
+| **Depth** | 深度 | Does the answer penetrate runtime internals, architectural trade-offs, edge-case governance, and performance bottlenecks? |
+| **Authenticity** | 真实性 | Is the response backed by concrete engineering experience, quantitative metrics, and real-world trade-off considerations? |
+| **Reflection** | 反思力 | Does the candidate demonstrate self-awareness, technical retrospective ability, and post-incident iteration? |
+
+### Scoring Mathematics & Determinism
+- **Question Overall Score**: Weighted average of the 6 dimension scores (equal 1/6 weight each), rounded to 1 decimal place (0.0 – 10.0).
+- **Interview Overall Score**: Integer rounded from `average(question_overall_scores) × 10` (0 – 100).
+- **Deterministic Computation**: All aggregate scores and weighted metrics are computed programmatically by the backend service.
+
+---
+
+## 3. Interview Workflow & Capabilities
+
+### Step 1: Resume Ingestion & Parsing
+- Supports PDF resume upload or direct fact input.
+- Extracts core technical stacks, role responsibilities, project highlights, and quantitative metrics.
+- Validates facts against potential hallucinations.
+
+### Step 2: Session Configuration
+- **Target Role & Level**: Tailored for Junior, Mid-level, Senior, Staff, or Principal roles.
+- **Interviewer Personas**:
+  - *Friendly (友好型)*: Supportive, encouraging, ideal for warmup and confidence building.
+  - *Standard (标准型)*: Balanced, professional, perfectly mirroring mainstream tech interviews.
+  - *Stressful (压力型)*: High-pressure adversarial probing, challenging edge cases, concurrency hazards, and fault recovery.
+- **Interview Preferences**: Project Deep Dive (项目深挖), Technical Foundations (技术基础), Behavioral Evidence (行为经历).
+- **Language**: English and Chinese.
+
+### Step 3: Adaptive Agent Probing
+- Real-time conversation stream with visible reasoning chain (`思考链路`).
+- When a candidate's answer lacks depth or omits failure handling, the Agent initiates follow-up questions targeting the exact gap.
+- Rich text and voice input support.
+
+### Step 4: Diagnostic Debrief & Coach Mode
+- Comprehensive 6-dimension radar breakdown and feedback report.
+- Per-question coaching analysis identifying strengths, areas for improvement, and model answer frameworks.
+
+---
+
+## 4. Technology Stack & Security
+- **Frontend / Fullstack**: Next.js 16 (App Router), React 19, TailwindCSS v4, TypeScript (Strict).
+- **AI Infrastructure**: Vercel AI SDK, Anthropic Claude 3.5 models.
+- **Database & Storage**: PostgreSQL, Drizzle ORM.
+- **Privacy & Security**: User resume data and transcripts are isolated per authenticated user session.

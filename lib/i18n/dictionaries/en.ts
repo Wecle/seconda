@@ -220,6 +220,40 @@ export const en = {
     ctaTitle: "Ready to Ace Your Next High-Stakes Interview?",
     ctaDescription: "Import your resume and start your first resume-grounded AI mock interview today.",
     ctaHint: "No friction setup · Instant practice · Full privacy protection",
+    faq: {
+      badge: "Frequently Asked Questions",
+      title: "Everything You Need to Know About Seconda",
+      subtitle:
+        "Clear answers about resume fact grounding, 6-dimension scoring, and adaptive AI follow-up probing.",
+      items: [
+        {
+          question:
+            "How is Seconda different from static question banks or generic AI chat?",
+          answer:
+            "Traditional question banks ignore your personal background, while generic AI chat lacks probing depth. Seconda is 100% anchored on your actual resume projects and technical decisions. The autonomous Agent identifies gaps in your answers to ask multi-turn follow-ups, followed by a deterministic 6-dimension evaluation report.",
+        },
+        {
+          question: "How is the 6-dimension score calculated?",
+          answer:
+            "Each question is scored 0–10 across 6 dimensions: Understanding, Expression, Logic, Depth, Authenticity, and Reflection. The question overall score is an equally-weighted average (1/6 each, 1 decimal place). The total interview score (0–100) is deterministically computed as average(question overall) × 10.",
+        },
+        {
+          question: "How does the AI interviewer perform adaptive follow-up probing?",
+          answer:
+            "The AI interviewer features a transparent reasoning stream. It compares your answer against resume facts. If an explanation is superficial, lacks quantitative metrics, or overlooks failure modes, the Agent immediately generates a targeted follow-up question to test your depth.",
+        },
+        {
+          question: "What is Coach Mode and how does it help debrief?",
+          answer:
+            "After completing an interview, you can enter Coach Mode for any individual question. It breaks down the interviewer's hidden intent, identifies logical flaws in your response, and provides STAR-framework model answer structures and concrete suggestions.",
+        },
+        {
+          question: "Is my resume and interview data secure?",
+          answer:
+            "Seconda enforces strict user privacy and data security. All uploaded resumes and interview transcripts are isolated per authenticated user session and are never shared or used for unauthorized public model training.",
+        },
+      ],
+    },
     footer: {
       copyright: "© 2026 Seconda. All rights reserved.",
       privacy: "Privacy Policy",
