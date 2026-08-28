@@ -32,6 +32,7 @@ export const en = {
     learnMore: "Explore Capabilities",
     startUsing: "Get Started",
     freeStart: "Try For Free",
+    ctaBadge: "Start Live Practice",
     stats: {
       grounded: { value: "100%", label: "Resume Grounded" },
       dimensions: { value: "6-Dim", label: "Competency Matrix" },
@@ -41,7 +42,9 @@ export const en = {
     heroMockup: {
       interviewerRole: "Staff Tech Lead / AI Interviewer",
       candidateRole: "Candidate · Frontend Architect",
+      candidateLabel: "You (Candidate)",
       statusLive: "Live Session · Round 2/5",
+      questionProgress: "Question 2 of 5",
       questionExcerpt:
         "“In your resume, you noted restructuring core state flows to reduce render latency by 40%. In deeply nested component trees, how did you design state boundaries to prevent cascading re-renders?”",
       resumeContextTitle: "Resume Grounded Context",
@@ -56,6 +59,22 @@ export const en = {
       },
       waveformLive: "Live audio input active...",
       thinkingState: "AI interviewer analyzing candidate response...",
+      skillLoaded: "Skill · Project Deep Dive loaded",
+      reasoningTitle: "Reasoning Stream",
+      reasoningSummary:
+        "Analyzing resume fact: “Led core checkout UI overhaul, cutting render latency by 40%” → Generating trade-off question on micro-frontend state isolation",
+      reasoningTrace: `[1] Ingested candidate resume snapshot: keywords found: React, State Management, Performance
+[2] Isolated core experience: state refactoring in micro-frontends, claimed 40% latency reduction
+[3] Rubric alignment: test atomic state slicing, selector subscriptions, and sub-app lifecycle isolation
+[4] Prepared round 2 target question with reasoning hint`,
+      questionTag: "Micro-Frontends · State Isolation",
+      questionText:
+        "In your resume, you noted restructuring core checkout UI architecture to reduce render latency by 40%. In complex nested micro-frontend trees, how did you design state boundaries to prevent cascading re-renders and cross-app state contamination?",
+      tipText:
+        "Recommendation: Focus on atomic state management, selective subscriptions, and event listener cleanup upon sub-application unmounting.",
+      candidateAnswer:
+        "To address this, we applied the principle of 'Separation of Reads & Writes + Atomic Subscriptions'. We decoupled global user sessions from high-frequency form state, introducing fine-grained selectors to restrict re-renders to single nodes. For cross-app state sync, we enforced strict CustomEvent contracts with immutable snapshots, automatically cleaning up listeners on unmount...",
+      charCountUnit: "chars",
     },
     bento: {
       badge: "Core Capabilities",
@@ -67,8 +86,21 @@ export const en = {
         title: "Targeting your actual architecture & trade-offs",
         description:
           "AI extracts deep facts from your PDF or verified inputs. No shallow trivia—every question scrutinizes your real system constraints and engineering choices.",
+        badge: "100% Experience Grounded",
+        candidateName: "Alex Chen · Senior Frontend Architect",
+        parsedSuccess: "Parsed Successfully",
+        candidateExp: "8+ yrs exp · Leading SaaS & Micro-Frontend Architecture",
+        verifiedFacts: "Verified Facts",
+        company: "ByteDance · Architecture Platform",
+        period: "2021 – Present",
+        bulletPrefix: "• Led core checkout architecture overhaul with ",
+        bulletKeyword1: "atomic micro-frontend state slices",
+        bulletMiddle: " and fine-grained subscriptions, eliminating cascading renders and cutting interaction latency by ",
+        bulletKeyword2: "40%",
+        bulletSuffix: ".",
         previewTag1: "Micro-Frontend Evolution",
         previewTag2: "Distributed State Governance",
+        targetedQuestionLabel: "🎯 Targeted Question:",
         previewQuestion:
           "Interviewer: Under burst traffic spikes, how did your circuit breaker strategy protect downstream service capacity?",
       },
@@ -77,13 +109,22 @@ export const en = {
         title: "Quantified across Understanding, Expression, Logic & more",
         description:
           "Every response is deterministically evaluated across 6 dimensions with zero hand-waving, providing actionable feedback to level up your answers.",
+        equalWeight: "Equal Weight (1/6)",
+        ratingLabel: "Competency Rating",
+        dimUnderstanding: "Understanding",
+        dimLogic: "Logic",
+        dimDepth: "Depth",
+        dimExpression: "Expression",
       },
       card3: {
         tag: "Adaptive Agent Follow-ups",
         title: "Catches ambiguities and probes deeper like a real lead",
         description:
           "Vague assertions or hand-waving explanations trigger instant contextual follow-up challenges to test your foundational depth.",
+        reasoningTitle: "Reasoning Stream",
+        reasoningDetail: "· Detected answer lacks write conflict rollback detail",
         interviewerPill: "AI Follow-up",
+        followupBadge: "AI Interviewer · Follow-up",
         followupText:
           "“You mentioned optimistic UI updates—in case of concurrent write conflicts or packet loss, what was your exact rollback and reconciliation strategy?”",
       },
@@ -92,6 +133,29 @@ export const en = {
         title: "Switch between Friendly, Standard, and Stress testing",
         description:
           "Freely configure interviewer temperament, target seniority, and domain preferences to test your composure under pressure.",
+        personaTitle: "Interviewer Persona",
+        focusTitle: "Interview Focus Area",
+        promptPreviewLabel: "Interviewer System Prompt:",
+        personas: {
+          friendly: {
+            name: "Friendly",
+            desc: "Warm and encouraging, helps you feel comfortable",
+            prompt:
+              "“Take your time, your background looks great. Could you walk us through the most impactful breakthrough when refactoring your core state flows?”",
+          },
+          standard: {
+            name: "Standard",
+            desc: "Professional and balanced, mirrors real interviews",
+            prompt:
+              "“Based on your checkout refactoring, how did you balance consistency and lifecycle between atomic state slices and global caching?”",
+          },
+          stressful: {
+            name: "Stressful",
+            desc: "High-pressure probing to test composure",
+            prompt:
+              "“Your proposed approach causes cascading renders under peak burst traffic. If a sub-app fails to unmount on time, how do you prevent severe memory leaks?”",
+          },
+        },
       },
     },
     dimensions: {
@@ -99,48 +163,103 @@ export const en = {
       title: "Rigorous 6-Dimension Evaluation Matrix",
       subtitle:
         "Not just whether you're correct, but how to structure your response with depth, clarity, and authority.",
+      ratingLabel: "Competency Rating",
+      grade: "Strong Performer",
+      scoreLabel: "Score (Out of 10.0)",
+      strengthsTitle: "Core Strengths",
+      improvementsTitle: "Areas for Improvement",
+      expertAdviceLabel: "💡 Expert Advice:",
+      coachModePrompt: "One-click access to Coach Mode debrief",
+      deepDiveAction: "Deep Dive into Question",
       items: [
         {
           key: "understanding",
           name: "理解力",
           enName: "Understanding",
-          desc: "Did the candidate accurately grasp core requirements and unstated edge conditions?",
+          desc: "Accurately grasp core requirements and unstated technical trade-offs",
           score: 9.2,
+          strengths: [
+            "Accurately pinpointed hidden race conditions and micro-frontend lifecycle mismatches",
+            "Proactively validated 100K QPS capacity boundary conditions",
+          ],
+          improvements: [
+            "Could elaborate on timeout retry and fault tolerance under network jitter",
+          ],
+          advice: "Strong grasp of architectural core; recommend further exploring system error boundary behaviors.",
         },
         {
           key: "expression",
           name: "表达力",
           enName: "Expression",
-          desc: "Is articulation concise, fluid, and backed by accurate domain terminology?",
+          desc: "Rigorous structure, standard terminology, clear and impactful key points",
           score: 8.8,
+          strengths: [
+            "Employed structured 3-stage delivery with precise domain terminology",
+            "Clearly communicated core principles like read/write separation and atomic subscriptions",
+          ],
+          improvements: [
+            "Verbal flow for complex state sync was slightly dense; could add transitional summaries",
+          ],
+          advice: "Highly concise articulation; adding side-by-side framework trade-offs would increase persuasiveness.",
         },
         {
           key: "logic",
           name: "逻辑性",
           enName: "Logic",
-          desc: "Is reasoning structured coherently using frameworks like STAR or top-down deduction?",
+          desc: "Rigorous causal deduction, self-consistent architectural decomposition",
           score: 9.0,
+          strengths: [
+            "Followed STAR framework: Bottleneck -> Architecture Selection -> Metrics -> Boundary Defense",
+            "Closed-loop causal reasoning",
+          ],
+          improvements: [
+            "Could outline at least one rejected alternative during solution trade-off analysis",
+          ],
+          advice: "Excellent structure and self-consistent logic, demonstrating high-bar systems thinking.",
         },
         {
           key: "depth",
           name: "深度",
           enName: "Depth",
-          desc: "Does the answer address underlying mechanisms, trade-offs, and boundary cases?",
+          desc: "Touches underlying mechanisms, trade-offs, and boundary governance",
           score: 8.5,
+          strengths: [
+            "Deep dive into React 19 Fiber scheduling and selective subscriber primitives",
+            "Covered memory reclamation details in micro-app sandboxes",
+          ],
+          improvements: [
+            "Could add analysis of V8 garbage collection impact in long-running sub-apps",
+          ],
+          advice: "Solid foundation in core mechanics and deep understanding of complex system runtimes.",
         },
         {
           key: "authenticity",
           name: "真实性",
           enName: "Authenticity",
-          desc: "Is it grounded in genuine engineering experience with specific metrics and lessons?",
+          desc: "Grounded in complex real-world scenarios, metrics, and trade-offs",
           score: 9.5,
+          strengths: [
+            "Provided verified refactoring metrics (40% latency drop) and telemetry shifts",
+            "Shared concrete post-mortem troubleshooting and lessons learned",
+          ],
+          improvements: [
+            "Could expand on canary rollout strategies and production rollback playbooks",
+          ],
+          advice: "Authentic and rich engineering experience with high credibility of a senior staff engineer.",
         },
         {
           key: "reflection",
           name: "反思力",
           enName: "Reflection",
-          desc: "Does the candidate demonstrate self-awareness, post-mortem insights, and growth?",
+          desc: "Demonstrates retrospection, fault boundary isolation, and continuous growth",
           score: 8.7,
+          strengths: [
+            "Objectively acknowledged team cognitive overhead of atomic states and provided linting guardrails",
+          ],
+          improvements: [
+            "Could provide forward-looking insights on cross-platform and SSR isomorphic rendering",
+          ],
+          advice: "Shows exceptional engineering introspection and tech debt governance awareness.",
         },
       ],
     },
@@ -149,6 +268,9 @@ export const en = {
       title: "Closed-Loop Training: 4 Steps to Interview Mastery",
       subtitle:
         "From resume ingestion to deep coaching, build repeatable high-scoring interview reflexes.",
+      stageRealUiPreview: "STAGE {stage} · REAL UI PREVIEW",
+      footerBadge: "Full-journey fidelity alignment",
+      stepCounter: "Step {current} of 4",
       steps: [
         {
           step: "01",
@@ -175,6 +297,51 @@ export const en = {
           badge: "Debrief Report",
         },
       ],
+      previews: {
+        step1: {
+          title: "Intelligent Resume Parsing & Fact Graph",
+          tag: "Resume Ingestion & Parsing",
+          fileName: "Senior_Frontend_Architect.pdf",
+          fileMeta: "1.8 MB · Parsed",
+          verifiedBadge: "Extracted Facts",
+          factsTitle: "Core Experience Facts",
+          skillsCount: "18 Skill Tags",
+          exp1: "• Experience: ByteDance · Architecture Platform (2021-Present)",
+          exp2: "• Highlight: Overhauled micro-frontend state flow, cut first-screen latency by 40%",
+          tags: ["React 19", "TypeScript", "Micro-Frontends", "Performance Tuning"],
+        },
+        step2: {
+          title: "Interview Environment & Persona Configuration",
+          tag: "Settings Dialog Replica",
+          targetRoleLabel: "Target Role",
+          targetRoleValue: "Staff Frontend Architect",
+          targetLevelLabel: "Target Level",
+          targetLevelValue: "Senior / Staff",
+          personaLabel: "Interviewer Persona",
+          personaStandard: "Standard · Balanced",
+          personaStressful: "Stressful",
+          focusLabel: "Focus Preference",
+          focusProject: "Project Deep Dive",
+          focusConcurrency: "High Concurrency",
+        },
+        step3: {
+          title: "Adaptive Agent Live Practice & Follow-up",
+          tag: "Live Room Stream",
+          reasoningLabel: "Reasoning Stream:",
+          reasoningText: "Isolating key experience → Probing micro-frontend state isolation & memory cleanup",
+          interviewerBadge: "AI Interviewer · Architecture",
+          questionText: "“When multiple micro-frontends coexist, how do you prevent global state pollution and dangling event listeners?”",
+          hintText: "Tip: Explain event bus sandboxing and lifecycle unmount cleanup hooks.",
+        },
+        step4: {
+          title: "6-Dimension Diagnostic Report & Coaching",
+          tag: "Report & Deep Dive",
+          overallLabel: "Overall Performance",
+          grade: "Strong Performer",
+          strength: "Top Strength: Clear architectural logic with verified quantitative metrics",
+          improvement: "Improvement: Elaborate on self-healing under extreme network faults",
+        },
+      },
     },
     featuresTitle: "Designed for Interviewees",
     features: [
@@ -253,6 +420,8 @@ export const en = {
             "Seconda enforces strict user privacy and data security. All uploaded resumes and interview transcripts are isolated per authenticated user session and are never shared or used for unauthorized public model training.",
         },
       ],
+      bottomNote:
+        "Have more questions? Experience adaptive deep-dive probing live in your mock session.",
     },
     footer: {
       copyright: "© 2026 Seconda. All rights reserved.",

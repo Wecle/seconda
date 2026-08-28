@@ -83,7 +83,7 @@ export function FaqSection() {
         <div className="mt-12 text-center">
           <div className="inline-flex items-center gap-2 text-xs text-muted-foreground">
             <Sparkles className="size-3.5 text-primary" />
-            <span>还有其他问题？欢迎随时在模拟实战中体验 AI 面试官的自适应深度追问。</span>
+            <span>{faq.bottomNote}</span>
           </div>
         </div>
       </div>

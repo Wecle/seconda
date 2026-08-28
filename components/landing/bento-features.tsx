@@ -24,23 +24,7 @@ export function BentoFeatures() {
   const [selectedPersona, setSelectedPersona] = useState<"friendly" | "standard" | "stressful">("standard");
   const [selectedTag, setSelectedTag] = useState<"project_deep_dive" | "technical_foundations" | "behavioral_evidence">("project_deep_dive");
 
-  const personas = {
-    friendly: {
-      name: "友好型",
-      desc: "温和鼓励，帮助你放松发挥",
-      prompt: "“放轻松，你的经历很精彩。能和我们具体聊聊你在重构核心状态流时遇到最有成就感的技术突破吗？”",
-    },
-    standard: {
-      name: "标准型",
-      desc: "专业平衡，模拟真实面试场景",
-      prompt: "“请结合你在交易链路重构中的设计考量，详细说明你如何权衡原子状态与全局缓存的一致性与生命周期。”",
-    },
-    stressful: {
-      name: "压力型",
-      desc: "高压追问，测试你的抗压能力",
-      prompt: "“你刚才的方案在极端高并发流量下会出现明显的级联重渲染，如果子应用未按时注销，你如何防止内存泄漏？”",
-    },
-  };
+  const personas = bento.card4.personas;
 
   return (
     <section id="features" className="py-24 sm:py-32 relative">
@@ -70,7 +54,7 @@ export function BentoFeatures() {
                   <span>{bento.card1.tag}</span>
                 </span>
                 <Badge variant="outline" className="text-[11px] font-mono">
-                  100% 经历锚定
+                  {bento.card1.badge}
                 </Badge>
               </div>
               <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
@@ -86,43 +70,43 @@ export function BentoFeatures() {
               <div className="flex items-start justify-between pb-3 border-b border-border/60">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-sm text-foreground">张三 · 前端资深架构师</span>
+                    <span className="font-bold text-sm text-foreground">{bento.card1.candidateName}</span>
                     <Badge variant="secondary" className="text-[10px] bg-primary/10 text-primary">
-                      解析成功
+                      {bento.card1.parsedSuccess}
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    8 年经验 · 主导大型 SaaS 与微前端架构演进
+                    {bento.card1.candidateExp}
                   </p>
                 </div>
                 <div className="flex items-center gap-1 text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 px-2 py-0.5 rounded">
                   <ShieldCheck className="size-3.5" />
-                  <span>已校验事实</span>
+                  <span>{bento.card1.verifiedFacts}</span>
                 </div>
               </div>
 
               {/* Parsed Experience Bullet with Keyword Marks */}
               <div className="rounded-lg bg-background p-3 text-xs leading-relaxed border border-border/60 space-y-1.5">
                 <div className="flex justify-between items-center text-[11px] text-muted-foreground font-medium">
-                  <span className="font-semibold text-foreground">字节跳动 · 架构平台部</span>
-                  <span className="font-mono">2021 – 至今</span>
+                  <span className="font-semibold text-foreground">{bento.card1.company}</span>
+                  <span className="font-mono">{bento.card1.period}</span>
                 </div>
                 <p className="text-muted-foreground text-xs">
-                  • 主导核心交易链路架构重构，采用
+                  {bento.card1.bulletPrefix}
                   <mark className="rounded-xs bg-amber-200/80 dark:bg-amber-500/30 px-1 py-0.5 text-foreground font-medium mx-1">
-                    微前端原子状态拆分
+                    {bento.card1.bulletKeyword1}
                   </mark>
-                  与细粒度订阅机制，消除级联渲染，首屏交互延迟降低
+                  {bento.card1.bulletMiddle}
                   <mark className="rounded-xs bg-amber-200/80 dark:bg-amber-500/30 px-1 py-0.5 text-foreground font-medium mx-1">
-                    40%
+                    {bento.card1.bulletKeyword2}
                   </mark>
-                  。
+                  {bento.card1.bulletSuffix}
                 </p>
               </div>
 
               {/* Bottom Generated Prompt */}
               <div className="rounded-lg bg-primary/[0.04] p-3 text-xs border border-primary/20 text-foreground">
-                <span className="font-semibold text-primary">🎯 靶向考题生成：</span>
+                <span className="font-semibold text-primary">{bento.card1.targetedQuestionLabel} </span>
                 {bento.card1.previewQuestion}
               </div>
             </div>
@@ -136,7 +120,7 @@ export function BentoFeatures() {
                   <Brain className="size-3.5" />
                   <span>{bento.card2.tag}</span>
                 </span>
-                <span className="text-xs text-muted-foreground font-mono">等权计算 (1/6)</span>
+                <span className="text-xs text-muted-foreground font-mono">{bento.card2.equalWeight}</span>
               </div>
               <h3 className="text-xl sm:text-2xl font-bold tracking-tight text-foreground">
                 {bento.card2.title}
@@ -149,10 +133,10 @@ export function BentoFeatures() {
             {/* Real Report View Mini Cards */}
             <div className="mt-6 space-y-2.5">
               {[
-                { name: "理解力 (Understanding)", score: "9.2", grade: "表现优秀", color: "text-emerald-600 dark:text-emerald-400", width: "92%" },
-                { name: "逻辑性 (Logic)", score: "9.0", grade: "表现优秀", color: "text-emerald-600 dark:text-emerald-400", width: "90%" },
-                { name: "深度 (Depth)", score: "8.5", grade: "表现优秀", color: "text-emerald-600 dark:text-emerald-400", width: "85%" },
-                { name: "表达力 (Expression)", score: "8.8", grade: "表现优秀", color: "text-emerald-600 dark:text-emerald-400", width: "88%" },
+                { name: bento.card2.dimUnderstanding, score: "9.2", grade: t.report.strongPerformer, color: "text-emerald-600 dark:text-emerald-400", width: "92%" },
+                { name: bento.card2.dimLogic, score: "9.0", grade: t.report.strongPerformer, color: "text-emerald-600 dark:text-emerald-400", width: "90%" },
+                { name: bento.card2.dimDepth, score: "8.5", grade: t.report.strongPerformer, color: "text-emerald-600 dark:text-emerald-400", width: "85%" },
+                { name: bento.card2.dimExpression, score: "8.8", grade: t.report.strongPerformer, color: "text-emerald-600 dark:text-emerald-400", width: "88%" },
               ].map((dim, i) => (
                 <div
                   key={i}
@@ -166,7 +150,7 @@ export function BentoFeatures() {
                     </div>
                   </div>
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                    <span>能力评级</span>
+                    <span>{bento.card2.ratingLabel}</span>
                     <span className={`font-medium ${dim.color}`}>{dim.grade}</span>
                   </div>
                   <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -209,8 +193,8 @@ export function BentoFeatures() {
                   <div className="flex items-center justify-between text-muted-foreground">
                     <div className="flex items-center gap-1.5">
                       <span className="size-1.5 rounded-full bg-primary" />
-                      <span className="font-medium text-foreground">思考链路</span>
-                      <span className="truncate text-[11px]">· 检测到回答未展开写冲突回滚</span>
+                      <span className="font-medium text-foreground">{bento.card3.reasoningTitle}</span>
+                      <span className="truncate text-[11px]">{bento.card3.reasoningDetail}</span>
                     </div>
                     <ChevronDown className="size-3" />
                   </div>
@@ -221,7 +205,7 @@ export function BentoFeatures() {
               <div className="rounded-xl border border-primary/20 bg-background p-3.5 text-xs space-y-1.5">
                 <div className="flex items-center gap-1.5 text-primary font-bold">
                   <Sparkles className="size-3.5" />
-                  <span>AI 面试官 · 追问</span>
+                  <span>{bento.card3.followupBadge}</span>
                 </div>
                 <p className="text-foreground leading-relaxed">
                   {bento.card3.followupText}
@@ -253,7 +237,7 @@ export function BentoFeatures() {
               {/* Persona Options Grid */}
               <div>
                 <div className="text-xs font-semibold text-foreground mb-1.5">
-                  面试官风格 (Persona)
+                  {bento.card4.personaTitle}
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {(["friendly", "standard", "stressful"] as const).map((key) => {
@@ -281,13 +265,13 @@ export function BentoFeatures() {
               {/* Preference Tags */}
               <div>
                 <div className="text-xs font-semibold text-foreground mb-1.5">
-                  面试偏好 (Focus Area)
+                  {bento.card4.focusTitle}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {[
-                    { id: "project_deep_dive", label: "项目深挖" },
-                    { id: "technical_foundations", label: "技术基础" },
-                    { id: "behavioral_evidence", label: "行为经历" },
+                    { id: "project_deep_dive", label: t.interview.preferenceTags.project_deep_dive },
+                    { id: "technical_foundations", label: t.interview.preferenceTags.technical_foundations },
+                    { id: "behavioral_evidence", label: t.interview.preferenceTags.behavioral_evidence },
                   ].map((tag) => {
                     const isSelected = selectedTag === tag.id;
                     return (
@@ -312,7 +296,7 @@ export function BentoFeatures() {
 
               {/* Prompt Output Snippet */}
               <div className="rounded-lg bg-background p-2.5 text-xs text-muted-foreground italic border border-border/60">
-                <span className="font-semibold text-foreground not-italic">面试官预设：</span>
+                <span className="font-semibold text-foreground not-italic">{bento.card4.promptPreviewLabel} </span>
                 {personas[selectedPersona].prompt}
               </div>
             </div>

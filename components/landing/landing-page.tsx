@@ -220,7 +220,7 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
             <div className="relative mx-auto max-w-2xl space-y-4">
               <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3.5 py-1 text-xs font-semibold text-primary">
                 <Zap className="size-3.5" />
-                <span>立即开始实战对练</span>
+                <span>{landing.ctaBadge}</span>
               </div>
 
               <h2 className="text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl lg:text-5xl text-balance">

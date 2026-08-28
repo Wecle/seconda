@@ -32,6 +32,7 @@ export const zh = {
     learnMore: "探索核心能力",
     startUsing: "开始使用",
     freeStart: "立即免费体验",
+    ctaBadge: "立即开始实战对练",
     stats: {
       grounded: { value: "100%", label: "简历事实锚定" },
       dimensions: { value: "6 维", label: "结构化全维评估" },
@@ -41,7 +42,9 @@ export const zh = {
     heroMockup: {
       interviewerRole: "资深技术专家 / AI 面试官",
       candidateRole: "候选人 · 前端架构师",
+      candidateLabel: "你 (候选人)",
       statusLive: "实时面试中 · 第 2/5 轮",
+      questionProgress: "第 2 题 / 共 5 题",
       questionExcerpt:
         "“在你的简历中提到曾重构核心状态流并降低 40% 渲染耗时，能谈谈在复杂嵌套组件树下，你如何设计状态边界以避免级联渲染吗？”",
       resumeContextTitle: "简历锚定上下文",
@@ -56,6 +59,22 @@ export const zh = {
       },
       waveformLive: "实时语音输入中...",
       thinkingState: "AI 面试官正在基于回答进行深度分析...",
+      skillLoaded: "Skill · 项目深挖 已加载",
+      reasoningTitle: "思考链路",
+      reasoningSummary:
+        "分析简历事实：“主导重构核心交易链路前端架构，降低 40% 渲染耗时” → 针对微前端与状态隔离生成权衡考题",
+      reasoningTrace: `[1] 检索候选人简历快照：发现技术栈关键词 React, State Management, Performance
+[2] 锁定经历要点：在微前端环境下实施状态重构，指标宣称为减少 40% 耗时
+[3] 考点规划：考察原子化状态拆分、选择性订阅以及跨子应用通信的垃圾回收与隔离策略
+[4] 生成第二轮主问题并附带思考提示`,
+      questionTag: "微前端架构 · 状态隔离",
+      questionText:
+        "在你的简历中提到曾重构核心交易链路前端架构并降低 40% 渲染耗时。请结合实际业务，谈谈在复杂微前端嵌套组件树下，你如何设计状态边界以避免级联重渲染与跨应用状态污染？",
+      tipText:
+        "建议重点阐述原子化状态管理方案、选择性订阅机制，以及子应用卸载时的事件监听注销与内存回收策略。",
+      candidateAnswer:
+        "针对这个问题，我们采用了“读写分离 + 原子化订阅”原则。将全局共享的用户会话与高频变动的表单和行内状态解耦，引入 Selector 细粒度订阅器将组件层级的重渲染控制在单节点。对于跨微应用的状态同步，通过严格的 CustomEvent 契约配合不可变快照隔离，并在应用卸载时自动清理监听...",
+      charCountUnit: "字",
     },
     bento: {
       badge: "核心优势",
@@ -67,8 +86,21 @@ export const zh = {
         title: "精准定位你的真实项目与技术决策",
         description:
           "AI 深度解析 PDF 或结构化事实，拒绝泛泛而谈，针对你亲历的项目难点、技术选型与性能指标层层剖析。",
+        badge: "100% 经历锚定",
+        candidateName: "张三 · 前端资深架构师",
+        parsedSuccess: "解析成功",
+        candidateExp: "8 年经验 · 主导大型 SaaS 与微前端架构演进",
+        verifiedFacts: "已校验事实",
+        company: "字节跳动 · 架构平台部",
+        period: "2021 – 至今",
+        bulletPrefix: "• 主导核心交易链路架构重构，采用",
+        bulletKeyword1: "微前端原子状态拆分",
+        bulletMiddle: "与细粒度订阅机制，消除级联渲染，首屏交互延迟降低",
+        bulletKeyword2: "40%",
+        bulletSuffix: "。",
         previewTag1: "微前端架构演进",
         previewTag2: "分布式状态治理",
+        targetedQuestionLabel: "🎯 靶向考题生成：",
         previewQuestion:
           "面试官提问：在面对高并发流量突发时，你的重试熔断策略是如何做容量保护的？",
       },
@@ -77,13 +109,22 @@ export const zh = {
         title: "理解力、表达力、逻辑性等 6 维量化",
         description:
           "每一道回答均由确定性算法加权计算，杜绝模糊评价，提供明确且可落地的针对性改进建议。",
+        equalWeight: "等权计算 (1/6)",
+        ratingLabel: "能力评级",
+        dimUnderstanding: "理解力 (Understanding)",
+        dimLogic: "逻辑性 (Logic)",
+        dimDepth: "深度 (Depth)",
+        dimExpression: "表达力 (Expression)",
       },
       card3: {
         tag: "自适应 Agent 追问",
         title: "像顶级面试官一样发现破绽并持续深挖",
         description:
           "针对回答中模糊不清或一笔带过的部分，Agent 会立即发起精准追问，检验你的底层理解与实战功底。",
+        reasoningTitle: "思考链路",
+        reasoningDetail: "· 检测到回答未展开写冲突回滚",
         interviewerPill: "AI 追问",
+        followupBadge: "AI 面试官 · 追问",
         followupText:
           "“刚才提到了乐观更新机制，如果在弱网或并发写冲突时，客户端的具体回滚与补偿策略是什么？”",
       },
@@ -92,6 +133,29 @@ export const zh = {
         title: "灵活切换友好型、标准型与高压测试",
         description:
           "自由调节面试难度、岗位偏好与面试官性格，全方位淬炼你的临场应变能力与心理素质。",
+        personaTitle: "面试官风格 (Persona)",
+        focusTitle: "面试偏好 (Focus Area)",
+        promptPreviewLabel: "面试官预设：",
+        personas: {
+          friendly: {
+            name: "友好型",
+            desc: "温和鼓励，帮助你放松发挥",
+            prompt:
+              "“放轻松，你的经历很精彩。能和我们具体聊聊你在重构核心状态流时遇到最有成就感的技术突破吗？”",
+          },
+          standard: {
+            name: "标准型",
+            desc: "专业平衡，模拟真实面试场景",
+            prompt:
+              "“请结合你在交易链路重构中的设计考量，详细说明你如何权衡原子状态与全局缓存的一致性与生命周期。”",
+          },
+          stressful: {
+            name: "压力型",
+            desc: "高压追问，测试你的抗压能力",
+            prompt:
+              "“你刚才的方案在极端高并发流量下会出现明显的级联重渲染，如果子应用未按时注销，你如何防止内存泄漏？”",
+          },
+        },
       },
     },
     dimensions: {
@@ -99,48 +163,103 @@ export const zh = {
       title: "严谨科学的六维综合评估矩阵",
       subtitle:
         "不仅告诉你‘对不对’，更让你明白‘如何答得更有深度、结构与说服力’。",
+      ratingLabel: "能力评级",
+      grade: "表现优秀",
+      scoreLabel: "得分 (满分 10.0)",
+      strengthsTitle: "核心优势 (Strengths)",
+      improvementsTitle: "改进建议 (Improvements)",
+      expertAdviceLabel: "💡 专家点评：",
+      coachModePrompt: "支持一键进入教练模式复盘",
+      deepDiveAction: "深入分析此题",
       items: [
         {
           key: "understanding",
           name: "理解力",
           enName: "Understanding",
-          desc: "是否精准捕捉问题核心与隐含考点，避免答非所问与概念偏航",
+          desc: "准确把握问题核心与业务/技术底层意图",
           score: 9.2,
+          strengths: [
+            "精准识别出并发状态竞争与微前端生命周期不一致的隐性痛点",
+            "主动确认了 100K QPS 的容量边界条件",
+          ],
+          improvements: [
+            "可进一步补充极端网络抖动下的超时重试容错处理",
+          ],
+          advice: "回答紧扣架构核心，建议在系统异常边界处做进一步推演。",
         },
         {
           key: "expression",
           name: "表达力",
           enName: "Expression",
-          desc: "语言是否精炼流畅，能否用准确的技术术语清晰呈现复杂架构",
+          desc: "结构严谨、术语规范、要点清晰突出",
           score: 8.8,
+          strengths: [
+            "采用三段式递进阐述，术语专业标准",
+            "核心设计原则（读写分离、原子订阅）交代清晰",
+          ],
+          improvements: [
+            "对复杂状态同步流的口头描述稍显紧凑，可适当增加过渡总结",
+          ],
+          advice: "语言精炼度极高，若能配合框架对比说明将更具说服力。",
         },
         {
           key: "logic",
           name: "逻辑性",
           enName: "Logic",
-          desc: "论述是否有条理，是否采用 STAR 法则或总分总等严密推演结构",
+          desc: "因果推导严密、架构拆分具备自洽性",
           score: 9.0,
+          strengths: [
+            "遵循 STAR 严密推导：现状瓶颈 -> 方案选型 -> 落地指标 -> 边界防御",
+            "因果链条闭环",
+          ],
+          improvements: [
+            "可在方案对比阶段多列举 1 种被否决的技术路径",
+          ],
+          advice: "论述结构极佳，逻辑自洽，展现出优秀的系统化思维。",
         },
         {
           key: "depth",
           name: "深度",
           enName: "Depth",
-          desc: "是否触及底层原理、边界条件、性能瓶颈与架构权衡思考",
+          desc: "触及底层原理、权衡考量与边界治理",
           score: 8.5,
+          strengths: [
+            "深入剖析了 React 19 Fiber 调度与选择性订阅器的底层订阅机制",
+            "涉及微应用沙箱内存回收细节",
+          ],
+          improvements: [
+            "可补充对 V8 垃圾回收在长生命周期子应用中的影响剖析",
+          ],
+          advice: "技术底层功底扎实，对复杂系统运行机理理解深刻。",
         },
         {
           key: "authenticity",
           name: "真实性",
           enName: "Authenticity",
-          desc: "是否基于真实项目实践与亲身经历，具备具体细节与量化数据佐证",
+          desc: "结合真实复杂场景、量化数据与工程权衡",
           score: 9.5,
+          strengths: [
+            "给出真实的重构收益数据（40% 渲染耗时降低）与监控指标变化",
+            "讲述了具体的踩坑排障经过",
+          ],
+          improvements: [
+            "可补充重构过程中的灰度发布与线上回滚预案细节",
+          ],
+          advice: "经验真实丰富，细节详实，具备高年级工程师的实战说服力。",
         },
         {
           key: "reflection",
           name: "反思力",
           enName: "Reflection",
-          desc: "是否具备事后复盘、技术迭代、方案反思与自我进化的认知习惯",
+          desc: "展现自省复盘、故障定界与持续迭代认知",
           score: 8.7,
+          strengths: [
+            "客观指出了原子化状态拆分带来的微小开发心智成本，并给出了团队规范约束方案",
+          ],
+          improvements: [
+            "对未来跨端/服务端同构渲染演进方向可作进一步前瞻规划",
+          ],
+          advice: "具备优秀的工程自省与技术债管理意识。",
         },
       ],
     },
@@ -149,6 +268,9 @@ export const zh = {
       title: "闭环沉浸式训练，4 步达成实战质变",
       subtitle:
         "从简历输入到深度复盘，构建可复现的高分面试习惯与思维框架。",
+      stageRealUiPreview: "STAGE {stage} · REAL UI PREVIEW",
+      footerBadge: "全链路真实交互对齐",
+      stepCounter: "Step {current} of 4",
       steps: [
         {
           step: "01",
@@ -175,6 +297,51 @@ export const zh = {
           badge: "Debrief Report",
         },
       ],
+      previews: {
+        step1: {
+          title: "智能简历解析与事实图谱构建",
+          tag: "Resume Ingestion & Parsing",
+          fileName: "Senior_Frontend_Architect.pdf",
+          fileMeta: "1.8 MB · 解析完成",
+          verifiedBadge: "已提取事实",
+          factsTitle: "核心经历事实",
+          skillsCount: "18 项技能标签",
+          exp1: "• 经历：字节跳动 · 架构平台部 (2021-至今)",
+          exp2: "• 亮点：重构微前端状态流，消除级联渲染，首屏交互耗时降低 40%",
+          tags: ["React 19", "TypeScript", "微前端", "性能调优"],
+        },
+        step2: {
+          title: "面试场域与面试官风格配置",
+          tag: "Settings Dialog Replica",
+          targetRoleLabel: "目标岗位",
+          targetRoleValue: "资深前端架构师",
+          targetLevelLabel: "目标级别",
+          targetLevelValue: "Senior / Staff",
+          personaLabel: "面试官风格",
+          personaStandard: "标准型 · 专业平衡",
+          personaStressful: "压力型",
+          focusLabel: "考察重点偏好",
+          focusProject: "项目深挖",
+          focusConcurrency: "高并发架构",
+        },
+        step3: {
+          title: "自适应 Agent 连续对练与追问",
+          tag: "Live Room Stream",
+          reasoningLabel: "思考链路：",
+          reasoningText: "锁定经历要点 → 针对微前端状态隔离与内存回收发起追问",
+          interviewerBadge: "AI 面试官 · 架构考查",
+          questionText: "“在微前端多子应用共存时，你如何防止全局状态泄露与事件订阅悬挂？”",
+          hintText: "提示：建议阐述自定义事件总线沙箱与卸载回收钩子。",
+        },
+        step4: {
+          title: "六维诊断报告与教练辅导",
+          tag: "Report & Deep Dive",
+          overallLabel: "综合表现",
+          grade: "表现优秀",
+          strength: "核心优势：逻辑架构清晰，量化收益详实",
+          improvement: "改进建议：可进一步拓展极端网络故障自愈",
+        },
+      },
     },
     featuresTitle: "为面试者精心设计",
     features: [
@@ -249,6 +416,8 @@ export const zh = {
             "Seconda 严格保障用户隐私与数据安全。所有简历与面试会话均采用隔离存储与端到端权限保护，绝不泄露给任何第三方或用于未经授权的模型公开训练。",
         },
       ],
+      bottomNote:
+        "还有其他问题？欢迎随时在模拟实战中体验 AI 面试官的自适应深度追问。",
     },
     footer: {
       copyright: "© 2026 Seconda. All rights reserved.",
