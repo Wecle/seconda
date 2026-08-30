@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
+import { MagneticHighlightRail } from "./magnetic-highlight-rail";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
@@ -220,6 +221,26 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       ? Math.max(0, Math.min(100, Math.round(((room.currentRound - 1) / room.totalRounds) * 100)))
       : 0;
 
+  const turns = transcript
+    .filter((item): item is Extract<typeof item, { type: "question" }> => item.type === "question")
+    .map((question, index) => {
+      const answer = transcript.find(
+        (item): item is Extract<typeof item, { type: "answer" }> =>
+          item.type === "answer" && item.questionId === question.questionId,
+      );
+      const isCurrent = question.questionId === room.currentQuestion?.id;
+      return {
+        questionId: question.questionId,
+        roundIndex: index + 1,
+        topic: isCurrent ? room.currentQuestion?.topic : undefined,
+        questionContent: question.content,
+        answerContent: answer ? (answer.skipped ? t.interview.skippedAnswer : answer.content) : undefined,
+        isSkipped: answer?.skipped ?? false,
+        isAnswered: !!answer,
+        isCurrent,
+      };
+    });
+
   const phaseLabels: Record<InterviewRoomPhase, string> = {
     initializing: t.interview.roomPhases.initializing,
     generating_question: t.interview.roomPhases.generatingQuestion,
@@ -355,6 +376,9 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
 
   return (
     <div className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground selection:bg-primary/20">
+      {/* Left Magnetic Progressive Highlight Rail with Piano Keys Navigation */}
+      <MagneticHighlightRail turns={turns} scrollContainerRef={scrollAreaRef} />
+
       {/* Header */}
       <header className="sticky top-0 z-20 shrink-0 border-b border-border/80 bg-background/80 backdrop-blur-md">
         <div className="mx-auto flex h-15 max-w-4xl items-center justify-between gap-4 px-4 sm:px-6">
@@ -530,7 +554,9 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               return (
                 <article
                   key={`question-${item.questionId}`}
-                  className="flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  id={`interview-turn-${item.questionId}`}
+                  data-turn-id={item.questionId}
+                  className="scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
                 >
                   {/* Modern Interviewer Persona Avatar */}
                   <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-tr from-primary to-blue-600 text-primary-foreground shadow-xs ring-2 ring-primary/20">
