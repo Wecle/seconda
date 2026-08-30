@@ -11,6 +11,7 @@ import {
   BrainCircuit,
   ChevronDown,
   Check,
+  Plus,
 } from "lucide-react";
 import { useTranslation } from "@/lib/i18n/context";
 import { Badge } from "@/components/ui/badge";
@@ -249,13 +250,18 @@ export function BentoFeatures() {
                         type="button"
                         onClick={() => setSelectedPersona(key)}
                         className={cn(
-                          "flex flex-col items-center justify-center p-2 rounded-lg border text-center transition-all cursor-pointer",
+                          "flex items-center justify-between p-2 rounded-lg border text-left transition-all cursor-pointer",
                           isSelected
-                            ? "border-primary bg-background shadow-xs text-foreground font-semibold ring-1 ring-primary/40"
-                            : "border-border/60 bg-background/60 text-muted-foreground hover:bg-background",
+                            ? "border-primary bg-primary/[0.06] shadow-xs text-foreground font-semibold ring-1 ring-primary/30"
+                            : "border-border/60 bg-background/60 text-muted-foreground hover:bg-background hover:text-foreground",
                         )}
                       >
                         <span className="text-xs">{p.name}</span>
+                        {isSelected && (
+                          <span className="flex size-3.5 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                            <Check className="size-2 stroke-[3]" />
+                          </span>
+                        )}
                       </button>
                     );
                   })}
@@ -280,13 +286,17 @@ export function BentoFeatures() {
                         type="button"
                         onClick={() => setSelectedTag(tag.id as typeof selectedTag)}
                         className={cn(
-                          "inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs transition-colors cursor-pointer",
+                          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-all cursor-pointer",
                           isSelected
-                            ? "bg-primary text-primary-foreground font-medium"
-                            : "border border-border bg-background text-muted-foreground hover:text-foreground",
+                            ? "border border-primary/50 bg-primary/10 text-primary ring-1 ring-primary/30 shadow-xs"
+                            : "border border-border/80 bg-background text-muted-foreground hover:bg-muted/50 hover:text-foreground",
                         )}
                       >
-                        {isSelected && <Check className="size-3" />}
+                        {isSelected ? (
+                          <Check className="size-3 text-primary stroke-[2.5]" />
+                        ) : (
+                          <Plus className="size-3 text-muted-foreground/60" />
+                        )}
                         <span>{tag.label}</span>
                       </button>
                     );

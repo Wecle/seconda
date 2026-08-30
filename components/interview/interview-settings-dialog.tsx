@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Settings } from "lucide-react";
+import { Check, Loader2, Plus, Settings } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -109,12 +109,17 @@ export function InterviewSettingsDialog({
     setError(null);
   };
 
-  const togglePreferenceTag = (tag: string) => {
+  const togglePreferenceTag = (tagLabel: string, tagKey?: string) => {
+    const isSelected =
+      settings.preferenceTags.includes(tagLabel) ||
+      (tagKey ? settings.preferenceTags.includes(tagKey) : false);
     updateSettings(
       "preferenceTags",
-      settings.preferenceTags.includes(tag)
-        ? settings.preferenceTags.filter((current) => current !== tag)
-        : [...settings.preferenceTags, tag].slice(0, 3),
+      isSelected
+        ? settings.preferenceTags.filter(
+            (current) => current !== tagLabel && current !== tagKey,
+          )
+        : [...settings.preferenceTags, tagLabel].slice(0, 3),
     );
   };
 
@@ -295,20 +300,27 @@ export function InterviewSettingsDialog({
                 </p>
               </div>
 
-              <div className="rounded-xl border p-4 space-y-2">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {t.interview.preference}
-                </span>
+              <div className="rounded-xl border p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {t.interview.preference}
+                  </span>
+                  {settings.preferenceTags.length > 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      {settings.preferenceTags.length} 项偏好
+                    </span>
+                  )}
+                </div>
                 {settings.preferenceTags.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 pt-0.5">
                     {settings.preferenceTags.map((tag) => (
-                      <Badge
+                      <span
                         key={tag}
-                        variant="secondary"
-                        className="text-xs font-normal"
+                        className="inline-flex items-center gap-1 rounded-full border border-primary/30 bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary"
                       >
-                        {tag}
-                      </Badge>
+                        <Check className="size-3 stroke-[2.5]" />
+                        <span>{tag}</span>
+                      </span>
                     ))}
                   </div>
                 )}
@@ -489,7 +501,7 @@ export function InterviewSettingsDialog({
                 <legend className="text-sm font-medium">
                   {t.interview.persona}
                 </legend>
-                <div className="grid gap-2 sm:grid-cols-3">
+                <div className="grid gap-2.5 sm:grid-cols-3">
                   {PERSONAS.map((persona) => {
                     const selected = settings.persona === persona;
                     return (
@@ -500,16 +512,34 @@ export function InterviewSettingsDialog({
                         disabled={submitting}
                         onClick={() => updateSettings("persona", persona)}
                         className={cn(
-                          "rounded-lg border p-3 text-left transition-colors outline-none",
-                          "hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
+                          "group relative flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all outline-none cursor-pointer",
+                          "hover:bg-muted/40 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
                           "disabled:pointer-events-none disabled:opacity-50",
-                          selected && "border-primary bg-primary/5",
+                          selected
+                            ? "border-primary bg-primary/[0.06] shadow-xs ring-1 ring-primary/30"
+                            : "border-border/70 bg-card hover:border-border hover:bg-muted/30",
                         )}
                       >
-                        <span className="block text-sm font-medium">
-                          {t.interview.personas[persona].label}
-                        </span>
-                        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <span
+                            className={cn(
+                              "block text-sm font-medium transition-colors",
+                              selected
+                                ? "font-semibold text-primary"
+                                : "text-foreground",
+                            )}
+                          >
+                            {t.interview.personas[persona].label}
+                          </span>
+                          {selected ? (
+                            <span className="flex size-4 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-xs">
+                              <Check className="size-2.5 stroke-[3]" />
+                            </span>
+                          ) : (
+                            <span className="size-4 rounded-full border border-border/80 transition-colors group-hover:border-muted-foreground/40" />
+                          )}
+                        </div>
+                        <span className="mt-2 block text-xs leading-relaxed text-muted-foreground">
                           {t.interview.personas[persona].description}
                         </span>
                       </button>
@@ -519,11 +549,18 @@ export function InterviewSettingsDialog({
               </fieldset>
 
               <div className="space-y-3">
-                <div>
-                  <Label>{t.interview.preference}</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {t.interview.preferenceDescription}
-                  </p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-sm font-medium">{t.interview.preference}</Label>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {t.interview.preferenceDescription}
+                    </p>
+                  </div>
+                  {settings.preferenceTags.length > 0 && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      已选 {settings.preferenceTags.length}/3
+                    </span>
+                  )}
                 </div>
                 <div
                   className="flex flex-wrap gap-2"
@@ -532,19 +569,32 @@ export function InterviewSettingsDialog({
                 >
                   {PREFERENCE_TAGS.map((tag) => {
                     const label = t.interview.preferenceTags[tag];
-                    const selected = settings.preferenceTags.includes(label);
+                    const selected =
+                      settings.preferenceTags.includes(label) ||
+                      settings.preferenceTags.includes(tag);
                     return (
-                      <Button
+                      <button
                         key={tag}
                         type="button"
-                        size="sm"
-                        variant={selected ? "secondary" : "outline"}
                         aria-pressed={selected}
                         disabled={submitting}
-                        onClick={() => togglePreferenceTag(label)}
+                        onClick={() => togglePreferenceTag(label, tag)}
+                        className={cn(
+                          "group inline-flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-xs font-medium transition-all outline-none cursor-pointer select-none",
+                          "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                          "disabled:pointer-events-none disabled:opacity-50",
+                          selected
+                            ? "border border-primary/50 bg-primary/10 text-primary shadow-xs ring-1 ring-primary/30 hover:bg-primary/15 hover:border-primary/70"
+                            : "border border-border/80 bg-background text-muted-foreground hover:border-muted-foreground/30 hover:bg-muted/50 hover:text-foreground",
+                        )}
                       >
-                        {label}
-                      </Button>
+                        {selected ? (
+                          <Check className="size-3.5 shrink-0 text-primary stroke-[2.5] transition-transform duration-200" />
+                        ) : (
+                          <Plus className="size-3.5 shrink-0 text-muted-foreground/60 transition-transform duration-200 group-hover:text-foreground" />
+                        )}
+                        <span>{label}</span>
+                      </button>
                     );
                   })}
                 </div>
