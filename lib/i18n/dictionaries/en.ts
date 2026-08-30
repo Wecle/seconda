@@ -476,6 +476,7 @@ export const en = {
     dropPdf: "Drop PDF here or click to browse",
     pdfLimit: "PDF up to 10MB",
     clearSelectedFile: "Remove selected file",
+    reselectFile: "Change",
     uploadAndParse: "Upload & Parse",
     generator: {
       title: "AI Resume Generator",

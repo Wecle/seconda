@@ -67,7 +67,7 @@ export function NewResumeDialog({
     "transition-[width,max-width,height] duration-300 ease-out motion-reduce:transition-none",
     mode === "generate"
       ? "h-[90vh] sm:max-w-5xl"
-      : "h-[min(30.5rem,calc(100vh-2rem))] sm:max-w-md",
+      : "h-auto max-h-[90vh] sm:max-w-lg",
   );
 
   return (

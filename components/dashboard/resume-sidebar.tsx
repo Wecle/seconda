@@ -86,7 +86,7 @@ export function ResumeSidebar({
   return (
     <aside
       className={cn(
-        "relative flex min-h-0 shrink-0 flex-col border-r bg-card/95 backdrop-blur-sm transition-[width] duration-300 ease-in-out select-none",
+        "relative flex min-h-0 shrink-0 flex-col border-r bg-card/95 backdrop-blur-sm transition-[width] duration-300 ease-in-out select-none overflow-hidden",
         collapsed ? "w-16" : "w-76",
       )}
     >
@@ -247,7 +247,7 @@ export function ResumeSidebar({
           </div>
         ) : (
           /* Expanded Tree View */
-          <div className="px-3.5 py-3 pr-3.5">
+          <div className="w-full min-w-0 px-3.5 py-3">
             <div className="mb-2 flex items-center justify-between px-1">
               <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                 {t.dashboard.resumes}
@@ -285,10 +285,10 @@ export function ResumeSidebar({
                 );
 
                 return (
-                  <div key={resume.id} className="mb-1">
+                  <div key={resume.id} className="mb-1 w-full min-w-0">
                     <div
                       className={cn(
-                        "group flex items-center gap-0.5 rounded-lg pr-1 transition-all duration-150",
+                        "group flex w-full min-w-0 items-center justify-between gap-1 rounded-lg px-1.5 py-1 transition-all duration-150",
                         isCurrentSelected
                           ? "bg-accent/70 font-medium text-foreground"
                           : "hover:bg-accent/40 text-muted-foreground hover:text-foreground",
@@ -296,7 +296,7 @@ export function ResumeSidebar({
                     >
                       <button
                         onClick={() => onToggleFolder(resume.id)}
-                        className="flex min-w-0 flex-1 items-center gap-2 rounded-l-lg px-2 py-1.5 text-xs outline-none"
+                        className="flex min-w-0 flex-1 items-center gap-2 rounded-l-lg py-0.5 text-xs outline-none"
                       >
                         <ChevronRight
                           className={cn(
@@ -309,11 +309,14 @@ export function ResumeSidebar({
                         ) : (
                           <Folder className="size-4 text-muted-foreground shrink-0 transition-colors" />
                         )}
-                        <span className="truncate font-medium text-left">
+                        <span
+                          className="min-w-0 flex-1 truncate text-left font-medium"
+                          title={resume.title}
+                        >
                           {resume.title}
                         </span>
                         {latestVersion && (
-                          <span className="ml-auto shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground">
+                          <span className="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground">
                             v{resume.versions.length}
                           </span>
                         )}
@@ -354,13 +357,13 @@ export function ResumeSidebar({
                           const isAi = version.sourceType === "generated";
 
                           return (
-                            <div key={version.id}>
+                            <div key={version.id} className="w-full min-w-0">
                               <button
                                 onClick={() =>
                                   onSelectVersion(resume.id, version.id)
                                 }
                                 className={cn(
-                                  "flex w-full items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs transition-all duration-150",
+                                  "flex w-full min-w-0 items-center justify-between gap-1.5 rounded-md px-2 py-1.5 text-xs transition-all duration-150",
                                   isActive
                                     ? "bg-primary/10 font-semibold text-primary shadow-xs"
                                     : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
@@ -372,7 +375,7 @@ export function ResumeSidebar({
                                   ) : (
                                     <FileText className="size-3 shrink-0 opacity-70" />
                                   )}
-                                  <span className="font-mono">
+                                  <span className="font-mono truncate">
                                     v{version.versionNumber}
                                   </span>
                                 </div>

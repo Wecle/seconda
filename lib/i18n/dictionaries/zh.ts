@@ -470,6 +470,7 @@ export const zh = {
     dropPdf: "拖拽 PDF 到此处或点击浏览",
     pdfLimit: "PDF 文件，最大 10MB",
     clearSelectedFile: "移除已选择的文件",
+    reselectFile: "更换",
     uploadAndParse: "上传并解析",
     generator: {
       title: "智能简历生成器",

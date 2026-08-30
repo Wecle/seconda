@@ -67,36 +67,37 @@ export function UploadResumeForm({
           />
         </div>
 
-        <div
-          onDragOver={onDragOver}
-          onDragLeave={onDragLeave}
-          onDrop={onDrop}
-          onClick={() => fileInputRef.current?.click()}
-          className={cn(
-            "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-all duration-150",
-            dragOver
-              ? "border-primary bg-primary/8 scale-[0.99] shadow-inner"
-              : "border-border/80 bg-muted/20 hover:border-primary/50 hover:bg-muted/40",
-          )}
-        >
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".pdf"
-            onChange={onFileSelect}
-            className="hidden"
-          />
-          {selectedFile ? (
-            <div className="flex w-full items-center justify-between rounded-lg border border-primary/20 bg-card p-3 shadow-xs">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".pdf"
+          onChange={onFileSelect}
+          className="hidden"
+          disabled={uploading}
+        />
+
+        {selectedFile ? (
+          <div
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            className={cn(
+              "rounded-xl border bg-card p-4 transition-all duration-150 shadow-xs",
+              dragOver
+                ? "border-primary bg-primary/5 ring-2 ring-primary/20"
+                : "border-border/80 hover:border-border",
+            )}
+          >
+            <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
                   <FileText className="size-5" />
                 </div>
                 <div className="min-w-0">
                   <p className="truncate text-xs font-semibold text-foreground">
                     {selectedFile.name}
                   </p>
-                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
                     <span className="font-mono">
                       {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
                     </span>
@@ -108,36 +109,55 @@ export function UploadResumeForm({
                   </div>
                 </div>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onClearFile();
-                }}
-                aria-label={t.dashboard.clearSelectedFile}
-              >
-                <X className="size-3.5" />
-              </Button>
-            </div>
-          ) : (
-            <div className="text-center space-y-2">
-              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-muted/60 text-muted-foreground">
-                <Upload className="size-6" />
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-foreground">
-                  {t.dashboard.dropPdf}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  {t.dashboard.pdfLimit}
-                </p>
+              <div className="flex items-center gap-1 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  className="h-7 px-2.5 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  {t.dashboard.reselectFile}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  className="size-7 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  onClick={onClearFile}
+                  disabled={uploading}
+                  aria-label={t.dashboard.clearSelectedFile}
+                >
+                  <X className="size-3.5" />
+                </Button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div
+            onDragOver={onDragOver}
+            onDragLeave={onDragLeave}
+            onDrop={onDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={cn(
+              "group flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-7 text-center transition-all duration-150",
+              dragOver
+                ? "border-primary bg-primary/8 scale-[0.99] shadow-inner"
+                : "border-border/80 bg-muted/20 hover:border-primary/50 hover:bg-muted/40",
+            )}
+          >
+            <div className="mx-auto mb-2.5 flex size-11 items-center justify-center rounded-xl bg-muted/80 text-muted-foreground transition-colors group-hover:bg-primary/10 group-hover:text-primary">
+              <Upload className="size-5" />
+            </div>
+            <p className="text-xs font-semibold text-foreground">
+              {t.dashboard.dropPdf}
+            </p>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              {t.dashboard.pdfLimit}
+            </p>
+          </div>
+        )}
 
         {uploadError ? (
           <div
