@@ -29,6 +29,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
+import { Markdown } from "@/components/ui/markdown";
 import { MagneticHighlightRail } from "./magnetic-highlight-rail";
 
 interface InterviewRoomProps {
@@ -150,8 +151,8 @@ function QuestionTipCard({ tip }: { tip: string }) {
         }`}
       >
         <div className="overflow-hidden">
-          <div className="mt-2 rounded-lg bg-amber-500/8 border border-amber-500/20 p-3 text-xs leading-relaxed text-amber-950 dark:text-amber-200 whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-            {tip}
+          <div className="mt-2 rounded-lg bg-amber-500/8 border border-amber-500/20 p-3 text-xs leading-relaxed text-amber-950 dark:text-amber-200">
+            <Markdown content={tip} variant="amber" />
           </div>
         </div>
       </div>
@@ -496,9 +497,13 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                             : "bg-primary text-primary-foreground text-sm leading-relaxed"
                         }`}
                       >
-                        <p className="whitespace-pre-wrap break-words">
-                          {item.skipped ? t.interview.skippedAnswer : item.content}
-                        </p>
+                        {item.skipped ? (
+                          <p className="whitespace-pre-wrap break-words">
+                            {t.interview.skippedAnswer}
+                          </p>
+                        ) : (
+                          <Markdown content={item.content} variant="inverted" />
+                        )}
                       </div>
                     </div>
 
@@ -542,9 +547,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                       <Sparkles className="size-4" />
                     </div>
                     <div className="min-w-0 max-w-[88%] rounded-2xl rounded-tl-xs border border-border/80 bg-card p-4 sm:p-5 shadow-xs">
-                      <p className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground/95 [overflow-wrap:anywhere]">
-                        {item.content}
-                      </p>
+                      <Markdown content={item.content} className="text-[15px] leading-7 text-foreground/95" />
                     </div>
                   </article>
                 );
@@ -580,9 +583,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                     </div>
 
                     <div className="rounded-2xl rounded-tl-xs border border-border/80 bg-card p-4 sm:p-5 shadow-xs transition-all">
-                      <p className="whitespace-pre-wrap break-words text-[15px] leading-7 text-foreground/95 [overflow-wrap:anywhere]">
-                        {item.content}
-                      </p>
+                      <Markdown content={item.content} className="text-[15px] leading-7 text-foreground/95" />
 
                       {isCurrent && room.currentQuestion?.tip ? (
                         <QuestionTipCard tip={room.currentQuestion.tip} />

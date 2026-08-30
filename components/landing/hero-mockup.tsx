@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Sparkles,
   UserRound,
@@ -20,18 +20,20 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 
 export function HeroMockup() {
-  const { t, locale } = useTranslation();
+  const { t } = useTranslation();
   const landing = t.landing;
   const interview = t.interview;
   const mock = landing.heroMockup;
 
   const [reasoningExpanded, setReasoningExpanded] = useState(false);
   const [tipExpanded, setTipExpanded] = useState(true);
+  const [prevAnswer, setPrevAnswer] = useState(mock.candidateAnswer);
   const [currentAnswer, setCurrentAnswer] = useState(mock.candidateAnswer);
 
-  useEffect(() => {
+  if (prevAnswer !== mock.candidateAnswer) {
+    setPrevAnswer(mock.candidateAnswer);
     setCurrentAnswer(mock.candidateAnswer);
-  }, [locale, mock.candidateAnswer]);
+  }
 
   return (
     <div className="relative mx-auto w-full max-w-5xl">

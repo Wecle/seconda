@@ -20,6 +20,7 @@ import {
 import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Markdown } from "@/components/ui/markdown";
 import { useTranslation } from "@/lib/i18n/context";
 
 export interface ReportDimensionAverages {
@@ -380,9 +381,9 @@ export function InterviewReportView({
                 <Sparkles className="size-4 text-primary" />
                 <span>{t.report.analysisSummary}</span>
               </div>
-              <p className="mt-3 text-[14px] leading-relaxed text-foreground/90 font-normal">
-                {summary?.overallSummary || t.report.noAnalysisData}
-              </p>
+              <div className="mt-3 text-[14px] leading-relaxed text-foreground/90 font-normal">
+                <Markdown content={summary?.overallSummary || t.report.noAnalysisData} />
+              </div>
             </div>
 
             {/* Dual Column: Strengths & Improvements */}
@@ -539,9 +540,9 @@ export function InterviewReportView({
                         ) : null}
                       </div>
 
-                      <p className="text-[14.5px] font-medium leading-relaxed text-foreground/95 pt-0.5">
-                        {q.question}
-                      </p>
+                      <div className="text-[14.5px] font-medium leading-relaxed text-foreground/95 pt-0.5">
+                        <Markdown content={q.question} />
+                      </div>
                     </div>
 
                     <ChevronDown
@@ -565,11 +566,13 @@ export function InterviewReportView({
                             <UserRound className="size-3.5" />
                             <span>{t.report.yourAnswer}</span>
                           </div>
-                          <div className="rounded-xl border border-border/60 bg-background/80 p-3.5 text-xs leading-relaxed text-foreground/90 whitespace-pre-wrap [overflow-wrap:anywhere]">
+                          <div className="rounded-xl border border-border/60 bg-background/80 p-3.5 text-xs leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
                             {isSkipped ? (
                               <span className="text-xs text-muted-foreground italic">{t.interview.skippedAnswer}</span>
+                            ) : q.answer ? (
+                              <Markdown content={q.answer} />
                             ) : (
-                              q.answer || <span className="text-xs text-muted-foreground">无回答记录</span>
+                              <span className="text-xs text-muted-foreground">无回答记录</span>
                             )}
                           </div>
                         </div>
@@ -649,9 +652,9 @@ export function InterviewReportView({
                                   <Lightbulb className="size-3.5" />
                                   <span>{t.report.advice}</span>
                                 </div>
-                                <p className="mt-2 text-xs text-foreground/80 leading-relaxed">
-                                  {q.feedback.advice}
-                                </p>
+                                <div className="mt-2 text-xs text-foreground/80 leading-relaxed">
+                                  <Markdown content={q.feedback.advice} />
+                                </div>
                               </div>
                             ) : null}
                           </div>
@@ -672,9 +675,9 @@ export function InterviewReportView({
               <Compass className="size-4" />
               <span>复盘提升建议</span>
             </div>
-            <p className="mt-3 text-sm leading-relaxed text-muted-foreground whitespace-pre-wrap">
-              {summary.recommendations}
-            </p>
+            <div className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              <Markdown content={summary.recommendations} />
+            </div>
 
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
               <div className="text-xs text-muted-foreground">

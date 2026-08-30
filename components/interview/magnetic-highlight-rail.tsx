@@ -29,10 +29,7 @@ export function MagneticHighlightRail({
 
   // Track viewport visibility for all turns using IntersectionObserver
   useEffect(() => {
-    if (turns.length === 0) {
-      setActiveTurnIds([]);
-      return;
-    }
+    if (turns.length === 0) return;
 
     const viewportEl =
       scrollContainerRef?.current?.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']") ||
