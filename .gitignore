@@ -34,3 +34,6 @@ AGENTS.md
 .vercel
 docs/plan/
 
+# cloudflare
+.open-next/
+.wrangler/
