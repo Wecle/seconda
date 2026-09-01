@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "if [ -f .env.cloudflare ]; then next build --env-file=.env.cloudflare; else next build; fi",
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/agent/*.test.ts lib/ai/*.test.ts lib/ai/telemetry/*.test.ts lib/resume/*.test.ts lib/interview/*.test.ts",
