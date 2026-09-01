@@ -7,7 +7,6 @@
     "nodejs_compat"
   ],
   "minify": true,
-  "keep_vars": true,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
