@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "opennextjs-cloudflare build",
-    "build:next": "if [ -f .env.cloudflare ]; then next build --env-file=.env.cloudflare; else next build; fi",
+    "build:next": "node scripts/build-cloudflare.mjs",
     "start": "next start",
     "lint": "eslint",
     "test": "tsx --test lib/agent/*.test.ts lib/ai/*.test.ts lib/ai/telemetry/*.test.ts lib/resume/*.test.ts lib/interview/*.test.ts",

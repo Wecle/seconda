@@ -28,11 +28,27 @@
 - 可通过 Cloudflare Dashboard 或 CLI 设置：
 
 ```bash
-# 必填项 (基础与 AI)
+# 必填项 (基础与 AI 密钥)
 npx wrangler secret put DATABASE_URL
 npx wrangler secret put AUTH_SECRET
 npx wrangler secret put FAST_MODEL_API_KEY
 npx wrangler secret put QUALITY_MODEL_API_KEY
+
+# 必填项 (AI 模型策略与 Agent 配置)
+npx wrangler secret put AI_MODEL_FAST
+npx wrangler secret put AI_MODEL_FAST_FALLBACK
+npx wrangler secret put AI_MODEL_QUALITY
+npx wrangler secret put AI_MODEL_QUALITY_FALLBACK
+npx wrangler secret put AI_APPROVED_MODELS
+npx wrangler secret put AGENT_MODEL_CONTEXT_WINDOWS_JSON
+npx wrangler secret put AGENT_MODEL_CONTEXT_BUDGETS_JSON
+npx wrangler secret put INTERVIEW_AGENT_V2_ENABLED
+npx wrangler secret put INTERVIEW_AGENT_LEASE_MS
+npx wrangler secret put INTERVIEW_AGENT_LEASE_RENEW_MS
+npx wrangler secret put INTERVIEW_AGENT_HEARTBEAT_MS
+npx wrangler secret put INTERVIEW_AGENT_PROVIDER_IDLE_MS
+npx wrangler secret put INTERVIEW_AGENT_CONTEXT_WINDOW
+npx wrangler secret put INTERVIEW_AGENT_OUTPUT_RESERVE
 
 # 必填项 (Cloudflare R2 私有对象存储)
 npx wrangler secret put R2_ACCOUNT_ID

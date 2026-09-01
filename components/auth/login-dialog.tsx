@@ -81,6 +81,10 @@ export function LoginDialog({
       });
 
       if (!result || result.error) {
+        if (result?.error === "Configuration") {
+          setError(t.auth.requestError);
+          return;
+        }
         setError(
           mode === "signIn"
             ? t.auth.signInError
