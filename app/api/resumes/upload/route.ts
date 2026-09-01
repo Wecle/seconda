@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
 import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { randomUUID } from "crypto";
-import { put } from "@vercel/blob";
+import { putBlob } from "@/lib/storage";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
     const blobPathname = `resumes/${versionId}-${normalizedName}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
-    const blob = await put(blobPathname, buffer, {
+    const blob = await putBlob(blobPathname, buffer, {
       access: "public",
       contentType: file.type,
       addRandomSuffix: false,

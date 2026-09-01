@@ -28,12 +28,18 @@
 - 可通过 Cloudflare Dashboard 或 CLI 设置：
 
 ```bash
-# 必填项
+# 必填项 (基础与 AI)
 npx wrangler secret put DATABASE_URL
 npx wrangler secret put AUTH_SECRET
 npx wrangler secret put FAST_MODEL_API_KEY
 npx wrangler secret put QUALITY_MODEL_API_KEY
-npx wrangler secret put BLOB_READ_WRITE_TOKEN
+
+# 必填项 (Cloudflare R2 对象存储)
+npx wrangler secret put R2_ACCOUNT_ID
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put R2_BUCKET_NAME
+npx wrangler secret put R2_PUBLIC_URL
 
 # 可选项（OAuth）
 npx wrangler secret put AUTH_GITHUB_ID

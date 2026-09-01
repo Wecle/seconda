@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { del } from "@vercel/blob";
+import { deleteBlob } from "@/lib/storage";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
@@ -34,7 +34,7 @@ export async function DELETE(
 
     if (deletion.length > 0) {
       try {
-        await del(deletion);
+        await deleteBlob(deletion);
       } catch (error) {
         console.error(
           "Resume deleted from database but blob cleanup failed:",
