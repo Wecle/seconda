@@ -18,6 +18,12 @@
       "localConnectionString": "postgresql://postgres:postgres@localhost:5432/seconda_placeholder"
     }
   ],
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "seconda"
+    }
+  ],
   "triggers": {
     "crons": [
       "0 0 * * *"

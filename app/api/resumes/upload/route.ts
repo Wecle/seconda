@@ -145,7 +145,9 @@ export async function POST(request: NextRequest) {
       });
     }
   } catch (error) {
-    console.error("Upload error:", sanitizeAIError(error));
+    // 外层异常可能是 R2/DB/运行时错误，必须原样记录日志；
+    // sanitizeAIError 只适用于 AI 调用分支，否则真实错误被抹成 unknown 无法排查
+    console.error("Upload error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

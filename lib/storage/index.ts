@@ -1,40 +1,33 @@
-import {
-  S3Client,
-  PutObjectCommand,
-  GetObjectCommand,
-  DeleteObjectCommand,
-  DeleteObjectsCommand,
-} from "@aws-sdk/client-s3";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-function getS3Client() {
-  const accountId = process.env.R2_ACCOUNT_ID;
-  const accessKeyId = process.env.R2_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.R2_SECRET_ACCESS_KEY;
-
-  if (!accountId || !accessKeyId || !secretAccessKey) {
-    throw new Error(
-      "Missing R2 credentials: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, or R2_SECRET_ACCESS_KEY is not set."
-    );
-  }
-
-  return new S3Client({
-    region: "auto",
-    endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-    credentials: {
-      accessKeyId,
-      secretAccessKey,
-    },
-  });
+interface R2ObjectBodyLike {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  httpMetadata?: { contentType?: string };
+  size: number;
 }
 
-function toUint8Array(data: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
-  if (data instanceof ArrayBuffer) {
-    return new Uint8Array(data);
+interface R2BucketBinding {
+  put(
+    key: string,
+    value: Buffer | Uint8Array | ArrayBuffer,
+    options?: { httpMetadata?: { contentType?: string } },
+  ): Promise<unknown>;
+  get(key: string): Promise<R2ObjectBodyLike | null>;
+  delete(key: string): Promise<void>;
+}
+
+// R2 原生 binding（wrangler.jsonc 的 r2_buckets），不走 S3 HTTP API：
+// @aws-sdk/client-s3 在 Workers 上会因 fs.readFile 崩溃，且原生 binding
+// 免签名、免 secrets、走 Cloudflare 内部网络。
+function getBucket(): R2BucketBinding {
+  const env = getCloudflareContext().env as Record<string, unknown>;
+  const bucket = env.R2 as R2BucketBinding | undefined;
+  if (!bucket) {
+    throw new Error(
+      "Missing R2 binding: add an r2_buckets binding named R2 to wrangler.jsonc",
+    );
   }
-  if (data instanceof Uint8Array) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-  }
-  return new Uint8Array(data);
+  return bucket;
 }
 
 function normalizeKey(pathname: string): string {
@@ -59,23 +52,13 @@ export async function putBlob(
   body: Buffer | Uint8Array | ArrayBuffer,
   options?: PutBlobOptions
 ): Promise<{ key: string; pathname: string }> {
-  const client = getS3Client();
-  const bucketName = process.env.R2_BUCKET_NAME;
-  if (!bucketName) {
-    throw new Error("R2_BUCKET_NAME environment variable is not set.");
-  }
-
   const key = normalizeKey(pathname);
-  const uint8 = toUint8Array(body);
 
-  await client.send(
-    new PutObjectCommand({
-      Bucket: bucketName,
-      Key: key,
-      Body: uint8,
-      ContentType: options?.contentType || "application/octet-stream",
-    })
-  );
+  await getBucket().put(key, body, {
+    httpMetadata: {
+      contentType: options?.contentType || "application/octet-stream",
+    },
+  });
 
   return {
     key,
@@ -88,59 +71,28 @@ export async function getBlob(pathname: string): Promise<{
   contentType?: string;
   contentLength?: number;
 }> {
-  const client = getS3Client();
-  const bucketName = process.env.R2_BUCKET_NAME;
-  if (!bucketName) {
-    throw new Error("R2_BUCKET_NAME environment variable is not set.");
-  }
-
   const key = normalizeKey(pathname);
-  const command = new GetObjectCommand({
-    Bucket: bucketName,
-    Key: key,
-  });
+  const object = await getBucket().get(key);
 
-  const response = await client.send(command);
-  const bytes = await response.Body?.transformToByteArray();
-
-  if (!bytes) {
+  if (!object) {
     throw new Error(`Failed to read object from R2: ${pathname}`);
   }
 
   return {
-    body: bytes,
-    contentType: response.ContentType,
-    contentLength: response.ContentLength,
+    body: new Uint8Array(await object.arrayBuffer()),
+    contentType: object.httpMetadata?.contentType,
+    contentLength: object.size,
   };
 }
 
 export async function deleteBlob(urlOrKey: string | string[]): Promise<void> {
-  const client = getS3Client();
-  const bucketName = process.env.R2_BUCKET_NAME;
-  if (!bucketName) {
-    return;
-  }
-
   const items = Array.isArray(urlOrKey) ? urlOrKey : [urlOrKey];
   const keys = items.map(normalizeKey).filter(Boolean);
 
   if (keys.length === 0) return;
 
-  if (keys.length === 1) {
-    await client.send(
-      new DeleteObjectCommand({
-        Bucket: bucketName,
-        Key: keys[0],
-      })
-    );
-  } else {
-    await client.send(
-      new DeleteObjectsCommand({
-        Bucket: bucketName,
-        Delete: {
-          Objects: keys.map((Key) => ({ Key })),
-        },
-      })
-    );
+  const bucket = getBucket();
+  for (const key of keys) {
+    await bucket.delete(key);
   }
 }
