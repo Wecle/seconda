@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import NextAuth from "next-auth";
+import type { Provider } from "next-auth/providers";
 import Credentials from "next-auth/providers/credentials";
 import GitHub from "next-auth/providers/github";
 import Google from "next-auth/providers/google";
@@ -105,32 +106,45 @@ async function ensureOAuthUser(params: {
   return user.id;
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
-  trustHost: true,
-  secret: process.env.AUTH_SECRET,
-  session: {
-    strategy: "jwt",
-  },
-  providers: [
-    GitHub({}),
-    Google({}),
-    Credentials({
-      credentials: {
-        mode: { label: "Mode", type: "text" },
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-        name: { label: "Name", type: "text" },
-      },
-      async authorize(rawCredentials) {
-        const parsed = credentialsSchema.safeParse(rawCredentials);
-        if (!parsed.success) {
-          return null;
-        }
+const authProviders: Provider[] = [];
 
-        const { mode, password } = parsed.data;
-        const email = normalizeEmail(parsed.data.email);
-        const name = parsed.data.name?.trim() || null;
+if (process.env.AUTH_GITHUB_ID && process.env.AUTH_GITHUB_SECRET) {
+  authProviders.push(
+    GitHub({
+      clientId: process.env.AUTH_GITHUB_ID,
+      clientSecret: process.env.AUTH_GITHUB_SECRET,
+    }),
+  );
+}
 
+if (process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET) {
+  authProviders.push(
+    Google({
+      clientId: process.env.AUTH_GOOGLE_ID,
+      clientSecret: process.env.AUTH_GOOGLE_SECRET,
+    }),
+  );
+}
+
+authProviders.push(
+  Credentials({
+    credentials: {
+      mode: { label: "Mode", type: "text" },
+      email: { label: "Email", type: "email" },
+      password: { label: "Password", type: "password" },
+      name: { label: "Name", type: "text" },
+    },
+    async authorize(rawCredentials) {
+      const parsed = credentialsSchema.safeParse(rawCredentials);
+      if (!parsed.success) {
+        return null;
+      }
+
+      const { mode, password } = parsed.data;
+      const email = normalizeEmail(parsed.data.email);
+      const name = parsed.data.name?.trim() || null;
+
+      try {
         if (mode === "signUp") {
           const passwordHash = hashPassword(password);
           const existingUser = await findUserByEmail(email);
@@ -174,9 +188,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           name: user.name,
           image: user.image,
         };
-      },
-    }),
-  ],
+      } catch (authError) {
+        console.error("Auth database/runtime error:", authError);
+        throw authError;
+      }
+    },
+  }),
+);
+
+export const { handlers, auth, signIn, signOut } = NextAuth({
+  trustHost: true,
+  secret: process.env.AUTH_SECRET,
+  session: {
+    strategy: "jwt",
+  },
+  providers: authProviders,
   callbacks: {
     async signIn({ user, account }) {
       if (!account) {
