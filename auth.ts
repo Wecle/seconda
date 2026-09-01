@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import NextAuth from "next-auth";
 import type { Provider } from "next-auth/providers";
 import Credentials from "next-auth/providers/credentials";
@@ -64,7 +63,7 @@ async function ensureOAuthUser(params: {
   let user = await findUserByEmail(normalizedEmail);
 
   if (!user) {
-    const userId = randomUUID();
+    const userId = crypto.randomUUID();
     const [createdUser] = await db
       .insert(users)
       .values({
@@ -96,7 +95,7 @@ async function ensureOAuthUser(params: {
   await db
     .insert(oauthAccounts)
     .values({
-      id: randomUUID(),
+      id: crypto.randomUUID(),
       userId: user.id,
       provider: params.provider,
       providerAccountId: params.providerAccountId,
@@ -146,14 +145,14 @@ authProviders.push(
 
       try {
         if (mode === "signUp") {
-          const passwordHash = hashPassword(password);
+          const passwordHash = await hashPassword(password);
           const existingUser = await findUserByEmail(email);
 
           if (existingUser) {
             return null;
           }
 
-          const userId = randomUUID();
+          const userId = crypto.randomUUID();
           const [createdUser] = await db
             .insert(users)
             .values({
@@ -177,7 +176,7 @@ authProviders.push(
           return null;
         }
 
-        const isValidPassword = verifyPassword(password, user.passwordHash);
+        const isValidPassword = await verifyPassword(password, user.passwordHash);
         if (!isValidPassword) {
           return null;
         }
