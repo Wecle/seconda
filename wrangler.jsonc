@@ -7,6 +7,7 @@
     "nodejs_compat"
   ],
   "minify": true,
+  "keep_vars": true,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
@@ -15,5 +16,21 @@
     "crons": [
       "0 0 * * *"
     ]
+  },
+  "vars": {
+    "AI_MODEL_FAST": "deepseek/deepseek-v4-flash",
+    "AI_MODEL_FAST_FALLBACK": "deepseek/deepseek-v4-pro",
+    "AI_MODEL_QUALITY": "zhipu/glm-5.1",
+    "AI_MODEL_QUALITY_FALLBACK": "zhipu/glm-4.7",
+    "AI_APPROVED_MODELS": "deepseek/deepseek-v4-flash,deepseek/deepseek-v4-pro,zhipu/glm-5.1,zhipu/glm-4.7",
+    "AGENT_MODEL_CONTEXT_WINDOWS_JSON": "{\"deepseek/deepseek-v4-flash\":1048576,\"deepseek/deepseek-v4-pro\":1048576,\"zhipu/glm-5.1\":128000,\"zhipu/glm-4.7\":128000}",
+    "AGENT_MODEL_CONTEXT_BUDGETS_JSON": "{\"deepseek/deepseek-v4-flash\":128000,\"deepseek/deepseek-v4-pro\":128000,\"zhipu/glm-5.1\":128000,\"zhipu/glm-4.7\":128000}",
+    "INTERVIEW_AGENT_V2_ENABLED": "true",
+    "INTERVIEW_AGENT_LEASE_MS": "30000",
+    "INTERVIEW_AGENT_LEASE_RENEW_MS": "10000",
+    "INTERVIEW_AGENT_HEARTBEAT_MS": "10000",
+    "INTERVIEW_AGENT_PROVIDER_IDLE_MS": "25000",
+    "INTERVIEW_AGENT_CONTEXT_WINDOW": "128000",
+    "INTERVIEW_AGENT_OUTPUT_RESERVE": "8000"
   }
 }
