@@ -45,9 +45,7 @@ export async function POST(request: NextRequest) {
 
     const buffer = Buffer.from(await file.arrayBuffer());
     const blob = await putBlob(blobPathname, buffer, {
-      access: "public",
       contentType: file.type,
-      addRandomSuffix: false,
     });
 
     await db.insert(resumes).values({
@@ -63,7 +61,7 @@ export async function POST(request: NextRequest) {
       versionNumber: 1,
       sourceType: "uploaded",
       originalFilename: file.name,
-      storedPath: blob.url,
+      storedPath: blob.key,
       mimeType: file.type,
       fileSize: file.size,
       parseStatus: "extracting",

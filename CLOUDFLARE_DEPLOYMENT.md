@@ -34,12 +34,11 @@ npx wrangler secret put AUTH_SECRET
 npx wrangler secret put FAST_MODEL_API_KEY
 npx wrangler secret put QUALITY_MODEL_API_KEY
 
-# 必填项 (Cloudflare R2 对象存储)
+# 必填项 (Cloudflare R2 私有对象存储)
 npx wrangler secret put R2_ACCOUNT_ID
 npx wrangler secret put R2_ACCESS_KEY_ID
 npx wrangler secret put R2_SECRET_ACCESS_KEY
 npx wrangler secret put R2_BUCKET_NAME
-npx wrangler secret put R2_PUBLIC_URL
 
 # 可选项（OAuth）
 npx wrangler secret put AUTH_GITHUB_ID

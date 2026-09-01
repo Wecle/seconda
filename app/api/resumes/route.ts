@@ -40,7 +40,9 @@ export async function GET() {
         versionNumber: v.versionNumber,
         sourceType: v.sourceType,
         originalFilename: v.originalFilename,
-        originalFileUrl: v.storedPath,
+        originalFileUrl: v.storedPath
+          ? `/api/resumes/${resume.id}/file?versionId=${v.id}`
+          : null,
         parseStatus: v.parseStatus,
         parseError: v.parseError,
         parsedData: (v.parsedJson as ParsedResume) ?? null,

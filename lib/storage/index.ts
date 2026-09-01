@@ -1,6 +1,7 @@
 import {
   S3Client,
   PutObjectCommand,
+  GetObjectCommand,
   DeleteObjectCommand,
   DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
@@ -36,42 +37,80 @@ function toUint8Array(data: Buffer | Uint8Array | ArrayBuffer): Uint8Array {
   return new Uint8Array(data);
 }
 
+function normalizeKey(pathname: string): string {
+  if (pathname.startsWith("http://") || pathname.startsWith("https://")) {
+    try {
+      const parsed = new URL(pathname);
+      return parsed.pathname.replace(/^\/+/, "");
+    } catch {
+      return pathname.replace(/^\/+/, "");
+    }
+  }
+  return pathname.replace(/^\/+/, "");
+}
+
 export interface PutBlobOptions {
   contentType?: string;
-  access?: "public";
-  addRandomSuffix?: boolean;
+  access?: "public" | "private";
 }
 
 export async function putBlob(
   pathname: string,
   body: Buffer | Uint8Array | ArrayBuffer,
   options?: PutBlobOptions
-): Promise<{ url: string; pathname: string }> {
+): Promise<{ key: string; pathname: string }> {
   const client = getS3Client();
   const bucketName = process.env.R2_BUCKET_NAME;
   if (!bucketName) {
     throw new Error("R2_BUCKET_NAME environment variable is not set.");
   }
 
+  const key = normalizeKey(pathname);
   const uint8 = toUint8Array(body);
 
   await client.send(
     new PutObjectCommand({
       Bucket: bucketName,
-      Key: pathname,
+      Key: key,
       Body: uint8,
       ContentType: options?.contentType || "application/octet-stream",
     })
   );
 
-  const publicUrlBase = process.env.R2_PUBLIC_URL?.replace(/\/+$/, "");
-  const url = publicUrlBase
-    ? `${publicUrlBase}/${pathname}`
-    : `https://${bucketName}.r2.cloudflarestorage.com/${pathname}`;
+  return {
+    key,
+    pathname: key,
+  };
+}
+
+export async function getBlob(pathname: string): Promise<{
+  body: Uint8Array;
+  contentType?: string;
+  contentLength?: number;
+}> {
+  const client = getS3Client();
+  const bucketName = process.env.R2_BUCKET_NAME;
+  if (!bucketName) {
+    throw new Error("R2_BUCKET_NAME environment variable is not set.");
+  }
+
+  const key = normalizeKey(pathname);
+  const command = new GetObjectCommand({
+    Bucket: bucketName,
+    Key: key,
+  });
+
+  const response = await client.send(command);
+  const bytes = await response.Body?.transformToByteArray();
+
+  if (!bytes) {
+    throw new Error(`Failed to read object from R2: ${pathname}`);
+  }
 
   return {
-    url,
-    pathname,
+    body: bytes,
+    contentType: response.ContentType,
+    contentLength: response.ContentLength,
   };
 }
 
@@ -83,20 +122,7 @@ export async function deleteBlob(urlOrKey: string | string[]): Promise<void> {
   }
 
   const items = Array.isArray(urlOrKey) ? urlOrKey : [urlOrKey];
-  const keys = items
-    .map((item) => {
-      if (!item) return "";
-      try {
-        if (item.startsWith("http://") || item.startsWith("https://")) {
-          const parsed = new URL(item);
-          return parsed.pathname.replace(/^\/+/, "");
-        }
-        return item.replace(/^\/+/, "");
-      } catch {
-        return item;
-      }
-    })
-    .filter(Boolean);
+  const keys = items.map(normalizeKey).filter(Boolean);
 
   if (keys.length === 0) return;
 

@@ -7,6 +7,7 @@ import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { planResumeReparse } from "@/lib/resume/reparse-policy";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
+import { getBlob } from "@/lib/storage";
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -88,11 +89,22 @@ export async function POST(
         .where(eq(resumeVersions.id, versionId));
 
       try {
-        const response = await fetch(reparsePlan.storedPath);
-        if (!response.ok) {
-          throw new Error(`Failed to fetch original file (${response.status})`);
+        let buffer: Buffer;
+        if (
+          reparsePlan.storedPath.startsWith("http://") ||
+          reparsePlan.storedPath.startsWith("https://")
+        ) {
+          const response = await fetch(reparsePlan.storedPath);
+          if (!response.ok) {
+            throw new Error(
+              `Failed to fetch original file (${response.status})`
+            );
+          }
+          buffer = Buffer.from(await response.arrayBuffer());
+        } else {
+          const file = await getBlob(reparsePlan.storedPath);
+          buffer = Buffer.from(file.body);
         }
-        const buffer = Buffer.from(await response.arrayBuffer());
         extractedText = await extractTextFromPDF(buffer);
 
         if (extractedText.length < 50) {
