@@ -32,9 +32,72 @@ function getDefaultSql(): postgres.Sql {
 
 export async function migrateDatabase(customSql?: postgres.Sql) {
   const sql = customSql ?? getDefaultSql();
-  await sql.begin(async (tx) => {
-    await runMigration(tx as unknown as postgres.Sql);
-  });
+  const maxRetries = 5;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await sql.begin(async (tx) => {
+        const txSql = tx as unknown as postgres.Sql;
+        // 1. Transaction-level advisory lock prevents concurrent migration workers from deadlocking
+        await txSql`SELECT pg_advisory_xact_lock(23438491039872066)`;
+        // 2. Bound lock acquisition time to fail fast and trigger clean retry rather than blocking
+        await txSql`SET LOCAL lock_timeout = '10s'`;
+        await runMigration(txSql);
+      });
+      return;
+    } catch (error: unknown) {
+      lastError = error;
+      const pgError = error as { code?: string; message?: string };
+      const isTransientLockError =
+        pgError?.code === "40P01" || // deadlock_detected
+        pgError?.code === "55P03" || // lock_not_available
+        pgError?.code === "40001"; // serialization_failure
+
+      if (isTransientLockError && attempt < maxRetries) {
+        const delayMs = Math.min(500 * Math.pow(2, attempt - 1) + Math.random() * 200, 5000);
+        console.warn(
+          `[Migration] Transient lock conflict (code: ${pgError.code}) on attempt ${attempt}/${maxRetries}. Retrying in ${Math.round(delayMs)}ms...`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function getExistingColumns(sql: postgres.Sql, tableName: string): Promise<Set<string>> {
+  const rows = await sql<{ column_name: string }[]>`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = CURRENT_SCHEMA()
+      AND table_name = ${tableName}
+  `;
+  return new Set(rows.map((r) => r.column_name));
+}
+
+async function hasConstraint(sql: postgres.Sql, tableName: string, constraintName: string): Promise<boolean> {
+  const rows = await sql<{ constraint_name: string }[]>`
+    SELECT constraint_name
+    FROM information_schema.table_constraints
+    WHERE table_schema = CURRENT_SCHEMA()
+      AND table_name = ${tableName}
+      AND constraint_name = ${constraintName}
+  `;
+  return rows.length > 0;
+}
+
+async function hasTrigger(sql: postgres.Sql, tableName: string, triggerName: string): Promise<boolean> {
+  const rows = await sql<{ trigger_name: string }[]>`
+    SELECT trigger_name
+    FROM information_schema.triggers
+    WHERE trigger_schema = CURRENT_SCHEMA()
+      AND event_object_table = ${tableName}
+      AND trigger_name = ${triggerName}
+  `;
+  return rows.length > 0;
 }
 
 async function runMigration(sql: postgres.Sql) {
@@ -71,12 +134,14 @@ async function runMigration(sql: postgres.Sql) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
-  await sql`
-    ALTER TABLE resumes
-      ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-      ADD COLUMN IF NOT EXISTS interview_settings JSONB,
-      ADD COLUMN IF NOT EXISTS creation_idempotency_key TEXT
-  `;
+  const resumeCols = await getExistingColumns(sql, "resumes");
+  const missingResumeCols: string[] = [];
+  if (!resumeCols.has("user_id")) missingResumeCols.push("ADD COLUMN user_id UUID REFERENCES users(id) ON DELETE CASCADE");
+  if (!resumeCols.has("interview_settings")) missingResumeCols.push("ADD COLUMN interview_settings JSONB");
+  if (!resumeCols.has("creation_idempotency_key")) missingResumeCols.push("ADD COLUMN creation_idempotency_key TEXT");
+  if (missingResumeCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE resumes ${missingResumeCols.join(", ")}`);
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resumes_creation_owner_key
     ON resumes(user_id, creation_idempotency_key)
@@ -104,12 +169,15 @@ async function runMigration(sql: postgres.Sql) {
       )
     )
   `;
-  await sql`
-    ALTER TABLE resume_versions
-      ADD COLUMN IF NOT EXISTS source_type TEXT NOT NULL DEFAULT 'uploaded',
-      ALTER COLUMN original_filename DROP NOT NULL,
-      ALTER COLUMN stored_path DROP NOT NULL
-  `;
+  const rvCols = await getExistingColumns(sql, "resume_versions");
+  if (!rvCols.has("source_type")) {
+    await sql`
+      ALTER TABLE resume_versions
+        ADD COLUMN source_type TEXT NOT NULL DEFAULT 'uploaded',
+        ALTER COLUMN original_filename DROP NOT NULL,
+        ALTER COLUMN stored_path DROP NOT NULL
+    `;
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_resume_versions_resume_number
     ON resume_versions(resume_id, version_number)
@@ -195,39 +263,40 @@ async function runMigration(sql: postgres.Sql) {
       )
     )
   `;
-  await sql`
-    ALTER TABLE agent_sessions
-      ADD COLUMN IF NOT EXISTS capability TEXT NOT NULL DEFAULT 'workspace',
-      ADD COLUMN IF NOT EXISTS prompt_version TEXT NOT NULL DEFAULT 'workspace-agent-v1',
-      ALTER COLUMN workspace_root DROP NOT NULL
-  `;
-  await sql`
-    ALTER TABLE agent_sessions
-      DROP CONSTRAINT IF EXISTS agent_sessions_capability_workspace_check
-  `;
-  await sql`
-    ALTER TABLE agent_sessions
-      ADD CONSTRAINT agent_sessions_capability_workspace_check CHECK (
-        capability <> 'workspace' OR workspace_root IS NOT NULL
-      )
-  `;
-  await sql.unsafe(`
-    CREATE OR REPLACE FUNCTION reject_agent_session_capability_update()
-    RETURNS trigger AS $$
-    BEGIN
-      IF OLD.capability IS DISTINCT FROM NEW.capability THEN
-        RAISE EXCEPTION 'agent session capability is immutable';
-      END IF;
-      RETURN NEW;
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-  await sql.unsafe(`
-    DROP TRIGGER IF EXISTS agent_sessions_capability_immutable ON agent_sessions;
-    CREATE TRIGGER agent_sessions_capability_immutable
-    BEFORE UPDATE OF capability ON agent_sessions
-    FOR EACH ROW EXECUTE FUNCTION reject_agent_session_capability_update()
-  `);
+  const asCols = await getExistingColumns(sql, "agent_sessions");
+  const missingAsCols: string[] = [];
+  if (!asCols.has("capability")) missingAsCols.push("ADD COLUMN capability TEXT NOT NULL DEFAULT 'workspace'");
+  if (!asCols.has("prompt_version")) missingAsCols.push("ADD COLUMN prompt_version TEXT NOT NULL DEFAULT 'workspace-agent-v1'");
+  if (missingAsCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE agent_sessions ${missingAsCols.join(", ")}, ALTER COLUMN workspace_root DROP NOT NULL`);
+  }
+  if (!await hasConstraint(sql, "agent_sessions", "agent_sessions_capability_workspace_check")) {
+    await sql`
+      ALTER TABLE agent_sessions
+        ADD CONSTRAINT agent_sessions_capability_workspace_check CHECK (
+          capability <> 'workspace' OR workspace_root IS NOT NULL
+        )
+    `;
+  }
+  if (!await hasTrigger(sql, "agent_sessions", "agent_sessions_capability_immutable")) {
+    await sql.unsafe(`
+      CREATE OR REPLACE FUNCTION reject_agent_session_capability_update()
+      RETURNS trigger AS $$
+      BEGIN
+        IF OLD.capability IS DISTINCT FROM NEW.capability THEN
+          RAISE EXCEPTION 'agent session capability is immutable';
+        END IF;
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql
+    `);
+    await sql.unsafe(`
+      DROP TRIGGER IF EXISTS agent_sessions_capability_immutable ON agent_sessions;
+      CREATE TRIGGER agent_sessions_capability_immutable
+      BEFORE UPDATE OF capability ON agent_sessions
+      FOR EACH ROW EXECUTE FUNCTION reject_agent_session_capability_update()
+    `);
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS agent_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -243,30 +312,34 @@ async function runMigration(sql: postgres.Sql) {
       CONSTRAINT agent_runs_status_check CHECK (status IN ('queued', 'running', 'completed', 'failed', 'cancelled'))
     )
   `;
-  await sql`
-    ALTER TABLE agent_runs
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ
-  `;
-  await sql`
-    UPDATE agent_runs
-    SET created_at = COALESCE(started_at, NOW())
-    WHERE created_at IS NULL
-  `;
-  await sql`
-    ALTER TABLE agent_runs
-      ALTER COLUMN created_at SET DEFAULT NOW(),
-      ALTER COLUMN created_at SET NOT NULL,
-      ALTER COLUMN status SET DEFAULT 'queued',
-      ALTER COLUMN started_at DROP NOT NULL,
-      ALTER COLUMN started_at DROP DEFAULT
-  `;
-  await sql`ALTER TABLE agent_runs DROP CONSTRAINT IF EXISTS agent_runs_status_check`;
-  await sql`
-    ALTER TABLE agent_runs
-      ADD CONSTRAINT agent_runs_status_check CHECK (
-        status IN ('queued', 'running', 'completed', 'failed', 'cancelled')
-      )
-  `;
+  const arCols = await getExistingColumns(sql, "agent_runs");
+  if (!arCols.has("created_at")) {
+    await sql`
+      ALTER TABLE agent_runs
+        ADD COLUMN created_at TIMESTAMPTZ
+    `;
+    await sql`
+      UPDATE agent_runs
+      SET created_at = COALESCE(started_at, NOW())
+      WHERE created_at IS NULL
+    `;
+    await sql`
+      ALTER TABLE agent_runs
+        ALTER COLUMN created_at SET DEFAULT NOW(),
+        ALTER COLUMN created_at SET NOT NULL,
+        ALTER COLUMN status SET DEFAULT 'queued',
+        ALTER COLUMN started_at DROP NOT NULL,
+        ALTER COLUMN started_at DROP DEFAULT
+    `;
+  }
+  if (!await hasConstraint(sql, "agent_runs", "agent_runs_status_check")) {
+    await sql`
+      ALTER TABLE agent_runs
+        ADD CONSTRAINT agent_runs_status_check CHECK (
+          status IN ('queued', 'running', 'completed', 'failed', 'cancelled')
+        )
+    `;
+  }
   await sql.unsafe(`
     DO $$
     BEGIN
@@ -301,24 +374,28 @@ async function runMigration(sql: postgres.Sql) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
-  await sql`
-    ALTER TABLE agent_events
-      ADD COLUMN IF NOT EXISTS dedupe_key TEXT,
-      ADD COLUMN IF NOT EXISTS schema_version INTEGER NOT NULL DEFAULT 1,
-      ADD COLUMN IF NOT EXISTS visibility TEXT NOT NULL DEFAULT 'model'
-  `;
-  await sql`ALTER TABLE agent_events DROP CONSTRAINT IF EXISTS agent_events_schema_version_check`;
-  await sql`
-    ALTER TABLE agent_events
-      ADD CONSTRAINT agent_events_schema_version_check CHECK (schema_version > 0)
-  `;
-  await sql`ALTER TABLE agent_events DROP CONSTRAINT IF EXISTS agent_events_visibility_check`;
-  await sql`
-    ALTER TABLE agent_events
-      ADD CONSTRAINT agent_events_visibility_check CHECK (
-        visibility IN ('model', 'user', 'model_and_user', 'internal')
-      )
-  `;
+  const aeCols = await getExistingColumns(sql, "agent_events");
+  const missingAeCols: string[] = [];
+  if (!aeCols.has("dedupe_key")) missingAeCols.push("ADD COLUMN dedupe_key TEXT");
+  if (!aeCols.has("schema_version")) missingAeCols.push("ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 1");
+  if (!aeCols.has("visibility")) missingAeCols.push("ADD COLUMN visibility TEXT NOT NULL DEFAULT 'model'");
+  if (missingAeCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE agent_events ${missingAeCols.join(", ")}`);
+  }
+  if (!await hasConstraint(sql, "agent_events", "agent_events_schema_version_check")) {
+    await sql`
+      ALTER TABLE agent_events
+        ADD CONSTRAINT agent_events_schema_version_check CHECK (schema_version > 0)
+    `;
+  }
+  if (!await hasConstraint(sql, "agent_events", "agent_events_visibility_check")) {
+    await sql`
+      ALTER TABLE agent_events
+        ADD CONSTRAINT agent_events_visibility_check CHECK (
+          visibility IN ('model', 'user', 'model_and_user', 'internal')
+        )
+    `;
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_events_session_sequence
     ON agent_events(session_id, sequence)
@@ -338,11 +415,11 @@ async function runMigration(sql: postgres.Sql) {
       IF EXISTS (
         SELECT 1
         FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'interviews'
+        WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'interviews'
       ) AND NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'interviews' AND column_name = 'user_id'
+        WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'interviews' AND column_name = 'user_id'
       ) THEN
         DROP TABLE IF EXISTS interview_reports CASCADE;
         DROP TABLE IF EXISTS interview_completion_jobs CASCADE;
@@ -357,11 +434,11 @@ async function runMigration(sql: postgres.Sql) {
       IF EXISTS (
         SELECT 1
         FROM information_schema.tables
-        WHERE table_schema = 'public' AND table_name = 'interview_questions'
+        WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'interview_questions'
       ) AND NOT EXISTS (
         SELECT 1
         FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'interview_questions' AND column_name = 'source_interview_run_id'
+        WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'interview_questions' AND column_name = 'source_interview_run_id'
       ) THEN
         DROP TABLE IF EXISTS interview_reports CASCADE;
         DROP TABLE IF EXISTS interview_completion_jobs CASCADE;
@@ -410,14 +487,16 @@ async function runMigration(sql: postgres.Sql) {
       )
     )
   `;
-  await sql`
-    ALTER TABLE interviews
-      ADD COLUMN IF NOT EXISTS target_role TEXT,
-      ADD COLUMN IF NOT EXISTS preference TEXT NOT NULL DEFAULT '',
-      ADD COLUMN IF NOT EXISTS preference_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS answered_round_count INTEGER NOT NULL DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1
-  `;
+  const intCols = await getExistingColumns(sql, "interviews");
+  const missingIntCols: string[] = [];
+  if (!intCols.has("target_role")) missingIntCols.push("ADD COLUMN target_role TEXT");
+  if (!intCols.has("preference")) missingIntCols.push("ADD COLUMN preference TEXT NOT NULL DEFAULT ''");
+  if (!intCols.has("preference_tags")) missingIntCols.push("ADD COLUMN preference_tags JSONB NOT NULL DEFAULT '[]'::jsonb");
+  if (!intCols.has("answered_round_count")) missingIntCols.push("ADD COLUMN answered_round_count INTEGER NOT NULL DEFAULT 0");
+  if (!intCols.has("version")) missingIntCols.push("ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+  if (missingIntCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE interviews ${missingIntCols.join(", ")}`);
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_owner_creation_key
     ON interviews(user_id, creation_idempotency_key)
@@ -452,28 +531,26 @@ async function runMigration(sql: postgres.Sql) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_resume_snapshots_interview
     ON interview_resume_snapshots(interview_id)
   `;
-  await sql.unsafe(`
-    ALTER TABLE interviews ALTER COLUMN resume_version_id SET NOT NULL;
-    ALTER TABLE interviews DROP CONSTRAINT IF EXISTS interviews_resume_version_id_fkey;
-    ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_id SET NOT NULL;
-    ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_version_id SET NOT NULL;
-    ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_id_fkey;
-    ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_version_id_fkey;
-  `);
-  await sql.unsafe(`
-    CREATE OR REPLACE FUNCTION reject_interview_resume_snapshot_update()
-    RETURNS trigger AS $$
-    BEGIN
-      RAISE EXCEPTION 'interview resume snapshots are immutable';
-    END;
-    $$ LANGUAGE plpgsql
-  `);
-  await sql.unsafe(`
-    DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots;
-    CREATE TRIGGER interview_resume_snapshots_immutable
-    BEFORE UPDATE ON interview_resume_snapshots
-    FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update()
-  `);
+  if (!await hasTrigger(sql, "interview_resume_snapshots", "interview_resume_snapshots_immutable")) {
+    await sql.unsafe(`
+      ALTER TABLE interviews ALTER COLUMN resume_version_id SET NOT NULL;
+      ALTER TABLE interviews DROP CONSTRAINT IF EXISTS interviews_resume_version_id_fkey;
+      ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_id SET NOT NULL;
+      ALTER TABLE interview_resume_snapshots ALTER COLUMN resume_version_id SET NOT NULL;
+      ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_id_fkey;
+      ALTER TABLE interview_resume_snapshots DROP CONSTRAINT IF EXISTS interview_resume_snapshots_resume_version_id_fkey;
+      CREATE OR REPLACE FUNCTION reject_interview_resume_snapshot_update()
+      RETURNS trigger AS $$
+      BEGIN
+        RAISE EXCEPTION 'interview resume snapshots are immutable';
+      END;
+      $$ LANGUAGE plpgsql;
+      DROP TRIGGER IF EXISTS interview_resume_snapshots_immutable ON interview_resume_snapshots;
+      CREATE TRIGGER interview_resume_snapshots_immutable
+      BEFORE UPDATE ON interview_resume_snapshots
+      FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update();
+    `);
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS interview_agent_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -573,23 +650,27 @@ async function runMigration(sql: postgres.Sql) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_answers_submission_key
     ON interview_answers(interview_id, submission_key)
   `;
-  await sql.unsafe(`
-    ALTER TABLE interview_questions
-      DROP CONSTRAINT IF EXISTS interview_questions_source_interview_run_id_fkey;
-    ALTER TABLE interview_questions
-      ADD CONSTRAINT interview_questions_source_interview_run_id_fkey
-      FOREIGN KEY (source_interview_run_id) REFERENCES interview_agent_runs(id) ON DELETE RESTRICT;
-    ALTER TABLE interview_answers
-      DROP CONSTRAINT IF EXISTS interview_answers_question_id_fkey;
-    ALTER TABLE interview_answers
-      ADD CONSTRAINT interview_answers_question_id_fkey
-      FOREIGN KEY (question_id) REFERENCES interview_questions(id) ON DELETE RESTRICT;
-    ALTER TABLE interview_agent_runs
-      DROP CONSTRAINT IF EXISTS interview_agent_runs_trigger_answer_fk;
-    ALTER TABLE interview_agent_runs
-      ADD CONSTRAINT interview_agent_runs_trigger_answer_fk
-      FOREIGN KEY (trigger_answer_id) REFERENCES interview_answers(id) ON DELETE RESTRICT;
-  `);
+  if (!await hasConstraint(sql, "interview_questions", "interview_questions_source_interview_run_id_fkey")) {
+    await sql`
+      ALTER TABLE interview_questions
+        ADD CONSTRAINT interview_questions_source_interview_run_id_fkey
+        FOREIGN KEY (source_interview_run_id) REFERENCES interview_agent_runs(id) ON DELETE RESTRICT
+    `;
+  }
+  if (!await hasConstraint(sql, "interview_answers", "interview_answers_question_id_fkey")) {
+    await sql`
+      ALTER TABLE interview_answers
+        ADD CONSTRAINT interview_answers_question_id_fkey
+        FOREIGN KEY (question_id) REFERENCES interview_questions(id) ON DELETE RESTRICT
+    `;
+  }
+  if (!await hasConstraint(sql, "interview_agent_runs", "interview_agent_runs_trigger_answer_fk")) {
+    await sql`
+      ALTER TABLE interview_agent_runs
+        ADD CONSTRAINT interview_agent_runs_trigger_answer_fk
+        FOREIGN KEY (trigger_answer_id) REFERENCES interview_answers(id) ON DELETE RESTRICT
+    `;
+  }
   await sql`
     CREATE TABLE IF NOT EXISTS question_scores (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -611,84 +692,52 @@ async function runMigration(sql: postgres.Sql) {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
-  await sql`
-    ALTER TABLE question_scores
-      ADD COLUMN IF NOT EXISTS status TEXT,
-      ADD COLUMN IF NOT EXISTS attempt_count INTEGER,
-      ADD COLUMN IF NOT EXISTS claim_token TEXT,
-      ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS error_json JSONB,
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ
-  `;
-  await sql`
-    UPDATE question_scores
-    SET status = 'pending'
-    WHERE status IS NULL
-  `;
-  await sql`
-    UPDATE question_scores
-    SET attempt_count = 0
-    WHERE attempt_count IS NULL
-  `;
-  await sql`
-    UPDATE question_scores
-    SET created_at = NOW()
-    WHERE created_at IS NULL
-  `;
-  await sql`
-    UPDATE question_scores
-    SET updated_at = NOW()
-    WHERE updated_at IS NULL
-  `;
-  await sql`
-    UPDATE question_scores
-    SET claim_token = NULL, claim_expires_at = NULL
-    WHERE status IN ('pending', 'scored', 'failed')
-  `;
-  await sql`
-    UPDATE question_scores
-    SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
-    WHERE status = 'scoring' AND (claim_token IS NULL OR claim_expires_at IS NULL)
-  `;
-  await sql`
-    ALTER TABLE question_scores
-      ALTER COLUMN status SET DEFAULT 'pending',
-      ALTER COLUMN status SET NOT NULL,
-      ALTER COLUMN attempt_count SET DEFAULT 0,
-      ALTER COLUMN attempt_count SET NOT NULL,
-      ALTER COLUMN created_at SET DEFAULT NOW(),
-      ALTER COLUMN created_at SET NOT NULL,
-      ALTER COLUMN updated_at SET DEFAULT NOW(),
-      ALTER COLUMN updated_at SET NOT NULL
-  `;
-  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_status_check`;
-  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_attempt_count_check`;
-  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_overall_check`;
-  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_dimension_bounds_check`;
-  await sql`ALTER TABLE question_scores DROP CONSTRAINT IF EXISTS question_scores_scored_check`;
-  await sql`
-    ALTER TABLE question_scores
-      ADD CONSTRAINT question_scores_status_check CHECK (
-        (status = 'pending' AND claim_token IS NULL AND claim_expires_at IS NULL)
-        OR (status = 'scoring' AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
-        OR (status = 'scored' AND claim_token IS NULL AND claim_expires_at IS NULL
-            AND understanding IS NOT NULL AND expression IS NOT NULL AND logic IS NOT NULL
-            AND depth IS NOT NULL AND authenticity IS NOT NULL AND reflection IS NOT NULL
-            AND overall IS NOT NULL AND feedback_json IS NOT NULL)
-        OR (status = 'failed' AND claim_token IS NULL AND claim_expires_at IS NULL)
-      ),
-      ADD CONSTRAINT question_scores_attempt_count_check CHECK (attempt_count >= 0),
-      ADD CONSTRAINT question_scores_overall_check CHECK (overall IS NULL OR (overall >= 0.0 AND overall <= 10.0)),
-      ADD CONSTRAINT question_scores_dimension_bounds_check CHECK (
-        (understanding IS NULL OR (understanding >= 0 AND understanding <= 10))
-        AND (expression IS NULL OR (expression >= 0 AND expression <= 10))
-        AND (logic IS NULL OR (logic >= 0 AND logic <= 10))
-        AND (depth IS NULL OR (depth >= 0 AND depth <= 10))
-        AND (authenticity IS NULL OR (authenticity >= 0 AND authenticity <= 10))
-        AND (reflection IS NULL OR (reflection >= 0 AND reflection <= 10))
-      )
-  `;
+  const qsCols = await getExistingColumns(sql, "question_scores");
+  const missingQsCols: string[] = [];
+  if (!qsCols.has("status")) missingQsCols.push("ADD COLUMN status TEXT DEFAULT 'pending' NOT NULL");
+  if (!qsCols.has("attempt_count")) missingQsCols.push("ADD COLUMN attempt_count INTEGER DEFAULT 0 NOT NULL");
+  if (!qsCols.has("claim_token")) missingQsCols.push("ADD COLUMN claim_token TEXT");
+  if (!qsCols.has("claim_expires_at")) missingQsCols.push("ADD COLUMN claim_expires_at TIMESTAMPTZ");
+  if (!qsCols.has("error_json")) missingQsCols.push("ADD COLUMN error_json JSONB");
+  if (!qsCols.has("created_at")) missingQsCols.push("ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL");
+  if (!qsCols.has("updated_at")) missingQsCols.push("ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL");
+  if (missingQsCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE question_scores ${missingQsCols.join(", ")}`);
+  }
+  if (!await hasConstraint(sql, "question_scores", "question_scores_status_check")) {
+    await sql`
+      UPDATE question_scores
+      SET claim_token = NULL, claim_expires_at = NULL
+      WHERE status IN ('pending', 'scored', 'failed')
+    `;
+    await sql`
+      UPDATE question_scores
+      SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
+      WHERE status = 'scoring' AND (claim_token IS NULL OR claim_expires_at IS NULL)
+    `;
+    await sql`
+      ALTER TABLE question_scores
+        ADD CONSTRAINT question_scores_status_check CHECK (
+          (status = 'pending' AND claim_token IS NULL AND claim_expires_at IS NULL)
+          OR (status = 'scoring' AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+          OR (status = 'scored' AND claim_token IS NULL AND claim_expires_at IS NULL
+              AND understanding IS NOT NULL AND expression IS NOT NULL AND logic IS NOT NULL
+              AND depth IS NOT NULL AND authenticity IS NOT NULL AND reflection IS NOT NULL
+              AND overall IS NOT NULL AND feedback_json IS NOT NULL)
+          OR (status = 'failed' AND claim_token IS NULL AND claim_expires_at IS NULL)
+        ),
+        ADD CONSTRAINT question_scores_attempt_count_check CHECK (attempt_count >= 0),
+        ADD CONSTRAINT question_scores_overall_check CHECK (overall IS NULL OR (overall >= 0.0 AND overall <= 10.0)),
+        ADD CONSTRAINT question_scores_dimension_bounds_check CHECK (
+          (understanding IS NULL OR (understanding >= 0 AND understanding <= 10))
+          AND (expression IS NULL OR (expression >= 0 AND expression <= 10))
+          AND (logic IS NULL OR (logic >= 0 AND logic <= 10))
+          AND (depth IS NULL OR (depth >= 0 AND depth <= 10))
+          AND (authenticity IS NULL OR (authenticity >= 0 AND authenticity <= 10))
+          AND (reflection IS NULL OR (reflection >= 0 AND reflection <= 10))
+        )
+    `;
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_question_scores_question
     ON question_scores(question_id)
@@ -707,74 +756,45 @@ async function runMigration(sql: postgres.Sql) {
       completed_at TIMESTAMPTZ
     )
   `;
-  await sql`
-    ALTER TABLE interview_completion_jobs
-      ADD COLUMN IF NOT EXISTS status TEXT,
-      ADD COLUMN IF NOT EXISTS attempt_count INTEGER,
-      ADD COLUMN IF NOT EXISTS claim_token TEXT,
-      ADD COLUMN IF NOT EXISTS claim_expires_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS error_json JSONB,
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET status = 'pending'
-    WHERE status IS NULL
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET attempt_count = 0
-    WHERE attempt_count IS NULL
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET created_at = NOW()
-    WHERE created_at IS NULL
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET updated_at = NOW()
-    WHERE updated_at IS NULL
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET completed_at = COALESCE(completed_at, updated_at, created_at, NOW())
-    WHERE status = 'completed' AND completed_at IS NULL
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET claim_token = NULL, claim_expires_at = NULL
-    WHERE status IN ('pending', 'failed', 'completed')
-  `;
-  await sql`
-    UPDATE interview_completion_jobs
-    SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
-    WHERE status IN ('scoring', 'reporting') AND (claim_token IS NULL OR claim_expires_at IS NULL)
-  `;
-  await sql`
-    ALTER TABLE interview_completion_jobs
-      ALTER COLUMN status SET DEFAULT 'pending',
-      ALTER COLUMN status SET NOT NULL,
-      ALTER COLUMN attempt_count SET DEFAULT 0,
-      ALTER COLUMN attempt_count SET NOT NULL,
-      ALTER COLUMN created_at SET DEFAULT NOW(),
-      ALTER COLUMN created_at SET NOT NULL,
-      ALTER COLUMN updated_at SET DEFAULT NOW(),
-      ALTER COLUMN updated_at SET NOT NULL
-  `;
-  await sql`ALTER TABLE interview_completion_jobs DROP CONSTRAINT IF EXISTS interview_completion_jobs_status_check`;
-  await sql`ALTER TABLE interview_completion_jobs DROP CONSTRAINT IF EXISTS interview_completion_jobs_attempt_count_check`;
-  await sql`
-    ALTER TABLE interview_completion_jobs
-      ADD CONSTRAINT interview_completion_jobs_status_check CHECK (
-        (status IN ('scoring', 'reporting') AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
-        OR (status IN ('pending', 'failed') AND claim_token IS NULL AND claim_expires_at IS NULL)
-        OR (status = 'completed' AND claim_token IS NULL AND claim_expires_at IS NULL AND completed_at IS NOT NULL)
-      ),
-      ADD CONSTRAINT interview_completion_jobs_attempt_count_check CHECK (attempt_count >= 0)
-  `;
+  const icjCols = await getExistingColumns(sql, "interview_completion_jobs");
+  const missingIcjCols: string[] = [];
+  if (!icjCols.has("status")) missingIcjCols.push("ADD COLUMN status TEXT DEFAULT 'pending' NOT NULL");
+  if (!icjCols.has("attempt_count")) missingIcjCols.push("ADD COLUMN attempt_count INTEGER DEFAULT 0 NOT NULL");
+  if (!icjCols.has("claim_token")) missingIcjCols.push("ADD COLUMN claim_token TEXT");
+  if (!icjCols.has("claim_expires_at")) missingIcjCols.push("ADD COLUMN claim_expires_at TIMESTAMPTZ");
+  if (!icjCols.has("error_json")) missingIcjCols.push("ADD COLUMN error_json JSONB");
+  if (!icjCols.has("created_at")) missingIcjCols.push("ADD COLUMN created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL");
+  if (!icjCols.has("updated_at")) missingIcjCols.push("ADD COLUMN updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL");
+  if (!icjCols.has("completed_at")) missingIcjCols.push("ADD COLUMN completed_at TIMESTAMPTZ");
+  if (missingIcjCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE interview_completion_jobs ${missingIcjCols.join(", ")}`);
+  }
+  if (!await hasConstraint(sql, "interview_completion_jobs", "interview_completion_jobs_status_check")) {
+    await sql`
+      UPDATE interview_completion_jobs
+      SET completed_at = COALESCE(completed_at, updated_at, created_at, NOW())
+      WHERE status = 'completed' AND completed_at IS NULL
+    `;
+    await sql`
+      UPDATE interview_completion_jobs
+      SET claim_token = NULL, claim_expires_at = NULL
+      WHERE status IN ('pending', 'failed', 'completed')
+    `;
+    await sql`
+      UPDATE interview_completion_jobs
+      SET status = 'pending', claim_token = NULL, claim_expires_at = NULL, error_json = NULL, updated_at = NOW()
+      WHERE status IN ('scoring', 'reporting') AND (claim_token IS NULL OR claim_expires_at IS NULL)
+    `;
+    await sql`
+      ALTER TABLE interview_completion_jobs
+        ADD CONSTRAINT interview_completion_jobs_status_check CHECK (
+          (status IN ('scoring', 'reporting') AND claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)
+          OR (status IN ('pending', 'failed') AND claim_token IS NULL AND claim_expires_at IS NULL)
+          OR (status = 'completed' AND claim_token IS NULL AND claim_expires_at IS NULL AND completed_at IS NOT NULL)
+        ),
+        ADD CONSTRAINT interview_completion_jobs_attempt_count_check CHECK (attempt_count >= 0)
+    `;
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_completion_jobs_interview
     ON interview_completion_jobs(interview_id)
@@ -794,14 +814,16 @@ async function runMigration(sql: postgres.Sql) {
       generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
-  await sql`
-    ALTER TABLE interview_reports
-      ADD COLUMN IF NOT EXISTS overall_score INTEGER,
-      ADD COLUMN IF NOT EXISTS dimension_averages_json JSONB,
-      ADD COLUMN IF NOT EXISTS summary_json JSONB,
-      ADD COLUMN IF NOT EXISTS score_status TEXT,
-      ADD COLUMN IF NOT EXISTS generated_at TIMESTAMPTZ
-  `;
+  const irCols = await getExistingColumns(sql, "interview_reports");
+  const missingIrCols: string[] = [];
+  if (!irCols.has("overall_score")) missingIrCols.push("ADD COLUMN overall_score INTEGER");
+  if (!irCols.has("dimension_averages_json")) missingIrCols.push("ADD COLUMN dimension_averages_json JSONB");
+  if (!irCols.has("summary_json")) missingIrCols.push("ADD COLUMN summary_json JSONB");
+  if (!irCols.has("score_status")) missingIrCols.push("ADD COLUMN score_status TEXT");
+  if (!irCols.has("generated_at")) missingIrCols.push("ADD COLUMN generated_at TIMESTAMPTZ DEFAULT NOW()");
+  if (missingIrCols.length > 0) {
+    await sql.unsafe(`ALTER TABLE interview_reports ${missingIrCols.join(", ")}`);
+  }
   await sql`
     UPDATE interview_reports
     SET generated_at = NOW()
@@ -1038,7 +1060,7 @@ async function runMigration(sql: postgres.Sql) {
 
   if (inconsistentReportIds.length > 0) {
     throw new Error(
-      `Migration failed: Inconsistent interview reports detected (count: ${inconsistentReportIds.length}). Candidate score data cannot be fabricated.`,
+      `Inconsistent interview reports detected (count: ${inconsistentReportIds.length}). Candidate score data cannot be fabricated.`,
     );
   }
 
@@ -1054,23 +1076,23 @@ async function runMigration(sql: postgres.Sql) {
     WHERE score_status IS NULL AND overall_score IS NULL
   `;
 
-  await sql`
-    ALTER TABLE interview_reports
-      ALTER COLUMN summary_json SET NOT NULL,
-      ALTER COLUMN score_status SET NOT NULL,
-      ALTER COLUMN generated_at SET DEFAULT NOW(),
-      ALTER COLUMN generated_at SET NOT NULL
-  `;
-  await sql`ALTER TABLE interview_reports DROP CONSTRAINT IF EXISTS interview_reports_score_status_check`;
-  await sql`ALTER TABLE interview_reports DROP CONSTRAINT IF EXISTS interview_reports_score_consistency_check`;
-  await sql`
-    ALTER TABLE interview_reports
-      ADD CONSTRAINT interview_reports_score_status_check CHECK (score_status IN ('scored', 'no_scorable_answers')),
-      ADD CONSTRAINT interview_reports_score_consistency_check CHECK (
-        (score_status = 'scored' AND overall_score IS NOT NULL AND overall_score >= 0 AND overall_score <= 100 AND dimension_averages_json IS NOT NULL)
-        OR (score_status = 'no_scorable_answers' AND overall_score IS NULL AND dimension_averages_json IS NULL)
-      )
-  `;
+  if (!await hasConstraint(sql, "interview_reports", "interview_reports_score_consistency_check")) {
+    await sql`
+      ALTER TABLE interview_reports
+        ALTER COLUMN summary_json SET NOT NULL,
+        ALTER COLUMN score_status SET NOT NULL,
+        ALTER COLUMN generated_at SET DEFAULT NOW(),
+        ALTER COLUMN generated_at SET NOT NULL
+    `;
+    await sql`
+      ALTER TABLE interview_reports
+        ADD CONSTRAINT interview_reports_score_status_check CHECK (score_status IN ('scored', 'no_scorable_answers')),
+        ADD CONSTRAINT interview_reports_score_consistency_check CHECK (
+          (score_status = 'scored' AND overall_score IS NOT NULL AND overall_score >= 0 AND overall_score <= 100 AND dimension_averages_json IS NOT NULL)
+          OR (score_status = 'no_scorable_answers' AND overall_score IS NULL AND dimension_averages_json IS NULL)
+        )
+    `;
+  }
   await sql`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_reports_interview
     ON interview_reports(interview_id)
@@ -1122,6 +1144,6 @@ if (isDirectRun) {
       process.exitCode = 1;
     })
     .finally(async () => {
-      await client.end();
+      await client.end({ timeout: 5 });
     });
 }
