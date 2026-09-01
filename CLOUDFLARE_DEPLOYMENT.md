@@ -79,7 +79,8 @@ pnpm deploy:worker
 
 | 命令 | 说明 |
 |---|---|
-| `pnpm build:worker` | 使用 OpenNext 构建适配 Cloudflare 的 Worker 包（优先使用 `.env.cloudflare`） |
+| `pnpm build` / `pnpm build:worker` | 使用 OpenNext 构建适配 Cloudflare 的 Worker 包（优先使用 `.env.cloudflare`） |
+| `pnpm build:next` | 仅执行 Next.js 原生构建（跳过 OpenNext 打包） |
 | `pnpm preview:worker` | 本地启动 Cloudflare Workerd 模拟运行环境 |
 | `pnpm deploy:worker` | 构建并部署到 Cloudflare Workers |
 | `pnpm cf-typegen` | 生成 Cloudflare 环境绑定 TypeScript 类型定义 |
