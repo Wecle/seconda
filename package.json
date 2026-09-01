@@ -28,7 +28,6 @@
     "lucide-react": "^0.563.0",
     "next": "16.1.6",
     "next-auth": "5.0.0-beta.30",
-    "pdf-oxide-wasm": "^0.3.77",
     "pdfjs-dist": "^5.4.296",
     "postgres": "^3.4.8",
     "radix-ui": "^1.4.3",
@@ -39,6 +38,7 @@
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.4.0",
+    "unpdf": "^1.8.1",
     "zod": "^4.3.6"
   },
   "pnpm": {

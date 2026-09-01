@@ -1,11 +1,4 @@
-let pdfOxidePromise: Promise<typeof import("pdf-oxide-wasm/nodejs")> | null = null;
-
-async function getPdfOxide() {
-  if (!pdfOxidePromise) {
-    pdfOxidePromise = import("pdf-oxide-wasm/nodejs");
-  }
-  return pdfOxidePromise;
-}
+import { extractText } from "unpdf";
 
 function normalizeExtractedPdfText(text: string): string {
   return text
@@ -20,32 +13,15 @@ function normalizeExtractedPdfText(text: string): string {
     .trim();
 }
 
-export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
-  const { WasmPdfDocument } = await getPdfOxide();
-  const doc = new WasmPdfDocument(new Uint8Array(buffer));
-  try {
-    const pageCount = doc.pageCount();
-    if (pageCount === 0) {
-      return "";
-    }
+export async function extractTextFromPDF(buffer: Buffer | Uint8Array | ArrayBuffer): Promise<string> {
+  const uint8 =
+    buffer instanceof Uint8Array && !Buffer.isBuffer(buffer)
+      ? buffer
+      : Buffer.isBuffer(buffer)
+        ? new Uint8Array(buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength))
+        : new Uint8Array(buffer);
 
-    let extracted = "";
-    try {
-      extracted = doc.toPlainTextAll();
-    } catch {
-      extracted = "";
-    }
-
-    if (!extracted || extracted.trim().length === 0) {
-      try {
-        extracted = doc.extractAllText();
-      } catch {
-        extracted = "";
-      }
-    }
-
-    return normalizeExtractedPdfText(extracted);
-  } finally {
-    doc.free();
-  }
+  const result = await extractText(uint8, { mergePages: true });
+  const rawText = Array.isArray(result.text) ? result.text.join("\n") : (result.text ?? "");
+  return normalizeExtractedPdfText(rawText);
 }
