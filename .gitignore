@@ -38,3 +38,6 @@ docs/plan/
 # cloudflare
 .open-next/
 .wrangler/
+# wrangler types 生成文件：包含 workerd 全局类型，会破坏 next build 的类型检查（CI 无此文件）
+env.d.ts
+worker-configuration.d.ts

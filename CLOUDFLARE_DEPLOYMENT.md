@@ -99,4 +99,4 @@ pnpm deploy:worker
 | `pnpm build:next` | 仅执行 Next.js 原生构建（跳过 OpenNext 打包） |
 | `pnpm preview:worker` | 本地启动 Cloudflare Workerd 模拟运行环境 |
 | `pnpm deploy:worker` | 构建并部署到 Cloudflare Workers |
-| `pnpm cf-typegen` | 生成 Cloudflare 环境绑定 TypeScript 类型定义 |
+| `pnpm cf-typegen` | 生成 Cloudflare 环境绑定 TypeScript 类型定义（`env.d.ts` 仅本地参考用：其 workerd 全局类型与 DOM lib 冲突，已被 `.gitignore` / `tsconfig.json` 排除，不参与构建） |

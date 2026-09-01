@@ -11,6 +11,13 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS"
   },
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "bf4f5844ed81458fa4b2099850eef4b3",
+      "localConnectionString": "postgresql://postgres:postgres@localhost:5432/seconda_placeholder"
+    }
+  ],
   "triggers": {
     "crons": [
       "0 0 * * *"

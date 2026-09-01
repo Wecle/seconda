@@ -1,13 +1,37 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
+import { getCloudflareContext } from "@opennextjs/cloudflare";
 import * as schema from "./schema";
 
+const BUILD_FALLBACK_URL = "postgresql://postgres:postgres@localhost:5432/seconda_placeholder";
+
+interface HyperdriveBinding {
+  connectionString?: string;
+}
+
+// Hyperdrive 是对象绑定，OpenNext 只把字符串绑定写进 process.env，
+// 所以必须从 getCloudflareContext() 读；构建期 / 本地 next dev 没有运行时上下文，返回 undefined。
+function getHyperdriveConnectionString(): string | undefined {
+  try {
+    const env = getCloudflareContext().env as Record<string, unknown>;
+    return (env.HYPERDRIVE as HyperdriveBinding | undefined)?.connectionString || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getConnectionString(): string {
-  return (
-    (process.env as unknown as { HYPERDRIVE?: { connectionString?: string } })
-      ?.HYPERDRIVE?.connectionString ||
-    process.env.DATABASE_URL ||
-    "postgresql://postgres:postgres@localhost:5432/seconda_placeholder"
+  const hyperdriveUrl = getHyperdriveConnectionString();
+  if (hyperdriveUrl) return hyperdriveUrl;
+
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL;
+
+  // 仅构建期静态分析允许 placeholder；运行时缺配置要 fail fast，
+  // 否则会伪装成诡异的连接超时（见 2026-09 排查的 auth Configuration 错误）。
+  if (process.env.NEXT_PHASE === "phase-production-build") return BUILD_FALLBACK_URL;
+
+  throw new Error(
+    "Missing database configuration: bind a HYPERDRIVE binding or set the DATABASE_URL secret",
   );
 }
 
