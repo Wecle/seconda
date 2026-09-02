@@ -6,6 +6,7 @@ node_modules/
 out/
 .open-next/
 .wrangler/
+.dev.*
 
 # production
 dist/

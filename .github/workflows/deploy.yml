@@ -1,0 +1,212 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: seconda-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      namespace: ${{ steps.image-meta.outputs.namespace }}
+      web_tag: ${{ steps.image-meta.outputs.web_tag }}
+      task_tag: ${{ steps.image-meta.outputs.task_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image metadata
+        id: image-meta
+        run: |
+          echo "namespace=${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+          web_tag_hash="$(printf '%s' "${{ hashFiles('app/**', 'components/**', 'lib/**', 'package.json', 'pnpm-lock.yaml', 'Dockerfile.prod') }}" | sha256sum | cut -c1-40)"
+          echo "web_tag=web-${web_tag_hash}" >> "$GITHUB_OUTPUT"
+          task_tag_hash="$(printf '%s' "${{ hashFiles('lib/db/**', 'package.json', 'pnpm-lock.yaml', 'Dockerfile.prod') }}" | sha256sum | cut -c1-40)"
+          echo "task_tag=task-${task_tag_hash}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.prod
+          target: runner
+          push: true
+          build-args: |
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
+          tags: |
+            ${{ steps.image-meta.outputs.namespace }}/seconda-web:${{ steps.image-meta.outputs.web_tag }}
+            ${{ steps.image-meta.outputs.namespace }}/seconda-web:latest
+
+      - name: Build and push migrate task image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.prod
+          target: task
+          push: true
+          tags: |
+            ${{ steps.image-meta.outputs.namespace }}/seconda-task:${{ steps.image-meta.outputs.task_tag }}
+            ${{ steps.image-meta.outputs.namespace }}/seconda-task:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER || 'deploy' }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 11262 }}
+          script: |
+            mkdir -p /opt/seconda
+            cd /opt/seconda
+
+            # 1. 写入生产环境编排配置
+            cat > docker-compose.prod.yml << 'COMPOSE_EOF'
+            name: seconda-prod
+
+            services:
+              postgres:
+                image: postgres:16-alpine
+                restart: unless-stopped
+                environment:
+                  POSTGRES_USER: ${POSTGRES_USER:-seconda}
+                  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+                  POSTGRES_DB: ${POSTGRES_DB:-seconda}
+                volumes:
+                  - pgdata:/var/lib/postgresql/data
+                healthcheck:
+                  test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER:-seconda}\" -d \"$${POSTGRES_DB:-seconda}\""]
+                  interval: 5s
+                  timeout: 5s
+                  retries: 20
+
+              migrate:
+                image: ${TASK_IMAGE:-seconda-task:latest}
+                env_file:
+                  - .env.production
+                command: ["pnpm", "db:migrate"]
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                restart: "no"
+
+              web:
+                image: ${WEB_IMAGE:-seconda-web:latest}
+                restart: unless-stopped
+                env_file:
+                  - .env.production
+                ports:
+                  - "127.0.0.1:${WEB_PORT:-3001}:3000"
+                depends_on:
+                  postgres:
+                    condition: service_healthy
+                  migrate:
+                    condition: service_completed_successfully
+
+            volumes:
+              pgdata:
+            COMPOSE_EOF
+
+            # 2. 写入生产环境变量
+            umask 077
+            cat > .env.production << 'ENV_EOF'
+            POSTGRES_USER=${{ vars.POSTGRES_USER || 'seconda' }}
+            POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+            POSTGRES_DB=${{ vars.POSTGRES_DB || 'seconda' }}
+            DATABASE_URL=postgresql://${{ vars.POSTGRES_USER || 'seconda' }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/${{ vars.POSTGRES_DB || 'seconda' }}
+
+            AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
+
+            FAST_MODEL_API_KEY=${{ secrets.FAST_MODEL_API_KEY }}
+            QUALITY_MODEL_API_KEY=${{ secrets.QUALITY_MODEL_API_KEY }}
+            AI_MODEL_FAST=${{ vars.AI_MODEL_FAST || 'deepseek/deepseek-v4-flash' }}
+            AI_MODEL_QUALITY=${{ vars.AI_MODEL_QUALITY || 'zhipu/glm-5.1' }}
+            AI_APPROVED_MODELS=${{ vars.AI_APPROVED_MODELS || 'deepseek/deepseek-v4-flash,zhipu/glm-5.1' }}
+            AI_MODEL_FAST_FALLBACK=${{ vars.AI_MODEL_FAST_FALLBACK }}
+            AI_MODEL_QUALITY_FALLBACK=${{ vars.AI_MODEL_QUALITY_FALLBACK }}
+            AI_PROVIDER_BASE_URLS_JSON=${{ vars.AI_PROVIDER_BASE_URLS_JSON }}
+
+            AI_BUDGET_MODE=${{ vars.AI_BUDGET_MODE || 'observe' }}
+            AI_TASK_TOKEN_LIMIT=${{ vars.AI_TASK_TOKEN_LIMIT || '500000' }}
+            AI_MODEL_PRICING_JSON=${{ vars.AI_MODEL_PRICING_JSON }}
+            AGENT_MODEL_CONTEXT_WINDOWS_JSON=${{ vars.AGENT_MODEL_CONTEXT_WINDOWS_JSON }}
+            AGENT_MODEL_CONTEXT_BUDGETS_JSON=${{ vars.AGENT_MODEL_CONTEXT_BUDGETS_JSON }}
+
+            INTERVIEW_AGENT_V2_ENABLED=${{ vars.INTERVIEW_AGENT_V2_ENABLED || 'true' }}
+            INTERVIEW_AGENT_LEASE_MS=${{ vars.INTERVIEW_AGENT_LEASE_MS || '30000' }}
+            INTERVIEW_AGENT_LEASE_RENEW_MS=${{ vars.INTERVIEW_AGENT_LEASE_RENEW_MS || '10000' }}
+            INTERVIEW_AGENT_HEARTBEAT_MS=${{ vars.INTERVIEW_AGENT_HEARTBEAT_MS || '10000' }}
+            INTERVIEW_AGENT_PROVIDER_IDLE_MS=${{ vars.INTERVIEW_AGENT_PROVIDER_IDLE_MS || '25000' }}
+            INTERVIEW_AGENT_CONTEXT_WINDOW=${{ vars.INTERVIEW_AGENT_CONTEXT_WINDOW || '128000' }}
+            INTERVIEW_AGENT_OUTPUT_RESERVE=${{ vars.INTERVIEW_AGENT_OUTPUT_RESERVE || '8000' }}
+
+            AUTH_GITHUB_ID=${{ vars.AUTH_GITHUB_ID }}
+            AUTH_GITHUB_SECRET=${{ secrets.AUTH_GITHUB_SECRET }}
+            AUTH_GOOGLE_ID=${{ vars.AUTH_GOOGLE_ID }}
+            AUTH_GOOGLE_SECRET=${{ secrets.AUTH_GOOGLE_SECRET }}
+            BLOB_READ_WRITE_TOKEN=${{ secrets.BLOB_READ_WRITE_TOKEN }}
+            CRON_SECRET=${{ secrets.CRON_SECRET }}
+            ENV_EOF
+
+            # 3. 写入当前镜像版本
+            cat > .env.images << ENV_IMAGE_EOF
+            WEB_IMAGE=${{ needs.build.outputs.namespace }}/seconda-web:${{ needs.build.outputs.web_tag }}
+            TASK_IMAGE=${{ needs.build.outputs.namespace }}/seconda-task:${{ needs.build.outputs.task_tag }}
+            ENV_IMAGE_EOF
+
+            # 4. 登录 GHCR 仓库
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # 5. 拉取镜像并按顺序启动依赖与服务
+            docker compose --env-file .env.production --env-file .env.images -f docker-compose.prod.yml pull
+            docker compose --env-file .env.production --env-file .env.images -f docker-compose.prod.yml up -d postgres
+            docker compose --env-file .env.production --env-file .env.images -f docker-compose.prod.yml run --rm migrate
+            docker compose --env-file .env.production --env-file .env.images -f docker-compose.prod.yml up -d web
+
+            # 6. 清理过期悬空镜像
+            docker image prune -af
+            echo ">>> Seconda 部署完成！"
