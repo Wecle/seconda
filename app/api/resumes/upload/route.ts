@@ -44,10 +44,12 @@ export async function POST(request: NextRequest) {
     const blobPathname = `resumes/${versionId}-${normalizedName}`;
 
     const buffer = Buffer.from(await file.arrayBuffer());
+    const blobToken = process.env.BLOB_READ_WRITE_TOKEN?.replace(/^["']|["']$/g, "").trim();
     const blob = await put(blobPathname, buffer, {
       access: "public",
       contentType: file.type,
       addRandomSuffix: false,
+      ...(blobToken ? { token: blobToken } : {}),
     });
 
     await db.insert(resumes).values({
@@ -147,7 +149,7 @@ export async function POST(request: NextRequest) {
       });
     }
   } catch (error) {
-    console.error("Upload error:", sanitizeAIError(error));
+    console.error("Upload error details:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

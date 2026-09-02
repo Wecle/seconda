@@ -34,7 +34,8 @@ export async function DELETE(
 
     if (deletion.length > 0) {
       try {
-        await del(deletion);
+        const blobToken = process.env.BLOB_READ_WRITE_TOKEN?.replace(/^["']|["']$/g, "").trim();
+        await del(deletion, blobToken ? { token: blobToken } : undefined);
       } catch (error) {
         console.error(
           "Resume deleted from database but blob cleanup failed:",
