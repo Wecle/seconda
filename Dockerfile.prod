@@ -19,6 +19,15 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_APP_URL=https://seconda.cn
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
+# 构建阶段预置环境变量（供 Next.js 收集路由元数据时使用，真实值在运行时注入）
+ENV DATABASE_URL=postgresql://seconda:seconda@127.0.0.1:5432/seconda
+ENV AUTH_SECRET=build_time_placeholder_auth_secret_minimum_32_characters
+ENV FAST_MODEL_API_KEY=build_time_placeholder_fast_key
+ENV QUALITY_MODEL_API_KEY=build_time_placeholder_quality_key
+ENV AI_MODEL_FAST=deepseek/deepseek-v4-flash
+ENV AI_MODEL_QUALITY=zhipu/glm-5.1
+ENV AI_APPROVED_MODELS=deepseek/deepseek-v4-flash,zhipu/glm-5.1
+
 RUN pnpm build
 
 # ---- 数据库迁移任务镜像 ----
