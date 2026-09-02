@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, LogOut } from "lucide-react";
 import { signOut } from "next-auth/react";
 import { useTranslation } from "@/lib/i18n/context";
@@ -52,10 +53,13 @@ export function UserAvatarMenu({
     user.name?.trim() || user.email?.split("@")[0] || t.auth.defaultUser;
   const initials = useMemo(() => getUserInitials(user), [user]);
 
+  const router = useRouter();
   const handleSignOut = async () => {
     setSigningOut(true);
     try {
-      await signOut({ callbackUrl });
+      await signOut({ redirect: false });
+      router.push(callbackUrl);
+      router.refresh();
     } finally {
       setSigningOut(false);
     }

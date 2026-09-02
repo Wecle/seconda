@@ -159,6 +159,8 @@ jobs:
             DATABASE_URL=postgresql://${{ vars.POSTGRES_USER || 'seconda' }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/${{ vars.POSTGRES_DB || 'seconda' }}
 
             AUTH_SECRET=${{ secrets.AUTH_SECRET }}
+            AUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
+            NEXTAUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
             NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
 
             FAST_MODEL_API_KEY=${{ secrets.FAST_MODEL_API_KEY }}

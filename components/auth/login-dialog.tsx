@@ -89,9 +89,24 @@ export function LoginDialog({
         return;
       }
 
-      const target = result.url ?? callbackUrl;
+      let target = result?.url ?? callbackUrl;
+      if (typeof window !== "undefined" && target) {
+        try {
+          const parsed = new URL(target, window.location.origin);
+          if (
+            parsed.hostname === "0.0.0.0" ||
+            parsed.hostname === "localhost" ||
+            parsed.hostname === "127.0.0.1" ||
+            parsed.origin !== window.location.origin
+          ) {
+            target = parsed.pathname + parsed.search + parsed.hash;
+          }
+        } catch {
+          target = callbackUrl;
+        }
+      }
       onOpenChange(false);
-      router.push(target);
+      router.push(target || callbackUrl);
       router.refresh();
     } catch {
       setError(t.auth.requestError);
