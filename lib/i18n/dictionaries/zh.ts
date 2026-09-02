@@ -472,6 +472,8 @@ export const zh = {
     clearSelectedFile: "移除已选择的文件",
     reselectFile: "更换",
     uploadAndParse: "上传并解析",
+    extractingText: "正在提取文本...",
+    parseStartedToast: "简历已上传，AI 解析正在后台进行。",
     generator: {
       title: "智能简历生成器",
       subtitle:

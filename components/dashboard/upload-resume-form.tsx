@@ -187,7 +187,7 @@ export function UploadResumeForm({
           {uploading ? (
             <>
               <Loader2 className="size-3.5 animate-spin" />
-              {t.common.processing}
+              {t.dashboard.extractingText}
             </>
           ) : (
             <>

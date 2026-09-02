@@ -59,9 +59,9 @@ export async function POST(
       );
     }
 
-    if (version.parseStatus !== "failed") {
+    if (version.parseStatus !== "failed" && version.parseStatus !== "parsing") {
       return NextResponse.json(
-        { error: "Only failed resume versions can be re-parsed" },
+        { error: "Only failed or pending resume versions can be re-parsed" },
         { status: 400 },
       );
     }
@@ -158,6 +158,7 @@ export async function POST(
         data: parsed,
       });
     } catch (aiError) {
+      console.error("Resume AI parse failed:", aiError);
       await db
         .update(resumeVersions)
         .set({
@@ -175,7 +176,7 @@ export async function POST(
       );
     }
   } catch (error) {
-    console.error("Error re-parsing resume:", sanitizeAIError(error));
+    console.error("Error re-parsing resume:", error);
     return NextResponse.json(
       { error: "Failed to re-parse resume" },
       { status: 500 },

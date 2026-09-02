@@ -478,6 +478,8 @@ export const en = {
     clearSelectedFile: "Remove selected file",
     reselectFile: "Change",
     uploadAndParse: "Upload & Parse",
+    extractingText: "Extracting text...",
+    parseStartedToast: "Resume uploaded. AI parsing is running in the background.",
     generator: {
       title: "AI Resume Generator",
       subtitle:

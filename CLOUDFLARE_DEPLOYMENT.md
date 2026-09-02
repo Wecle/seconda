@@ -105,3 +105,11 @@ pnpm deploy:worker
 - **数据库**：`wrangler.jsonc` 的 `hyperdrive` 绑定（`HYPERDRIVE`），代码经 `getCloudflareContext().env.HYPERDRIVE.connectionString` 连接（对象绑定不会出现在 `process.env`）。
 - **对象存储**：`wrangler.jsonc` 的 `r2_buckets` 绑定（`R2`），走 Cloudflare 原生 binding API（`@aws-sdk/client-s3` 在 Workers 上因 `fs.readFile` 崩溃，已移除）。
 - Workers 内数据库连接按请求缓存（`WeakMap<请求上下文>`）：Workers 的 outbound socket 生命周期绑定请求，跨请求复用连接会间歇性挂死。
+
+---
+
+## 简历上传与异步解析架构
+
+- **设计模式**：客户端浏览器（`pdfjs-dist`）提取 PDF 文本 → `POST /api/resumes/upload` 仅落盘（R2 文件 + DB 记录，状态设为 `parsing`）并秒级响应 → 前端后台异步触发 `POST /api/resumes/{id}/versions/{versionId}/reparse` 执行 AI 解析。
+- **架构约束**：Cloudflare Workers 免费版单请求 CPU 预算约为 10ms。文本密集型 PDF 服务端提取会导致 CPU 超限并抛出 error 1102 (503)。因此，禁止将 CPU 密集型操作（如 PDF 解析与全文处理）放回服务端同步请求路径；AI 调用为 IO-bound，拆分后在独立 reparse 请求中执行可稳定运行。
+- **断点续跑**：前端 Dashboard 加载时会自动扫描并续跑处于 `parsing` 状态的历史版本，同时具备会话内单次尝试去重保护。

@@ -23,6 +23,7 @@ import {
 import type { GeneratedResumeDraft } from "@/lib/resume/generation-contract";
 import type { ParsedResume } from "@/lib/resume/types";
 import { InterviewSettingsDialog } from "@/components/interview/interview-settings-dialog";
+import { extractPdfTextInBrowser } from "@/lib/resume/extract-pdf-client";
 
 const EMPTY_GENERATED_DRAFT: GeneratedResumeDraft = {
   name: "",
@@ -85,6 +86,7 @@ export default function DashboardPage() {
   const resumeGenerationRef = useRef<{ signature: string; key: string } | null>(
     null,
   );
+  const parseAttemptsRef = useRef<Map<string, number>>(new Map());
 
   const fetchResumes = useCallback(async () => {
     try {
@@ -111,9 +113,48 @@ export default function DashboardPage() {
     }
   }, [selectedResumeId]);
 
+  const triggerResumeParse = useCallback(
+    async (resumeId: string, versionId: string) => {
+      if (parseAttemptsRef.current.has(versionId)) return;
+      parseAttemptsRef.current.set(versionId, 1);
+      try {
+        const res = await fetch(
+          `/api/resumes/${resumeId}/versions/${versionId}/reparse`,
+          { method: "POST" },
+        );
+        if (!res.ok) {
+          console.error(
+            "Background resume parse failed:",
+            res.status,
+            await res.text(),
+          );
+        }
+      } catch (e) {
+        console.error("Background resume parse failed:", e);
+      } finally {
+        await fetchResumes();
+      }
+    },
+    [fetchResumes],
+  );
+
   useEffect(() => {
     fetchResumes();
   }, [fetchResumes]);
+
+  useEffect(() => {
+    if (loading) return;
+    for (const resume of resumes) {
+      for (const version of resume.versions) {
+        if (
+          version.parseStatus === "parsing" &&
+          !parseAttemptsRef.current.has(version.id)
+        ) {
+          void triggerResumeParse(resume.id, version.id);
+        }
+      }
+    }
+  }, [resumes, loading, triggerResumeParse]);
 
   useEffect(() => {
     let mounted = true;
@@ -164,39 +205,46 @@ export default function DashboardPage() {
     if (!selectedFile) return;
     setUploading(true);
     setUploadError(null);
-
-    const formData = new FormData();
-    formData.append("file", selectedFile);
-    formData.append(
-      "title",
-      uploadTitle || selectedFile.name.replace(/\.[^/.]+$/, ""),
-    );
-
     try {
+      let extractedText = "";
+      try {
+        extractedText = await extractPdfTextInBrowser(selectedFile);
+      } catch (e) {
+        console.error("Client PDF text extraction failed:", e);
+      }
+
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append(
+        "title",
+        uploadTitle || selectedFile.name.replace(/\.[^/.]+$/, ""),
+      );
+      if (extractedText) formData.append("extractedText", extractedText);
+
       const res = await fetch("/api/resumes/upload", {
         method: "POST",
         body: formData,
       });
-
       const data = await res.json();
       if (!res.ok) {
         setUploadError(data.error || "Upload failed");
         return;
       }
 
-      if (
-        data.status === "extraction_failed" ||
-        data.status === "parse_failed"
-      ) {
+      if (data.status === "extraction_failed") {
         setUploadError(data.error || "Processing failed");
+        return;
       }
 
+      toast.success(t.dashboard.parseStartedToast);
       setUploadOpen(false);
       resetNewResumeDialog();
       setSelectedResumeId(data.id);
       setSelectedVersionId(data.versionId);
       setExpandedFolders((prev) => new Set([...prev, data.id]));
       await fetchResumes();
+
+      void triggerResumeParse(data.id, data.versionId);
     } catch {
       setUploadError("Upload failed. Please try again.");
     } finally {

@@ -1,13 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resumes, resumeVersions } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { extractTextFromPDF } from "@/lib/resume/parse-pdf";
-import { parseResumeWithAI } from "@/lib/resume/parse-resume";
 import { randomUUID } from "crypto";
 import { putBlob } from "@/lib/storage";
 import { getCurrentUserId } from "@/lib/auth/session";
-import { sanitizeAIError } from "@/lib/ai/error-sanitizer";
 
 export async function POST(request: NextRequest) {
   try {
@@ -19,6 +15,11 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const file = formData.get("file") as File | null;
     const title = (formData.get("title") as string) || "Untitled Resume";
+    const extractedTextRaw = formData.get("extractedText");
+    const extractedText =
+      typeof extractedTextRaw === "string"
+        ? extractedTextRaw.trim().slice(0, 1_000_000)
+        : "";
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -55,6 +56,27 @@ export async function POST(request: NextRequest) {
       currentVersionId: versionId,
     });
 
+    if (extractedText.length >= 50) {
+      await db.insert(resumeVersions).values({
+        id: versionId,
+        resumeId,
+        versionNumber: 1,
+        sourceType: "uploaded",
+        originalFilename: file.name,
+        storedPath: blob.key,
+        mimeType: file.type,
+        fileSize: file.size,
+        extractedText,
+        parseStatus: "parsing",
+      });
+
+      return NextResponse.json({
+        id: resumeId,
+        versionId,
+        status: "parsing",
+      });
+    }
+
     await db.insert(resumeVersions).values({
       id: versionId,
       resumeId,
@@ -64,89 +86,19 @@ export async function POST(request: NextRequest) {
       storedPath: blob.key,
       mimeType: file.type,
       fileSize: file.size,
-      parseStatus: "extracting",
+      parseStatus: "failed",
+      parseError:
+        "Extracted text is too short. The PDF may be scanned or image-based.",
     });
 
-    let extractedText = "";
-    try {
-      extractedText = await extractTextFromPDF(buffer);
-
-      await db
-        .update(resumeVersions)
-        .set({ extractedText, parseStatus: "parsing" })
-        .where(eq(resumeVersions.id, versionId));
-    } catch (extractError) {
-      await db
-        .update(resumeVersions)
-        .set({
-          parseStatus: "failed",
-          parseError: `Text extraction failed: ${extractError instanceof Error ? extractError.message : String(extractError)}`,
-        })
-        .where(eq(resumeVersions.id, versionId));
-
-      return NextResponse.json({
-        id: resumeId,
-        versionId,
-        status: "extraction_failed",
-        error: "Failed to extract text from PDF",
-      });
-    }
-
-    if (extractedText.length < 50) {
-      await db
-        .update(resumeVersions)
-        .set({
-          parseStatus: "failed",
-          parseError:
-            "Extracted text is too short. The PDF may be scanned or image-based.",
-        })
-        .where(eq(resumeVersions.id, versionId));
-
-      return NextResponse.json({
-        id: resumeId,
-        versionId,
-        status: "extraction_failed",
-        error:
-          "Could not extract enough text from the PDF. It may be a scanned document.",
-      });
-    }
-
-    try {
-      const parsed = await parseResumeWithAI(extractedText, {
-        operationKey: `resume.parse:${versionId}`,
-      });
-
-      await db
-        .update(resumeVersions)
-        .set({ parsedJson: parsed, parseStatus: "parsed" })
-        .where(eq(resumeVersions.id, versionId));
-
-      return NextResponse.json({
-        id: resumeId,
-        versionId,
-        status: "parsed",
-        data: parsed,
-      });
-    } catch (aiError) {
-      await db
-        .update(resumeVersions)
-        .set({
-          parseStatus: "failed",
-          parseError: JSON.stringify(sanitizeAIError(aiError)),
-        })
-        .where(eq(resumeVersions.id, versionId));
-
-      return NextResponse.json({
-        id: resumeId,
-        versionId,
-        status: "parse_failed",
-        error:
-          "AI parsing failed. The resume was saved and can be re-parsed later.",
-      });
-    }
+    return NextResponse.json({
+      id: resumeId,
+      versionId,
+      status: "extraction_failed",
+      error:
+        "Could not extract enough text from the PDF. It may be a scanned document.",
+    });
   } catch (error) {
-    // 外层异常可能是 R2/DB/运行时错误，必须原样记录日志；
-    // sanitizeAIError 只适用于 AI 调用分支，否则真实错误被抹成 unknown 无法排查
     console.error("Upload error:", error);
     return NextResponse.json(
       { error: "Internal server error" },
