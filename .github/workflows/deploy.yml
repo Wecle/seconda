@@ -70,7 +70,7 @@ jobs:
           target: runner
           push: true
           build-args: |
-            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
           tags: |
             ${{ steps.image-meta.outputs.namespace }}/seconda-web:${{ steps.image-meta.outputs.web_tag }}
             ${{ steps.image-meta.outputs.namespace }}/seconda-web:latest
@@ -159,9 +159,9 @@ jobs:
             DATABASE_URL=postgresql://${{ vars.POSTGRES_USER || 'seconda' }}:${{ secrets.POSTGRES_PASSWORD }}@postgres:5432/${{ vars.POSTGRES_DB || 'seconda' }}
 
             AUTH_SECRET=${{ secrets.AUTH_SECRET }}
-            AUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
-            NEXTAUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
-            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL || 'https://seconda.cn' }}
+            AUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXTAUTH_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
 
             FAST_MODEL_API_KEY=${{ secrets.FAST_MODEL_API_KEY }}
             QUALITY_MODEL_API_KEY=${{ secrets.QUALITY_MODEL_API_KEY }}

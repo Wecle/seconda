@@ -1,5 +1,5 @@
 export function StructuredData() {
-  const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "https://seconda.cn";
+  const siteUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
   const organizationSchema = {
     "@context": "https://schema.org",

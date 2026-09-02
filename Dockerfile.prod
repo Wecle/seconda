@@ -16,7 +16,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
-ARG NEXT_PUBLIC_APP_URL=https://seconda.cn
+ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
 ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 # 构建阶段预置环境变量（供 Next.js 收集路由元数据时使用，真实值在运行时注入）
