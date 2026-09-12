@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { I18nProvider } from "@/lib/i18n/context";
 import { defaultLocale, isLocale, localeCookieName } from "@/lib/i18n";
 import { Toaster } from "@/components/ui/sonner";
@@ -42,7 +42,8 @@ export const metadata: Metadata = {
     canonical: "/",
     languages: {
       "zh-CN": "/",
-      "en-US": "/?lang=en",
+      "en-US": "/en",
+      "x-default": "/",
     },
   },
   openGraph: {
@@ -93,15 +94,21 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const headerList = await headers();
+  const localeFromHeader = headerList.get("x-locale");
   const cookieStore = await cookies();
   const cookieLocale = cookieStore.get(localeCookieName)?.value;
-  const initialLocale = isLocale(cookieLocale) ? cookieLocale : defaultLocale;
+  const initialLocale = isLocale(localeFromHeader)
+    ? localeFromHeader
+    : isLocale(cookieLocale)
+      ? cookieLocale
+      : defaultLocale;
 
   return (
     <html lang={initialLocale}>
       <body className={`${inter.variable} antialiased font-sans`}>
         <I18nProvider initialLocale={initialLocale}>
-          <StructuredData />
+          <StructuredData locale={initialLocale} />
           {children}
           <Toaster />
         </I18nProvider>

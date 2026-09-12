@@ -24,8 +24,9 @@ interface LandingPageProps {
 }
 
 export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const landing = t.landing;
+  const homeHref = locale === "en" ? "/en" : "/";
 
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary/20 selection:text-primary">
@@ -33,7 +34,7 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
       <nav className="sticky top-0 z-50 border-b border-border/80 bg-background/80 backdrop-blur-xl transition-all">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
           <Link
-            href="/"
+            href={homeHref}
             className="flex items-center gap-2.5 text-lg font-bold tracking-tight text-foreground transition-opacity hover:opacity-90"
           >
             <BrandIcon size={28} priority />
@@ -59,6 +60,12 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
               className="transition-colors hover:text-foreground"
             >
               {landing.journey.badge}
+            </Link>
+            <Link
+              href="/blog"
+              className="transition-colors hover:text-foreground"
+            >
+              {landing.footer.guides}
             </Link>
             <Link
               href="#faq"
@@ -255,7 +262,7 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
         <div className="mx-auto max-w-6xl px-6">
           <div className="flex flex-col md:flex-row items-center justify-between gap-6 pb-8 border-b border-border/50">
             <Link
-              href="/"
+              href={homeHref}
               className="flex items-center gap-2.5 text-base font-bold text-foreground"
             >
               <BrandIcon size={24} />
@@ -288,13 +295,19 @@ export function LandingPage({ isAuthenticated, currentUser }: LandingPageProps) 
                 {landing.faq.badge}
               </Link>
               <Link
-                href="#"
+                href="/blog"
+                className="transition-colors hover:text-foreground"
+              >
+                {landing.footer.guides}
+              </Link>
+              <Link
+                href="/privacy"
                 className="transition-colors hover:text-foreground"
               >
                 {landing.footer.privacy}
               </Link>
               <Link
-                href="#"
+                href="/terms"
                 className="transition-colors hover:text-foreground"
               >
                 {landing.footer.terms}

@@ -428,6 +428,7 @@ export const en = {
       privacy: "Privacy Policy",
       terms: "Terms of Service",
       contact: "Contact Us",
+      guides: "Career Guides",
     },
   },
   auth: {

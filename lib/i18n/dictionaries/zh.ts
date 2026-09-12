@@ -424,6 +424,7 @@ export const zh = {
       privacy: "隐私政策",
       terms: "使用条款",
       contact: "联系我们",
+      guides: "求职指南",
     },
   },
   auth: {
