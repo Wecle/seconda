@@ -12,7 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { InterviewParsedResumeView } from "./interview-parsed-resume-view";
+import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
 import type { ParsedResume } from "@/lib/resume/types";
 import { cn } from "@/lib/utils";
 
@@ -221,8 +221,8 @@ export function InterviewResumePane({
       </div>
 
       {/* Pane Content Area */}
-      <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
-        <div className="p-4 sm:p-6">
+      <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1 bg-muted/20">
+        <div className="flex justify-center p-4 sm:p-6 lg:p-8">
           {loading ? (
             <div className="flex h-64 flex-col items-center justify-center gap-3">
               <Loader2 className="size-6 animate-spin text-primary" />
@@ -238,17 +238,19 @@ export function InterviewResumePane({
             </div>
           ) : data ? (
             activeTab === "parsed" ? (
-              <InterviewParsedResumeView
+              <ParsedResumePreview
                 parsed={data.parsedJson}
                 activePaths={activeEvidencePaths}
                 persistentPaths={persistentEvidencePaths}
                 isInherited={isInherited}
               />
             ) : hasOriginal && data.originalFileUrl && data.originalFilename ? (
-              <ResumePdfPreview
-                fileUrl={data.originalFileUrl}
-                filename={data.originalFilename}
-              />
+              <div className="w-full max-w-[850px]">
+                <ResumePdfPreview
+                  fileUrl={data.originalFileUrl}
+                  filename={data.originalFilename}
+                />
+              </div>
             ) : null
           ) : null}
         </div>
