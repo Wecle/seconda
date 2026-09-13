@@ -230,7 +230,6 @@ export function InterviewResumePane({
                 parsed={data.parsedJson}
                 activePaths={activeEvidencePaths}
                 persistentPaths={persistentEvidencePaths}
-                isInherited={isInherited}
               />
             ) : hasOriginal && data.originalFileUrl && data.originalFilename ? (
               <div className="w-full max-w-[850px]">

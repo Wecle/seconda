@@ -68,6 +68,8 @@ export function useResizableColumns({
   );
 
   useEffect(() => {
+    if (!isDragging) return;
+
     function handlePointerMove(e: PointerEvent) {
       if (!isDraggingRef.current) return;
 
@@ -104,11 +106,18 @@ export function useResizableColumns({
       }
     }
 
+    const originalCursor = document.body.style.cursor;
+    const originalUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+
     window.addEventListener("pointermove", handlePointerMove, { passive: true });
     window.addEventListener("pointerup", handlePointerUp);
     window.addEventListener("pointercancel", handlePointerUp);
 
     return () => {
+      document.body.style.cursor = originalCursor;
+      document.body.style.userSelect = originalUserSelect;
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
       window.removeEventListener("pointercancel", handlePointerUp);
@@ -117,7 +126,7 @@ export function useResizableColumns({
         rafIdRef.current = null;
       }
     };
-  }, [containerRef, minLeft, minRight]);
+  }, [containerRef, isDragging, minLeft, minRight]);
 
   useEffect(() => {
     if (!containerRef.current || typeof ResizeObserver === "undefined") return;
@@ -125,7 +134,7 @@ export function useResizableColumns({
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const width = entry.contentRect.width;
-        if (width > 0) {
+        if (width > 0 && !isDraggingRef.current) {
           const clamped = clampRatio(latestRatioRef.current, width, minLeft, minRight);
           if (clamped !== latestRatioRef.current) {
             latestRatioRef.current = clamped;
@@ -139,20 +148,6 @@ export function useResizableColumns({
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, [containerRef, minLeft, minRight]);
-
-  useEffect(() => {
-    if (isDragging) {
-      const originalCursor = document.body.style.cursor;
-      const originalUserSelect = document.body.style.userSelect;
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-
-      return () => {
-        document.body.style.cursor = originalCursor;
-        document.body.style.userSelect = originalUserSelect;
-      };
-    }
-  }, [isDragging]);
 
   return {
     leftRatio,

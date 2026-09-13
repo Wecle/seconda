@@ -22,7 +22,6 @@ export interface ParsedResumePreviewProps {
   highlightKeywords?: string[];
   activePaths?: Set<string>;
   persistentPaths?: Set<string>;
-  isInherited?: boolean;
 }
 
 function escapeRegExp(value: string): string {
