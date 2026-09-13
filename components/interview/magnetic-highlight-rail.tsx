@@ -17,12 +17,14 @@ interface MagneticHighlightRailProps {
   className?: string;
   turns?: InterviewTurn[];
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  onSelectTurn?: (questionId: string) => void;
 }
 
 export function MagneticHighlightRail({
   className = "",
   turns = [],
   scrollContainerRef,
+  onSelectTurn,
 }: MagneticHighlightRailProps) {
   const [activeTurnIds, setActiveTurnIds] = useState<string[]>([]);
   const [hoveredTurnId, setHoveredTurnId] = useState<string | null>(null);
@@ -73,6 +75,7 @@ export function MagneticHighlightRail({
   }, [turns, scrollContainerRef]);
 
   const handleJumpToTurn = (questionId: string) => {
+    onSelectTurn?.(questionId);
     const el = document.querySelector(`[data-turn-id="${questionId}"]`);
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });

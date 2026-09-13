@@ -7,7 +7,6 @@ import {
   Crosshair,
   FileText,
   Loader2,
-  Sparkles,
   X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";

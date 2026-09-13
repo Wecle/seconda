@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   ChevronDown,
   FileBarChart2,
+  FileText,
   Lightbulb,
   Loader2,
   Puzzle,
@@ -25,12 +26,16 @@ import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
 import { Markdown } from "@/components/ui/markdown";
 import { MagneticHighlightRail } from "./magnetic-highlight-rail";
+import { useResizableColumns } from "./hooks/use-resizable-columns";
+import { useInterviewResumeHighlight } from "./hooks/use-interview-resume-highlight";
+import { InterviewResumePane, type InterviewResumeSnapshotResponse } from "./interview-resume-pane";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
@@ -206,7 +211,27 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const answerAcceptedRef = useRef(false);
   const openingRequestRef = useRef(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const [resumePaneOpen, setResumePaneOpen] = useState(false);
+  const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(null);
+  const [resumeSnapshot, setResumeSnapshot] = useState<InterviewResumeSnapshotResponse | null>(null);
+
+  const { leftRatio, isDragging, handlePointerDown, resetRatio } = useResizableColumns({
+    containerRef,
+    minLeft: 420,
+    minRight: 380,
+    defaultRatio: 0.55,
+  });
+
   const { room, transcript } = currentView;
+
+  const highlightState = useInterviewResumeHighlight({
+    transcript,
+    currentQuestion: room.currentQuestion,
+    focusedQuestionId,
+    evidenceJson: resumeSnapshot?.evidenceJson,
+  });
 
   const lastTranscriptItem = transcript.at(-1);
   const latestIncompleteReasoning = transcript.findLast((item) => item.type === "reasoning" && !item.complete);
@@ -229,7 +254,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         (item): item is Extract<typeof item, { type: "answer" }> =>
           item.type === "answer" && item.questionId === question.questionId,
       );
-      const isCurrent = question.questionId === room.currentQuestion?.id;
+      const isCurrent = question.questionId === (focusedQuestionId ?? room.currentQuestion?.id);
       return {
         questionId: question.questionId,
         roundIndex: index + 1,
@@ -378,11 +403,15 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   return (
     <div className="relative flex h-dvh min-h-0 flex-col overflow-hidden bg-background text-foreground selection:bg-primary/20">
       {/* Left Magnetic Progressive Highlight Rail with Piano Keys Navigation */}
-      <MagneticHighlightRail turns={turns} scrollContainerRef={scrollAreaRef} />
+      <MagneticHighlightRail
+        turns={turns}
+        scrollContainerRef={scrollAreaRef}
+        onSelectTurn={(qId) => setFocusedQuestionId(qId)}
+      />
 
       {/* Header */}
       <header className="sticky top-0 z-20 shrink-0 border-b border-border/80 bg-background/80 backdrop-blur-md">
-        <div className="mx-auto flex h-15 max-w-4xl items-center justify-between gap-4 px-4 sm:px-6">
+        <div className="mx-auto flex h-15 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/dashboard"
@@ -416,6 +445,23 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             >
               {phaseLabels[room.phase]}
             </Badge>
+
+            {/* Toggle Resume Pane Button */}
+            <Button
+              variant={resumePaneOpen ? "secondary" : "outline"}
+              size="sm"
+              onClick={() => setResumePaneOpen(!resumePaneOpen)}
+              className="h-8 gap-1.5 px-2.5 text-xs font-medium"
+              aria-label={resumePaneOpen ? "收起简历对照" : "展开简历对照"}
+            >
+              <FileText className="size-3.5 text-primary" />
+              <span className="hidden sm:inline">简历对照</span>
+              {highlightState.activeEvidenceIds.size > 0 && (
+                <span className="rounded-full bg-amber-500/20 px-1.5 py-0 font-mono text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                  {highlightState.activeEvidenceIds.size}
+                </span>
+              )}
+            </Button>
 
             {room.canEnd ? (
               <Button
@@ -462,8 +508,19 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         </div>
       </header>
 
-      {/* Main Conversation Stream Area */}
-      <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
+      {/* Content Area with Resizable Split Columns */}
+      <div ref={containerRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+        {/* Left Column: Interview Conversation Stream & Composer Dock */}
+        <div
+          style={
+            resumePaneOpen
+              ? { width: `calc(${leftRatio * 100}% - 3px)` }
+              : { width: "100%" }
+          }
+          className="relative flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-75"
+        >
+          {/* Main Conversation Stream Area */}
+          <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
         <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-6 md:py-8">
           <div className="space-y-6">
             {transcript.map((item) => {
@@ -554,12 +611,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               }
 
               const isCurrent = item.questionId === room.currentQuestion?.id;
+              const isFocused = item.questionId === (focusedQuestionId ?? room.currentQuestion?.id);
               return (
                 <article
                   key={`question-${item.questionId}`}
                   id={`interview-turn-${item.questionId}`}
                   data-turn-id={item.questionId}
-                  className="scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                  onClick={() => setFocusedQuestionId(item.questionId)}
+                  className={`scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer rounded-2xl p-1.5 -m-1.5 transition-all ${
+                    isFocused && focusedQuestionId
+                      ? "ring-2 ring-primary/40 bg-primary/5"
+                      : "hover:bg-muted/10"
+                  }`}
                 >
                   {/* Modern Interviewer Persona Avatar */}
                   <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-tr from-primary to-blue-600 text-primary-foreground shadow-xs ring-2 ring-primary/20">
@@ -658,6 +721,22 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       ) : (
         <footer className="sticky bottom-0 z-20 shrink-0 border-t border-border/80 bg-background/85 p-3 backdrop-blur-md md:p-4">
           <div className="mx-auto max-w-3xl">
+            {focusedQuestionId && focusedQuestionId !== room.currentQuestion?.id ? (
+              <div className="mb-2 flex items-center justify-between rounded-xl border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs text-muted-foreground animate-in fade-in duration-200">
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span>正在查看历史问题事实关联</span>
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setFocusedQuestionId(null)}
+                  className="h-6 px-2 text-xs font-medium text-primary hover:bg-primary/10"
+                >
+                  返回当前作答
+                </Button>
+              </div>
+            ) : null}
             {submissionError ? (
               <p className="mb-2 text-sm text-destructive" role="alert">{submissionError}</p>
             ) : null}
@@ -665,7 +744,10 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               <Textarea
                 value={answer}
                 disabled={!room.canSubmitAnswer || submitting}
-                onChange={(event) => setAnswer(event.target.value)}
+                onChange={(event) => {
+                  setAnswer(event.target.value);
+                  if (focusedQuestionId) setFocusedQuestionId(null);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
                     event.preventDefault();
@@ -735,6 +817,59 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           </div>
         </footer>
       )}
+        </div>
+
+        {/* Resizable Divider Handle (Desktop lg+) */}
+        {resumePaneOpen && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="拖拽调整分栏宽度"
+            onPointerDown={handlePointerDown}
+            onDoubleClick={resetRatio}
+            className={`hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors group relative z-20 select-none ${
+              isDragging ? "bg-primary" : "bg-border/60 hover:bg-primary/50"
+            }`}
+          >
+            <div className="h-8 w-1 rounded-full bg-muted-foreground/40 group-hover:bg-primary transition-colors" />
+          </div>
+        )}
+
+        {/* Right Column: Resume Pane (Desktop lg+) */}
+        {resumePaneOpen && (
+          <div
+            style={{ width: `calc(${(1 - leftRatio) * 100}% - 3px)` }}
+            className="hidden lg:flex h-full min-h-0 flex-col overflow-hidden"
+          >
+            <InterviewResumePane
+              interviewId={room.interviewId}
+              isOpen={resumePaneOpen}
+              onClose={() => setResumePaneOpen(false)}
+              activeEvidencePaths={highlightState.activeEvidencePaths}
+              persistentEvidencePaths={highlightState.persistentEvidencePaths}
+              activeCount={highlightState.activeEvidenceIds.size}
+              isInherited={highlightState.isInheritedFromParent}
+              onDataLoaded={setResumeSnapshot}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Mobile Sheet Drawer (< lg) */}
+      <Sheet open={resumePaneOpen} onOpenChange={setResumePaneOpen}>
+        <SheetContent side="right" showCloseButton={false} className="p-0 sm:max-w-md w-full lg:hidden flex flex-col h-full">
+          <InterviewResumePane
+            interviewId={room.interviewId}
+            isOpen={resumePaneOpen}
+            onClose={() => setResumePaneOpen(false)}
+            activeEvidencePaths={highlightState.activeEvidencePaths}
+            persistentEvidencePaths={highlightState.persistentEvidencePaths}
+            activeCount={highlightState.activeEvidenceIds.size}
+            isInherited={highlightState.isInheritedFromParent}
+            onDataLoaded={setResumeSnapshot}
+          />
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

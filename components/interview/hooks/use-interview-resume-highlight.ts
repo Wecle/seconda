@@ -115,11 +115,20 @@ export function computeHighlightState(input: ComputeHighlightInput): HighlightSt
   };
 }
 
-export function useInterviewResumeHighlight(input: ComputeHighlightInput): HighlightState {
-  return useMemo(() => computeHighlightState(input), [
-    input.transcript,
-    input.currentQuestion,
-    input.focusedQuestionId,
-    input.evidenceJson,
-  ]);
+export function useInterviewResumeHighlight({
+  transcript,
+  currentQuestion,
+  focusedQuestionId,
+  evidenceJson,
+}: ComputeHighlightInput): HighlightState {
+  return useMemo(
+    () =>
+      computeHighlightState({
+        transcript,
+        currentQuestion,
+        focusedQuestionId,
+        evidenceJson,
+      }),
+    [transcript, currentQuestion, focusedQuestionId, evidenceJson],
+  );
 }
