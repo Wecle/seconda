@@ -509,19 +509,32 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       </header>
 
       {/* Content Area with Resizable Split Columns */}
-      <div ref={containerRef} className="relative flex min-h-0 flex-1 overflow-hidden">
+      <div
+        ref={containerRef}
+        style={
+          {
+            "--left-ratio": `${leftRatio}`,
+          } as React.CSSProperties
+        }
+        className={cn(
+          "relative flex min-h-0 flex-1 overflow-hidden",
+          isDragging && "select-none"
+        )}
+      >
         {/* Left Column: Interview Conversation Stream & Composer Dock */}
         <div
           style={
             resumePaneOpen
               ? ({
-                  "--left-ratio-width": `calc(${leftRatio * 100}% - 3px)`,
+                  "--left-ratio-width": "calc(var(--left-ratio, 0.55) * 100% - 3px)",
                 } as React.CSSProperties)
               : undefined
           }
           className={cn(
-            "relative flex h-full min-h-0 w-full flex-col overflow-hidden transition-[width] duration-75",
-            resumePaneOpen && "lg:[width:var(--left-ratio-width)]"
+            "relative flex h-full min-h-0 w-full flex-col overflow-hidden",
+            !isDragging && "transition-[width] duration-150 ease-out",
+            resumePaneOpen && "lg:[width:var(--left-ratio-width)]",
+            isDragging && "pointer-events-none select-none"
           )}
         >
           {/* Main Conversation Stream Area */}
@@ -832,19 +845,34 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             aria-label="拖拽调整分栏宽度"
             onPointerDown={handlePointerDown}
             onDoubleClick={resetRatio}
-            className={`hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center transition-colors group relative z-20 select-none ${
-              isDragging ? "bg-primary" : "bg-border/60 hover:bg-primary/50"
-            }`}
+            className={cn(
+              "hidden lg:flex w-1.5 shrink-0 cursor-col-resize items-center justify-center group relative z-20 select-none",
+              isDragging
+                ? "bg-primary"
+                : "bg-border/60 hover:bg-primary/50 transition-colors"
+            )}
           >
-            <div className="h-8 w-1 rounded-full bg-muted-foreground/40 group-hover:bg-primary transition-colors" />
+            <div className="absolute -inset-x-1.5 inset-y-0 cursor-col-resize z-30" />
+            <div
+              className={cn(
+                "h-8 w-1 rounded-full transition-colors",
+                isDragging
+                  ? "bg-primary-foreground"
+                  : "bg-muted-foreground/40 group-hover:bg-primary"
+              )}
+            />
           </div>
         )}
 
         {/* Right Column: Resume Pane (Desktop lg+) */}
         {resumePaneOpen && (
           <div
-            style={{ width: `calc(${(1 - leftRatio) * 100}% - 3px)` }}
-            className="hidden lg:flex h-full min-h-0 flex-col overflow-hidden"
+            style={{ width: "calc((1 - var(--left-ratio, 0.55)) * 100% - 3px)" }}
+            className={cn(
+              "hidden lg:flex h-full min-h-0 flex-col overflow-hidden",
+              !isDragging && "transition-[width] duration-150 ease-out",
+              isDragging && "pointer-events-none select-none"
+            )}
           >
             <InterviewResumePane
               interviewId={room.interviewId}
