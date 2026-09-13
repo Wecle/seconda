@@ -540,7 +540,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           {/* Main Conversation Stream Area */}
           <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
         <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-6 md:py-8">
-          <div className="space-y-6">
+          <div className="flex flex-col gap-6">
             {transcript.map((item) => {
               if (item.type === "reasoning") {
                 const running =
@@ -559,7 +559,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                 return (
                   <article
                     key={`answer-${item.answerId}`}
-                    className="flex items-start justify-end gap-3.5 pt-5 sm:pt-7 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                    className="flex items-start justify-end gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
                   >
                     <div className="min-w-0 max-w-[85%] space-y-1.5">
                       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
@@ -636,11 +636,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   id={`interview-turn-${item.questionId}`}
                   data-turn-id={item.questionId}
                   onClick={() => setFocusedQuestionId(item.questionId)}
-                  className={`scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer rounded-2xl p-1.5 -mx-1.5 transition-all ${
-                    isFocused && focusedQuestionId
-                      ? "ring-2 ring-primary/40 bg-primary/5"
-                      : "hover:bg-muted/10"
-                  }`}
+                  className="group scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer"
                 >
                   {/* Modern Interviewer Persona Avatar */}
                   <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl bg-gradient-to-tr from-primary to-blue-600 text-primary-foreground shadow-xs ring-2 ring-primary/20">
@@ -663,7 +659,14 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                       ) : null}
                     </div>
 
-                    <div className="rounded-2xl rounded-tl-xs border border-border/80 bg-card p-4 sm:p-5 shadow-xs transition-all">
+                    <div
+                      className={cn(
+                        "rounded-2xl rounded-tl-xs border bg-card p-4 sm:p-5 shadow-xs transition-all",
+                        isFocused && focusedQuestionId
+                          ? "ring-2 ring-primary/50 border-primary/40 bg-primary/[0.03]"
+                          : "border-border/80 group-hover:border-primary/30",
+                      )}
+                    >
                       <Markdown content={item.content} className="text-[15px] leading-7 text-foreground/95" />
 
                       {isCurrent && room.currentQuestion?.tip ? (
