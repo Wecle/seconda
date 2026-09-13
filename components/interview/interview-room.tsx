@@ -26,7 +26,7 @@ import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
@@ -858,6 +858,8 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       {/* Mobile Sheet Drawer (< lg) */}
       <Sheet open={resumePaneOpen} onOpenChange={setResumePaneOpen}>
         <SheetContent side="right" showCloseButton={false} className="p-0 sm:max-w-md w-full lg:hidden flex flex-col h-full">
+          <SheetTitle className="sr-only">简历对照</SheetTitle>
+          <SheetDescription className="sr-only">查看当前面试版本的简历与问题事实关联</SheetDescription>
           <InterviewResumePane
             interviewId={room.interviewId}
             isOpen={resumePaneOpen}
