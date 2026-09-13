@@ -838,6 +838,7 @@ export async function loadOwnedInterviewRoomData(input: {
       question: interviewQuestions.question,
       tip: interviewQuestions.tip,
       status: interviewQuestions.status,
+      resumeEvidenceIds: interviewQuestions.resumeEvidenceIds,
     }).from(interviewQuestions).where(and(
       eq(interviewQuestions.interviewId, interview.id),
       eq(interviewQuestions.status, "awaiting_answer"),

@@ -8,6 +8,7 @@ const questionSchema = z.object({
   topic: z.string(),
   content: z.string(),
   tip: z.string().nullable(),
+  resumeEvidenceIds: z.array(z.string()).default([]),
 }).strict();
 
 const roomSchema = z.object({
@@ -51,6 +52,7 @@ const transcriptItemSchema = z.discriminatedUnion("type", [
     sequence: z.number().int().positive(),
     kind: z.enum(["main", "follow_up"]),
     content: z.string(),
+    resumeEvidenceIds: z.array(z.string()).default([]),
   }).strict(),
   z.object({
     type: z.literal("skill"),

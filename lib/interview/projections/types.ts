@@ -16,6 +16,7 @@ export type InterviewTranscriptItem =
       sequence: number;
       kind: "main" | "follow_up";
       content: string;
+      resumeEvidenceIds: string[];
     }
   | {
       type: "skill";
@@ -57,6 +58,7 @@ export interface InterviewQuestionView {
   topic: string;
   content: string;
   tip: string | null;
+  resumeEvidenceIds: string[];
 }
 
 export interface InterviewRoomView {
@@ -103,6 +105,7 @@ export interface InterviewQuestionSnapshot {
   question: string;
   tip: string | null;
   status: "awaiting_answer" | "answered" | "skipped" | "abandoned";
+  resumeEvidenceIds?: string[];
 }
 
 export interface InterviewRunSnapshot {

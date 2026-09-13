@@ -231,6 +231,7 @@ export function projectInterviewTranscript(input: {
           sequence: payload.sequence,
           kind: payload.kind,
           content: payload.question,
+          resumeEvidenceIds: payload.resumeEvidenceIds,
         });
         break;
       }

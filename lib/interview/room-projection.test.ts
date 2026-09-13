@@ -191,7 +191,7 @@ test("transcript projects only validated public domain events", () => {
       version: "1.0.0",
       code: null,
     },
-    { type: "question", questionId, sequence: 1, kind: "main", content: "How did you design the system?" },
+    { type: "question", questionId, sequence: 1, kind: "main", content: "How did you design the system?", resumeEvidenceIds: [] },
     { type: "answer", answerId, questionId, sequence: 1, content: "With an event log.", skipped: false },
   ]);
 });

@@ -70,6 +70,7 @@ export function projectInterviewRoom(input: {
           topic: input.currentQuestion.topic,
           content: input.currentQuestion.question,
           tip: input.currentQuestion.tip,
+          resumeEvidenceIds: input.currentQuestion.resumeEvidenceIds ?? [],
         }
       : null,
     currentRound,

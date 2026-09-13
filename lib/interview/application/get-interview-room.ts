@@ -22,6 +22,7 @@ const questionSchema = z.object({
   question: z.string(),
   tip: z.string().nullable(),
   status: z.enum(["awaiting_answer", "answered", "skipped", "abandoned"]),
+  resumeEvidenceIds: z.array(z.string()).optional(),
 });
 
 const runSchema = z.object({
