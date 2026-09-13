@@ -5,11 +5,11 @@ import dynamic from "next/dynamic";
 import {
   AlertCircle,
   Crosshair,
-  FileText,
+  File,
+  FileCode2,
   Loader2,
   X,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ParsedResumePreview } from "@/components/resume/parsed-resume-preview";
@@ -123,56 +123,79 @@ export function InterviewResumePane({
       )}
     >
       {/* Pane Header Toolbar */}
-      <div className="flex h-15 shrink-0 items-center justify-between gap-3 border-b border-border/70 px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="grid size-7 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
-            <FileText className="size-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="truncate text-xs font-semibold text-foreground">
-                {data?.resumeTitle || "简历对照"}
-              </span>
-              {data ? (
-                <Badge variant="outline" className="h-4.5 px-1 font-mono text-[10px] text-muted-foreground">
-                  v{data.versionNumber}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
-        {/* View Mode Switcher */}
-        {hasOriginal && (
-          <div className="inline-flex items-center rounded-lg border bg-muted/40 p-0.5 text-xs">
+      <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border/70 bg-background/90 px-4 backdrop-blur-sm">
+        {/* Left: View Mode Tabs */}
+        {hasOriginal ? (
+          <div
+            role="tablist"
+            aria-label="简历查看模式"
+            className="inline-flex h-8 items-center rounded-lg bg-muted/60 p-0.5 text-xs"
+          >
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === "parsed"}
               onClick={() => setActiveTab("parsed")}
               className={cn(
-                "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
                 activeTab === "parsed"
-                  ? "bg-background text-foreground shadow-2xs"
+                  ? "bg-background text-foreground shadow-xs font-semibold"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              结构化
+              <FileCode2 className="size-3.5 text-primary" />
+              <span>结构化</span>
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === "original"}
               onClick={() => setActiveTab("original")}
               className={cn(
-                "rounded-md px-2 py-0.5 text-[11px] font-medium transition-colors",
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-all duration-150",
                 activeTab === "original"
-                  ? "bg-background text-foreground shadow-2xs"
+                  ? "bg-background text-foreground shadow-xs font-semibold"
                   : "text-muted-foreground hover:text-foreground",
               )}
             >
-              PDF原件
+              <File className="size-3.5 text-muted-foreground" />
+              <span>PDF原件</span>
             </button>
+          </div>
+        ) : (
+          <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-foreground">
+            <FileCode2 className="size-4 text-primary" />
+            <span>结构化简历</span>
           </div>
         )}
 
-        <div className="flex items-center gap-1">
+        {/* Right: Fact Highlights Info, Locate Button & Close */}
+        <div className="flex items-center gap-2">
+          {activeCount > 0 && (
+            <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
+                <span className="text-[11px] font-semibold">{activeCount} 处事实</span>
+                {isInherited && (
+                  <span className="text-[10px] text-amber-600/80 dark:text-amber-400/80">(继承)</span>
+                )}
+              </div>
+
+              {activeTab === "parsed" && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleLocateActive}
+                  title="定位到当前高亮事实"
+                  className="h-7 gap-1 px-2 text-xs text-primary hover:bg-primary/10"
+                >
+                  <Crosshair className="size-3.5" />
+                  <span className="hidden sm:inline text-xs">定位高亮</span>
+                </Button>
+              )}
+            </div>
+          )}
+
           <Button
             variant="ghost"
             size="icon"
@@ -183,41 +206,6 @@ export function InterviewResumePane({
             <X className="size-4" />
           </Button>
         </div>
-      </div>
-
-      {/* Facts Sub-bar */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/50 bg-muted/30 px-4 py-2 text-xs">
-        <div className="flex min-w-0 items-center gap-2">
-          {activeCount > 0 ? (
-            <div className="flex items-center gap-1.5 text-amber-700 dark:text-amber-300">
-              <span className="size-2 rounded-full bg-amber-500 animate-pulse" />
-              <span className="font-medium text-[11px]">
-                当前关联 {activeCount} 处事实
-              </span>
-              {isInherited && (
-                <span className="rounded bg-amber-500/10 px-1 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                  (继承自上一问)
-                </span>
-              )}
-            </div>
-          ) : (
-            <span className="text-[11px] text-muted-foreground">
-              本题未直接引用简历事实
-            </span>
-          )}
-        </div>
-
-        {activeCount > 0 && activeTab === "parsed" && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleLocateActive}
-            className="h-6 gap-1 px-1.5 text-[11px] text-primary hover:bg-primary/10"
-          >
-            <Crosshair className="size-3" />
-            <span>定位高亮</span>
-          </Button>
-        )}
       </div>
 
       {/* Pane Content Area */}
