@@ -26,7 +26,6 @@ import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
@@ -36,6 +35,7 @@ import { MagneticHighlightRail } from "./magnetic-highlight-rail";
 import { useResizableColumns } from "./hooks/use-resizable-columns";
 import { useInterviewResumeHighlight } from "./hooks/use-interview-resume-highlight";
 import { InterviewResumePane, type InterviewResumeSnapshotResponse } from "./interview-resume-pane";
+import { cn } from "@/lib/utils";
 
 interface InterviewRoomProps {
   view: InterviewRoomQueryView;
@@ -514,10 +514,15 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         <div
           style={
             resumePaneOpen
-              ? { width: `calc(${leftRatio * 100}% - 3px)` }
-              : { width: "100%" }
+              ? ({
+                  "--left-ratio-width": `calc(${leftRatio * 100}% - 3px)`,
+                } as React.CSSProperties)
+              : undefined
           }
-          className="relative flex h-full min-h-0 flex-col overflow-hidden transition-[width] duration-75"
+          className={cn(
+            "relative flex h-full min-h-0 w-full flex-col overflow-hidden transition-[width] duration-75",
+            resumePaneOpen && "lg:[width:var(--left-ratio-width)]"
+          )}
         >
           {/* Main Conversation Stream Area */}
           <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
@@ -855,11 +860,9 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
         )}
       </div>
 
-      {/* Mobile Sheet Drawer (< lg) */}
-      <Sheet open={resumePaneOpen} onOpenChange={setResumePaneOpen}>
-        <SheetContent side="right" showCloseButton={false} className="p-0 sm:max-w-md w-full lg:hidden flex flex-col h-full">
-          <SheetTitle className="sr-only">简历对照</SheetTitle>
-          <SheetDescription className="sr-only">查看当前面试版本的简历与问题事实关联</SheetDescription>
+      {/* Mobile Slide-in Drawer (< lg) */}
+      {resumePaneOpen && (
+        <div className="fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-border/80 bg-background shadow-2xl sm:max-w-md lg:hidden">
           <InterviewResumePane
             interviewId={room.interviewId}
             isOpen={resumePaneOpen}
@@ -870,8 +873,8 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             isInherited={highlightState.isInheritedFromParent}
             onDataLoaded={setResumeSnapshot}
           />
-        </SheetContent>
-      </Sheet>
+        </div>
+      )}
     </div>
   );
 }
