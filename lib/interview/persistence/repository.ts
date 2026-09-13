@@ -1161,3 +1161,49 @@ export async function claimNextAvailableInterviewRun(input: {
     };
   });
 }
+
+export async function loadOwnedInterviewResumeSnapshot(input: {
+  database: InterviewDatabase;
+  userId: string;
+  interviewId: string;
+}) {
+  const [snapshot] = await input.database
+    .select({
+      interviewId: interviewResumeSnapshots.interviewId,
+      resumeId: interviewResumeSnapshots.resumeId,
+      resumeVersionId: interviewResumeSnapshots.resumeVersionId,
+      resumeTitle: interviewResumeSnapshots.resumeTitle,
+      versionNumber: interviewResumeSnapshots.versionNumber,
+      sourceType: interviewResumeSnapshots.sourceType,
+      parsedJson: interviewResumeSnapshots.parsedJson,
+      evidenceJson: interviewResumeSnapshots.evidenceJson,
+      originalFilename: resumeVersions.originalFilename,
+      storedPath: resumeVersions.storedPath,
+    })
+    .from(interviewResumeSnapshots)
+    .innerJoin(interviews, eq(interviewResumeSnapshots.interviewId, interviews.id))
+    .leftJoin(resumeVersions, eq(interviewResumeSnapshots.resumeVersionId, resumeVersions.id))
+    .where(
+      and(
+        eq(interviewResumeSnapshots.interviewId, input.interviewId),
+        eq(interviews.userId, input.userId),
+      ),
+    )
+    .limit(1);
+
+  if (!snapshot) return null;
+
+  return {
+    interviewId: snapshot.interviewId,
+    resumeId: snapshot.resumeId,
+    resumeVersionId: snapshot.resumeVersionId,
+    resumeTitle: snapshot.resumeTitle,
+    versionNumber: snapshot.versionNumber,
+    sourceType: snapshot.sourceType,
+    parsedJson: snapshot.parsedJson,
+    evidenceJson: snapshot.evidenceJson,
+    originalFilename: snapshot.originalFilename ?? null,
+    originalFileUrl: snapshot.storedPath ?? null,
+  };
+}
+
