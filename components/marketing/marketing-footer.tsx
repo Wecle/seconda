@@ -113,7 +113,7 @@ export function MarketingFooter() {
                   href="/privacy"
                   className="transition-colors hover:text-foreground"
                 >
-                  隐私政策（数据安全承诺）
+                  隐私政策
                 </Link>
               </li>
               <li>
@@ -129,7 +129,7 @@ export function MarketingFooter() {
                   href="mailto:zyx19981379@gmail.com"
                   className="transition-colors hover:text-foreground"
                 >
-                  联系我们（技术与客服支持）
+                  联系我们
                 </a>
               </li>
             </ul>
