@@ -559,11 +559,11 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                 return (
                   <article
                     key={`answer-${item.answerId}`}
-                    className="flex items-start justify-end gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300"
+                    className="flex items-start justify-end gap-3.5 pt-5 sm:pt-7 animate-in fade-in slide-in-from-bottom-2 duration-300"
                   >
-                    <div className="min-w-0 max-w-[85%] space-y-1">
+                    <div className="min-w-0 max-w-[85%] space-y-1.5">
                       <div className="flex items-center justify-end gap-2 text-xs text-muted-foreground">
-                        <span className="font-medium">你 (候选人)</span>
+                        <span className="font-medium">{t.interview.candidateLabel}</span>
                       </div>
                       <div
                         className={`rounded-2xl rounded-tr-xs px-4.5 py-3 shadow-xs [overflow-wrap:anywhere] ${
@@ -636,7 +636,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   id={`interview-turn-${item.questionId}`}
                   data-turn-id={item.questionId}
                   onClick={() => setFocusedQuestionId(item.questionId)}
-                  className={`scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer rounded-2xl p-1.5 -m-1.5 transition-all ${
+                  className={`scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer rounded-2xl p-1.5 -mx-1.5 transition-all ${
                     isFocused && focusedQuestionId
                       ? "ring-2 ring-primary/40 bg-primary/5"
                       : "hover:bg-muted/10"

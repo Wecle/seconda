@@ -733,6 +733,7 @@ export const en = {
     generatedNoOriginal:
       "This resume was generated from information you provided and has no original file.",
     aiInterviewer: "AI Interviewer",
+    candidateLabel: "You (Candidate)",
     askingNow: "Asking now...",
     tip: "Tip",
     expandTip: "Click to expand",

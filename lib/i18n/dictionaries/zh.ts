@@ -717,6 +717,7 @@ export const zh = {
     generatedNoOriginal:
       "此简历由 AI 根据你提供的信息生成，没有原始文件。",
     aiInterviewer: "AI 面试官",
+    candidateLabel: "你 (候选人)",
     askingNow: "正在提问...",
     tip: "提示",
     expandTip: "点击展开",
