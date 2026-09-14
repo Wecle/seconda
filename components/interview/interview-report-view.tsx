@@ -238,15 +238,6 @@ function getHiringSignalBadge(
   return configs[signal] ?? configs.hire;
 }
 
-function SectionKicker({ number, label }: { number: string; label: string }) {
-  return (
-    <div className="flex items-center gap-2 text-[11px] font-mono font-semibold uppercase tracking-wider text-muted-foreground/80">
-      <span className="text-primary">{number}</span>
-      <span className="text-border">/</span>
-      <span>{label}</span>
-    </div>
-  );
-}
 
 export function InterviewReportView({
   interviewId,
@@ -434,13 +425,11 @@ export function InterviewReportView({
       </header>
 
       {/* Main Report Body */}
-      <main className="mx-auto max-w-5xl space-y-12 px-4 py-8 sm:px-6">
+      <main className="mx-auto max-w-5xl space-y-10 px-4 py-8 sm:px-6">
         {/* ============================================================ */}
         {/* SECTION 01: 综合表现与分析总结 (Hero Score & Executive Summary) */}
         {/* ============================================================ */}
-        <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          <SectionKicker number="01" label={locale === "en" ? "Executive Verdict" : "决策总览与综合评定"} />
-
+        <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="grid gap-6 lg:grid-cols-12 items-stretch">
             {/* Left: Overall Score Card */}
             <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 shadow-xs lg:col-span-4">
@@ -563,20 +552,18 @@ export function InterviewReportView({
         {/* Placed directly beneath Section 01 as requested */}
         {/* ============================================================ */}
         {summary?.hiringDecision ? (
-          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <SectionKicker number="02" label={locale === "en" ? "Hiring Committee" : "招聘委员会决策研判"} />
-
+          <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
             <div className="rounded-2xl border border-border/80 bg-card p-6 shadow-xs space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
-                <div className="flex items-center gap-2">
-                  <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                    <Target className="size-4" />
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Target className="size-4.5" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-semibold tracking-tight text-foreground">
+                    <h2 className="text-base font-semibold tracking-tight text-foreground">
                       {t.report.hiringDecision.title}
                     </h2>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="text-xs text-muted-foreground mt-0.5">
                       {locale === "en"
                         ? "Synthesized hiring bar evaluation and strategic trade-off analysis"
                         : "综合评估面试表现与团队用人标准后的终审结论"}
@@ -607,11 +594,11 @@ export function InterviewReportView({
                 </div>
               </div>
 
-              {/* Rationale & Trade-offs 2-Column */}
-              <div className="grid gap-5 sm:grid-cols-2 text-xs">
-                <div className="space-y-2 rounded-xl bg-muted/20 border border-border/60 p-4">
-                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
-                    <Award className="size-3.5 text-primary" />
+              {/* Rationale & Trade-offs 2-Column: clean callout blocks with left accent line */}
+              <div className="grid gap-4 sm:grid-cols-2 text-xs">
+                <div className="space-y-2 rounded-xl bg-muted/25 p-4 border-l-2 border-primary/60">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground text-[13px]">
+                    <Award className="size-4 text-primary" />
                     <span>{t.report.hiringDecision.rationale}</span>
                   </div>
                   <p className="text-muted-foreground leading-relaxed text-[13px]">
@@ -619,9 +606,9 @@ export function InterviewReportView({
                   </p>
                 </div>
 
-                <div className="space-y-2 rounded-xl bg-muted/20 border border-border/60 p-4">
-                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
-                    <Compass className="size-3.5 text-primary" />
+                <div className="space-y-2 rounded-xl bg-muted/25 p-4 border-l-2 border-primary/60">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground text-[13px]">
+                    <Compass className="size-4 text-primary" />
                     <span>{t.report.hiringDecision.keyTradeOffs}</span>
                   </div>
                   <p className="text-muted-foreground leading-relaxed text-[13px]">
@@ -638,21 +625,19 @@ export function InterviewReportView({
         {/* ============================================================ */}
         {averages ? (
           <section className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-400">
-            <div className="flex items-center justify-between">
-              <SectionKicker number="03" label={locale === "en" ? "Competency Spectrum" : "六维胜任力分析"} />
+            <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-2 border-b border-border/60 pb-3">
+              <div>
+                <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                  {t.report.competencyBreakdown}
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">{t.report.competencyDesc}</p>
+              </div>
               <Badge
                 variant="outline"
-                className="hidden sm:inline-flex text-[11px] text-muted-foreground font-normal border-border/60"
+                className="self-start sm:self-auto text-[11px] text-muted-foreground font-normal border-border/60"
               >
                 {t.report.equalWeightLabel}
               </Badge>
-            </div>
-
-            <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
-              <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                {t.report.competencyBreakdown}
-              </h2>
-              <p className="text-xs text-muted-foreground">{t.report.competencyDesc}</p>
             </div>
 
             <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
@@ -706,12 +691,7 @@ export function InterviewReportView({
         {/* SECTION 04: 独到认知 vs 红队审查 (Strategic Differentiation & Red-Team Audit) */}
         {/* ============================================================ */}
         {summary?.differentiationRating || summary?.redTeamChallenge ? (
-          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-400">
-            <SectionKicker
-              number="04"
-              label={locale === "en" ? "Differentiation & Red Team" : "认知壁垒与红队审查"}
-            />
-
+          <section className="animate-in fade-in slide-in-from-bottom-4 duration-400">
             <div className="grid gap-6 md:grid-cols-2 items-stretch">
               {/* Left: Differentiation & Earned Secrets */}
               {summary?.differentiationRating ? (
@@ -820,15 +800,9 @@ export function InterviewReportView({
 
         {/* ============================================================ */}
         {/* SECTION 05: 72小时黄金突破指南与战略建议 (72h Action Plan & Strategic Roadmap) */}
-        {/* Placed here right after diagnosis to provide immediate agency */}
         {/* ============================================================ */}
         {summary?.priorityActionPlan72h || summary?.recommendations ? (
-          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-5 duration-500">
-            <SectionKicker
-              number="05"
-              label={locale === "en" ? "72-Hour Sprint & Roadmap" : "72小时黄金突破与破局指南"}
-            />
-
+          <section className="animate-in fade-in slide-in-from-bottom-5 duration-500">
             <div className="rounded-2xl border border-primary/20 bg-card p-6 shadow-xs space-y-6">
               {/* 3 Progressive Action Steps */}
               {summary?.priorityActionPlan72h ? (
@@ -915,20 +889,15 @@ export function InterviewReportView({
 
         {/* ============================================================ */}
         {/* SECTION 06: 面试官内心真实透视流 (Interviewer Psychological Journey) */}
-        {/* Chronological psychological bridge into the question dossier */}
         {/* ============================================================ */}
         {summary?.innerMonologues && summary.innerMonologues.length > 0 ? (
           <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <SectionKicker
-              number="06"
-              label={locale === "en" ? "Interviewer Mindset" : "考官心智透视流"}
-            />
-
-            <div>
-              <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                {t.report.innerMonologue.title}
+            <div className="border-b border-border/60 pb-3">
+              <h2 className="text-lg font-semibold tracking-tight text-foreground flex items-center gap-2">
+                <MessageSquareQuote className="size-5 text-primary" />
+                <span>{t.report.innerMonologue.title}</span>
               </h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
+              <p className="text-xs text-muted-foreground mt-1">
                 {t.report.innerMonologue.description}
               </p>
             </div>
@@ -965,15 +934,18 @@ export function InterviewReportView({
 
         {/* ============================================================ */}
         {/* SECTION 07: 逐题深度复盘证据卷宗 (Question-by-Question Detailed Dossier) */}
-        {/* Completely flattened, containeritis-free, elegant editorial layout */}
         {/* ============================================================ */}
         <section className="space-y-4 animate-in fade-in slide-in-from-bottom-5 duration-500">
-          <div className="flex items-center justify-between">
-            <SectionKicker
-              number="07"
-              label={locale === "en" ? "Evidence Dossier" : "逐题深度复盘卷宗"}
-            />
-            <div className="flex items-center gap-3">
+          <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-3 border-b border-border/60 pb-3">
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                {t.report.detailedAnalysis}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t.report.detailedAnalysisSubtitle}
+              </p>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
               <span className="text-xs text-muted-foreground">
                 {locale === "en" ? `${questions.length} questions` : `共 ${questions.length} 道考题`}
               </span>
@@ -996,15 +968,6 @@ export function InterviewReportView({
                 )}
               </Button>
             </div>
-          </div>
-
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight text-foreground">
-              {t.report.detailedAnalysis}
-            </h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {t.report.detailedAnalysisSubtitle}
-            </p>
           </div>
 
           <div className="space-y-4 pt-1">
