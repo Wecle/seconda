@@ -86,7 +86,7 @@ test("requires primary and fallback providers to match inside each tier", () => 
   );
 });
 
-test("rejects duplicate configured models", () => {
+test("rejects duplicate primary and fallback models within the same tier", () => {
   assert.throws(
     () =>
       loadModelPolicy({
@@ -96,9 +96,40 @@ test("rejects duplicate configured models", () => {
     /duplicate/i,
   );
   assert.throws(
-    () => loadModelPolicy({ ...validEnv, AI_MODEL_QUALITY: "deepseek/fast" }),
+    () =>
+      loadModelPolicy({
+        ...validEnv,
+        AI_MODEL_QUALITY_FALLBACK: "zhipu/quality",
+      }),
     /duplicate/i,
   );
+});
+
+test("allows fast and quality tiers to use the same model", () => {
+  const sameModelEnv = {
+    AI_MODEL_FAST: "deepseek/fast",
+    AI_MODEL_QUALITY: "deepseek/fast",
+    AI_APPROVED_MODELS: "deepseek/fast",
+  };
+  const policy = loadModelPolicy(sameModelEnv);
+  assert.equal(policy.fastModel, "deepseek/fast");
+  assert.equal(policy.qualityModel, "deepseek/fast");
+});
+
+test("deduplicates candidate models when fast tier falls back to shared quality model", () => {
+  const policy = loadModelPolicy({
+    AI_MODEL_FAST: "deepseek/chat",
+    AI_MODEL_QUALITY: "deepseek/chat",
+    AI_MODEL_QUALITY_FALLBACK: "deepseek/reasoner",
+    AI_APPROVED_MODELS: "deepseek/chat,deepseek/reasoner",
+  });
+  assert.deepEqual(resolveModelCandidates("resume.parse", policy), {
+    tier: "quality",
+    candidates: [
+      { model: "deepseek/chat", credentialTier: "quality" },
+      { model: "deepseek/reasoner", credentialTier: "quality" },
+    ],
+  });
 });
 
 test("rejects configured models outside the approved registry", () => {
@@ -158,5 +189,27 @@ test("resolves credential tier and api key for models", () => {
   assert.deepEqual(resolveModelCredential("zhipu/quality", env), {
     tier: "quality",
     apiKey: "quality-key",
+  });
+});
+
+test("resolves credentials when fast and quality tiers use the same model", () => {
+  const sameModelEnv = {
+    AI_MODEL_FAST: "deepseek/fast",
+    AI_MODEL_QUALITY: "deepseek/fast",
+    AI_APPROVED_MODELS: "deepseek/fast",
+    FAST_MODEL_API_KEY: "fast-key",
+    QUALITY_MODEL_API_KEY: "quality-key",
+  };
+  assert.deepEqual(resolveModelCredential("deepseek/fast", sameModelEnv, "fast"), {
+    tier: "fast",
+    apiKey: "fast-key",
+  });
+  assert.deepEqual(resolveModelCredential("deepseek/fast", sameModelEnv, "quality"), {
+    tier: "quality",
+    apiKey: "quality-key",
+  });
+  assert.deepEqual(resolveModelCredential("deepseek/fast", sameModelEnv), {
+    tier: "fast",
+    apiKey: "fast-key",
   });
 });

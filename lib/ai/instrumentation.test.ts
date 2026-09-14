@@ -14,6 +14,15 @@ test("accepts valid Node.js direct-provider configuration", () => {
   assert.doesNotThrow(() => register(validEnv));
 });
 
+test("accepts valid Node.js configuration when fast and quality tiers use the same model", () => {
+  assert.doesNotThrow(() => register({
+    ...validEnv,
+    AI_MODEL_FAST: "deepseek/fast",
+    AI_MODEL_QUALITY: "deepseek/fast",
+    AI_APPROVED_MODELS: "deepseek/fast",
+  }));
+});
+
 test("accepts absent pricing and observe-first budget defaults", () => {
   assert.doesNotThrow(() => register(validEnv));
 });

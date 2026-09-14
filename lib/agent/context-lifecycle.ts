@@ -64,7 +64,7 @@ const defaultStore: ContextLifecycleStore = {
 };
 
 async function defaultSummarize(model: string, messages: readonly ModelMessage[], signal: AbortSignal) {
-  const credential = resolveModelCredential(model);
+  const credential = resolveModelCredential(model, process.env, "fast");
   const provider = createProviderModel({
     model,
     credentialTier: credential.tier,

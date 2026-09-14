@@ -63,7 +63,7 @@ export type AgentRuntimeDependencies = {
 export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeDependencies) {
   const capability = dependencies.capabilities.resolve(input.capability);
   const provider = dependencies.provider ?? (() => {
-    const credential = resolveModelCredential(input.model);
+    const credential = resolveModelCredential(input.model, process.env, "fast");
     return createProviderModel({
       model: input.model,
       credentialTier: credential.tier,

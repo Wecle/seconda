@@ -78,10 +78,15 @@ export function loadModelPolicy(env: ModelEnvironment = process.env): Readonly<M
     if (model) validateModel(name, model);
   }
 
-  const modelValues = configured.flatMap(([, model]) => (model ? [model] : []));
-  if (new Set(modelValues).size !== modelValues.length) {
-    throw new Error("Configured models must not contain duplicates");
+  if (fastFallbackModel && fastModel === fastFallbackModel) {
+    throw new Error("Fast primary and fallback models must not contain duplicates");
   }
+
+  if (qualityFallbackModel && qualityModel === qualityFallbackModel) {
+    throw new Error("Quality primary and fallback models must not contain duplicates");
+  }
+
+  const modelValues = configured.flatMap(([, model]) => (model ? [model] : []));
 
   const registry = new Set(
     approvedModels.split(",").map((model) => model.trim()).filter(Boolean),
@@ -135,12 +140,23 @@ export function resolveModelCandidates(task: AITask, policy: ModelPolicy): {
       : []),
   ];
 
-  return { tier, candidates: tier === "fast" ? [...fastCandidates, ...qualityCandidates] : qualityCandidates };
+  const rawCandidates = tier === "fast" ? [...fastCandidates, ...qualityCandidates] : qualityCandidates;
+  const seenModels = new Set<string>();
+  const candidates: ModelCandidate[] = [];
+  for (const candidate of rawCandidates) {
+    if (!seenModels.has(candidate.model)) {
+      seenModels.add(candidate.model);
+      candidates.push(candidate);
+    }
+  }
+
+  return { tier, candidates };
 }
 
 export function resolveModelCredential(
   model: string,
   env: ModelEnvironment = process.env,
+  preferredTier?: AIModelTier,
 ): {
   tier: AIModelTier;
   apiKey: string;
@@ -150,17 +166,37 @@ export function resolveModelCredential(
 
   try {
     const policy = loadModelPolicy(env);
-    if (model === policy.qualityModel || model === policy.qualityFallbackModel) {
+    const isQuality = model === policy.qualityModel || model === policy.qualityFallbackModel;
+    const isFast = model === policy.fastModel || model === policy.fastFallbackModel;
+
+    const returnQuality = () => {
       if (!qualityKey) {
         throw new Error("QUALITY_MODEL_API_KEY must be configured");
       }
-      return { tier: "quality", apiKey: qualityKey };
-    }
-    if (model === policy.fastModel || model === policy.fastFallbackModel) {
+      return { tier: "quality" as const, apiKey: qualityKey };
+    };
+
+    const returnFast = () => {
       if (!fastKey) {
         throw new Error("FAST_MODEL_API_KEY must be configured");
       }
-      return { tier: "fast", apiKey: fastKey };
+      return { tier: "fast" as const, apiKey: fastKey };
+    };
+
+    if (preferredTier === "fast") {
+      if (isFast) return returnFast();
+      if (isQuality) return returnQuality();
+    } else if (preferredTier === "quality") {
+      if (isQuality) return returnQuality();
+      if (isFast) return returnFast();
+    } else {
+      if (isFast && !isQuality) return returnFast();
+      if (isQuality && !isFast) return returnQuality();
+      if (isFast && isQuality) {
+        if (fastKey) return { tier: "fast" as const, apiKey: fastKey };
+        if (qualityKey) return { tier: "quality" as const, apiKey: qualityKey };
+        throw new Error("FAST_MODEL_API_KEY must be configured");
+      }
     }
   } catch (error) {
     if (
@@ -176,5 +212,5 @@ export function resolveModelCredential(
   if (!fallbackKey) {
     throw new Error("FAST_MODEL_API_KEY must be configured");
   }
-  return { tier: "fast", apiKey: fallbackKey };
+  return { tier: preferredTier ?? "fast", apiKey: fallbackKey };
 }
