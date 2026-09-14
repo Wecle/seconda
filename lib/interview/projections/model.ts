@@ -24,6 +24,12 @@ export type InterviewRunModelProjection = {
   readonly remainingRounds: number;
   readonly canonicalResume: string;
   readonly resumeEvidence: ResumeEvidenceMap;
+  readonly jobDescription?: {
+    readonly title: string;
+    readonly company?: string | null;
+    readonly mustHaveSkills: readonly string[];
+    readonly canonicalText: string;
+  } | null;
   readonly currentQuestion: InterviewModelHistoryItem | null;
   readonly currentAnswer: { content: string; skipped: boolean } | null;
   readonly history: readonly InterviewModelHistoryItem[];

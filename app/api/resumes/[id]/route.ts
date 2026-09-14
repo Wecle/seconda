@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { del } from "@vercel/blob";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { resumes, resumeVersions } from "@/lib/db/schema";
+import { resumes, resumeVersions, resumeJobDescriptions } from "@/lib/db/schema";
 import { getCurrentUserId } from "@/lib/auth/session";
 
 export async function DELETE(
@@ -28,7 +28,16 @@ export async function DELETE(
       .select({ storedPath: resumeVersions.storedPath })
       .from(resumeVersions)
       .where(eq(resumeVersions.resumeId, id));
-    const deletion = versions.flatMap(({ storedPath }) => storedPath ? [storedPath] : []);
+
+    const jds = await db
+      .select({ storedPath: resumeJobDescriptions.storedPath })
+      .from(resumeJobDescriptions)
+      .where(eq(resumeJobDescriptions.resumeId, id));
+
+    const deletion = [
+      ...versions.flatMap(({ storedPath }) => (storedPath ? [storedPath] : [])),
+      ...jds.flatMap(({ storedPath }) => (storedPath ? [storedPath] : [])),
+    ];
 
     await db.delete(resumes).where(eq(resumes.id, id));
 

@@ -37,6 +37,22 @@ export const oauthAccounts = pgTable("oauth_accounts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [unique().on(table.provider, table.providerAccountId)]);
 
+export interface ParsedJobDescription {
+  roleTitle: string;
+  company?: string;
+  departmentOrTeam?: string;
+  experienceLevel: "Junior" | "Mid" | "Senior";
+  coreResponsibilities: string[];
+  mustHaveSkills: string[];
+  niceToHaveSkills: string[];
+  competencyKeywords: string[];
+  decodingInsights: {
+    verbAutonomyLevel: "lead_own" | "execute" | "support";
+    betweenTheLines: string[];
+    reverseQuestions: string[];
+  };
+}
+
 export interface ResumeInterviewSettings {
   language: "zh" | "en" | "es" | "de";
   persona: "friendly" | "standard" | "stressful";
@@ -46,6 +62,7 @@ export interface ResumeInterviewSettings {
   preference: string;
   preferenceTags: string[];
   targetRoundCount: number;
+  defaultJobDescriptionId?: string;
 }
 
 export const resumes = pgTable("resumes", {
@@ -87,6 +104,33 @@ export const resumeVersions = pgTable("resume_versions", {
     "resume_versions_generated_attachment_check",
     sql`${table.sourceType} <> 'generated' OR (${table.originalFilename} IS NULL AND ${table.storedPath} IS NULL AND ${table.mimeType} IS NULL AND ${table.fileSize} IS NULL)`,
   ),
+]);
+
+export const resumeJobDescriptions = pgTable("resume_job_descriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  resumeId: uuid("resume_id")
+    .notNull()
+    .references(() => resumes.id, { onDelete: "cascade" }),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  company: text("company"),
+  sourceType: text("source_type").notNull(),
+  originalFilename: text("original_filename"),
+  storedPath: text("stored_path"),
+  fileSize: integer("file_size"),
+  rawText: text("raw_text").notNull(),
+  parsedJson: jsonb("parsed_json").$type<ParsedJobDescription>().notNull(),
+  parseStatus: text("parse_status").notNull().default("parsed"),
+  parseError: text("parse_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("idx_resume_jds_resume").on(table.resumeId),
+  index("idx_resume_jds_user").on(table.userId),
+  check("resume_jds_source_type_check", sql`${table.sourceType} IN ('pasted', 'uploaded_pdf', 'uploaded_docx')`),
+  check("resume_jds_parse_status_check", sql`${table.parseStatus} IN ('parsing', 'parsed', 'failed')`),
 ]);
 
 export const aiTaskRuns = pgTable("ai_task_runs", {
@@ -224,6 +268,7 @@ export const interviews = pgTable("interviews", {
     .notNull()
     .references(() => agentSessions.id, { onDelete: "cascade" }),
   resumeVersionId: uuid("resume_version_id").notNull(),
+  jobSnapshotId: uuid("job_snapshot_id").references((): AnyPgColumn => interviewJobSnapshots.id, { onDelete: "set null" }),
   status: text("status").notNull().default("initializing"),
   language: text("language").notNull(),
   persona: text("persona").notNull(),
@@ -279,6 +324,25 @@ export const interviewResumeSnapshots = pgTable("interview_resume_snapshots", {
   uniqueIndex("idx_interview_resume_snapshots_interview").on(table.interviewId),
   check("interview_resume_snapshots_version_check", sql`${table.versionNumber} > 0`),
   check("interview_resume_snapshots_source_type_check", sql`${table.sourceType} IN ('uploaded', 'generated')`),
+]);
+
+export const interviewJobSnapshots = pgTable("interview_job_snapshots", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  interviewId: uuid("interview_id")
+    .notNull()
+    .references(() => interviews.id, { onDelete: "cascade" }),
+  jobDescriptionId: uuid("job_description_id")
+    .references(() => resumeJobDescriptions.id, { onDelete: "set null" }),
+  title: text("title").notNull(),
+  company: text("company"),
+  sourceType: text("source_type").notNull(),
+  rawText: text("raw_text").notNull(),
+  parsedJson: jsonb("parsed_json").$type<ParsedJobDescription>().notNull(),
+  canonicalText: text("canonical_text").notNull(),
+  contentHash: text("content_hash").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("idx_interview_job_snapshots_interview").on(table.interviewId),
 ]);
 
 export const interviewQuestions = pgTable("interview_questions", {

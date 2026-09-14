@@ -25,6 +25,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useTranslation } from "@/lib/i18n/context";
 import type { CreateInterviewRequest } from "@/lib/interview/domain/create-interview";
 import type { ResumeInterviewSettings } from "@/components/dashboard/types";
+import type { ResumeJobDescriptionItem } from "@/lib/jd/types";
+import { JobDescriptionSelector } from "@/components/interview/job-description-selector";
 import {
   InterviewCreationClientError,
   requestInterviewCreation,
@@ -78,17 +80,19 @@ export function InterviewSettingsDialog({
 
     return {
       language: savedSettings?.language ?? validLocale,
-      persona: savedSettings?.persona ?? "standard",
+      persona: savedSettings?.persona ?? "friendly",
       interviewType: savedSettings?.interviewType ?? "mixed",
       targetLevel: savedSettings?.targetLevel ?? "Mid",
       targetRole: (savedSettings?.targetRole || defaultTargetRole).trim(),
       preference: savedSettings?.preference ?? "",
       preferenceTags: savedSettings?.preferenceTags ?? [],
       targetRoundCount: savedSettings?.targetRoundCount ?? 8,
+      jobDescriptionId: savedSettings?.defaultJobDescriptionId,
     };
   }, [defaultTargetRole, locale, savedSettings]);
 
   const [settings, setSettings] = useState<InterviewSettings>(() => getInitialSettings());
+  const [selectedJd, setSelectedJd] = useState<ResumeJobDescriptionItem | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const creationAttempt = useRef<InterviewCreationAttempt | null>(null);
@@ -97,6 +101,7 @@ export function InterviewSettingsDialog({
   useEffect(() => {
     if (open) {
       setSettings(getInitialSettings());
+      setSelectedJd(null);
       setError(null);
     }
   }, [open, getInitialSettings]);
@@ -108,6 +113,21 @@ export function InterviewSettingsDialog({
     setSettings((current) => ({ ...current, [key]: value }));
     setError(null);
   };
+
+  const handleSelectJd = useCallback((jd: ResumeJobDescriptionItem | null) => {
+    setSelectedJd(jd);
+    setSettings((current) => {
+      const next = { ...current, jobDescriptionId: jd ? jd.id : undefined };
+      if (jd) {
+        next.targetRole = jd.parsedJson.roleTitle;
+        if (jd.parsedJson.experienceLevel) {
+          next.targetLevel = jd.parsedJson.experienceLevel;
+        }
+      }
+      return next;
+    });
+    setError(null);
+  }, []);
 
   const togglePreferenceTag = (tagLabel: string, tagKey?: string) => {
     const isSelected =
@@ -137,6 +157,7 @@ export function InterviewSettingsDialog({
       ...settingsToSave,
       targetRole: settingsToSave.targetRole.trim(),
       preference: settingsToSave.preference.trim(),
+      defaultJobDescriptionId: settingsToSave.jobDescriptionId,
     };
     const response = await fetch(`/api/resumes/${resumeId}/settings`, {
       method: "PATCH",
@@ -174,6 +195,7 @@ export function InterviewSettingsDialog({
       ...settings,
       targetRole: settings.targetRole.trim(),
       preference: settings.preference.trim(),
+      jobDescriptionId: settings.jobDescriptionId || undefined,
     };
     creationAttempt.current = resolveInterviewCreationAttempt({
       previous: creationAttempt.current,
@@ -207,7 +229,7 @@ export function InterviewSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-h-[calc(100vh-2rem)] overflow-hidden p-0 sm:max-w-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl"
         onEscapeKeyDown={(event) => {
           if (submitting) event.preventDefault();
         }}
@@ -216,7 +238,7 @@ export function InterviewSettingsDialog({
         }}
       >
         <form
-          className="flex min-h-0 flex-col"
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
           onSubmit={(event) => {
             event.preventDefault();
             void handleSubmit();
@@ -238,7 +260,7 @@ export function InterviewSettingsDialog({
           </div>
 
           {mode === "create" ? (
-            <div className="min-h-0 space-y-4 overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-6 py-5">
               <div className="rounded-xl border bg-muted/20 p-4 space-y-3.5">
                 <div className="flex items-start justify-between gap-3 border-b pb-3">
                   <div>
@@ -329,6 +351,21 @@ export function InterviewSettingsDialog({
                 </p>
               </div>
 
+              <div className="rounded-xl border p-4 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {t.interview.jobDescription}
+                  </span>
+                </div>
+                <JobDescriptionSelector
+                  resumeId={resumeId}
+                  selectedJdId={settings.jobDescriptionId}
+                  selectedJd={selectedJd}
+                  onSelectJd={handleSelectJd}
+                  disabled={submitting}
+                />
+              </div>
+
               {onSwitchToSettings ? (
                 <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground">
                   <span>如需修改上述配置，可点击右侧按钮</span>
@@ -355,7 +392,20 @@ export function InterviewSettingsDialog({
               ) : null}
             </div>
           ) : (
-            <div className="min-h-0 space-y-6 overflow-y-auto px-6 py-5">
+            <div className="min-h-0 flex-1 space-y-6 overflow-y-auto overscroll-contain px-6 py-5">
+              <div className="space-y-2">
+                <Label htmlFor="interview-job-description">
+                  {t.interview.jobDescriptionOptional}
+                </Label>
+                <JobDescriptionSelector
+                  resumeId={resumeId}
+                  selectedJdId={settings.jobDescriptionId}
+                  selectedJd={selectedJd}
+                  onSelectJd={handleSelectJd}
+                  disabled={submitting}
+                />
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="interview-target-role">
                   {t.interview.targetRole}

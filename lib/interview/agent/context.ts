@@ -28,6 +28,12 @@ export function buildOpeningModelMessage(input: {
   targetRoundCount: number;
   canonicalResume: string;
   resumeEvidence: ResumeEvidenceMap;
+  jobDescription?: {
+    title: string;
+    company?: string | null;
+    mustHaveSkills: readonly string[] | string[];
+    canonicalText: string;
+  } | null;
 }): ModelMessage {
   return projectInterviewRunModelMessage({
     trigger: "opening",
@@ -43,6 +49,7 @@ export function buildOpeningModelMessage(input: {
     preferenceTags: input.preferenceTags,
     canonicalResume: input.canonicalResume,
     resumeEvidence: input.resumeEvidence,
+    jobDescription: input.jobDescription,
     currentQuestion: null,
     currentAnswer: null,
     history: [],

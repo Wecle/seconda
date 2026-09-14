@@ -5,6 +5,7 @@ import {
   agentSessions,
   interviewAnswers,
   interviewCompletionJobs,
+  interviewJobSnapshots,
   interviewQuestions,
   interviewReports,
   interviewResumeSnapshots,
@@ -1048,6 +1049,12 @@ export async function loadCompletionData(input: {
       .where(eq(interviewResumeSnapshots.interviewId, interview.id))
       .limit(1);
 
+    const [jobSnapshot] = await transaction
+      .select()
+      .from(interviewJobSnapshots)
+      .where(eq(interviewJobSnapshots.interviewId, input.interviewId))
+      .limit(1);
+
     const questions = await transaction
       .select({
         id: interviewQuestions.id,
@@ -1080,6 +1087,7 @@ export async function loadCompletionData(input: {
     return {
       interview,
       snapshot,
+      jobSnapshot: jobSnapshot ?? null,
       questions,
     };
   });

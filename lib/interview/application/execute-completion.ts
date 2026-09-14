@@ -325,6 +325,8 @@ export async function executeInterviewCompletion(
 
     const aggregates = computeInterviewAggregates(scoredInputs);
 
+    const jobSnapshot = refreshedData.jobSnapshot ?? completionContext.jobSnapshot;
+
     // Generate summary
     const reportPrompt = buildReportGenerationPrompt({
       targetRole: interview.targetRole,
@@ -335,6 +337,13 @@ export async function executeInterviewCompletion(
       dimensionAverages: aggregates.dimensionAverages,
       questions: questionReportDetails,
       resumeCanonicalText: snapshot.canonicalText,
+      jobDescription: jobSnapshot
+        ? {
+            title: jobSnapshot.title,
+            company: jobSnapshot.company,
+            canonicalText: jobSnapshot.canonicalText,
+          }
+        : null,
     });
 
     const summary = await generate({

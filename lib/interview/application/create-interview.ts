@@ -15,6 +15,7 @@ import {
   hashCanonical,
 } from "../domain/create-interview";
 import { InterviewApplicationError } from "../domain/errors";
+import { findOwnedJobDescription } from "@/lib/jd/persistence/repository";
 import {
   findInterviewCreation,
   insertInterviewCreation,
@@ -89,6 +90,22 @@ export async function createInterview(input: {
     }
     const canonicalText = serializeParsedResume(parsed.data);
     const evidenceJson = buildResumeEvidence(parsed.data);
+
+    let jobDescription = null;
+    if (request.jobDescriptionId) {
+      jobDescription = await findOwnedJobDescription(
+        transaction,
+        request.jobDescriptionId,
+        input.userId,
+      );
+      if (!jobDescription || jobDescription.resumeId !== source.resumeId) {
+        throw new InterviewApplicationError(
+          "JOB_DESCRIPTION_NOT_FOUND",
+          "Job description was not found",
+        );
+      }
+    }
+
     const model = dependencies.model ?? loadModelPolicy().fastModel;
     const creation = await insertInterviewCreation(transaction, {
       userId: input.userId,
@@ -109,6 +126,16 @@ export async function createInterview(input: {
         evidenceJson,
         contentHash: hashCanonical({ parsed: parsed.data, canonicalText }),
       },
+      jobDescription: jobDescription
+        ? {
+            id: jobDescription.id,
+            title: jobDescription.title,
+            company: jobDescription.company,
+            sourceType: jobDescription.sourceType,
+            rawText: jobDescription.rawText,
+            parsedJson: jobDescription.parsedJson,
+          }
+        : undefined,
     });
     await appendAgentEventsInTransaction(transaction, {
       sessionId: creation.session.id,

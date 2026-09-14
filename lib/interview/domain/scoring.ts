@@ -124,6 +124,25 @@ export const priorityActionPlan72hSchema = z.object({
 
 export type PriorityActionPlan72h = z.infer<typeof priorityActionPlan72hSchema>;
 
+export const jobFitSkillAssessmentSchema = z.object({
+  skillName: z.string().trim().min(1).max(100),
+  category: z.enum(["must_have", "nice_to_have"]),
+  evaluation: z.enum(["exceeded", "satisfied", "partially_met", "untested"]),
+  evidence: z.string().trim().min(1).max(500),
+}).strict();
+
+export type JobFitSkillAssessment = z.infer<typeof jobFitSkillAssessmentSchema>;
+
+export const jobFitAnalysisSchema = z.object({
+  overallFitRating: z.enum(["strong_fit", "workable", "stretch", "gap"]),
+  fitSummary: z.string().trim().min(1).max(1000),
+  skillsAssessment: z.array(jobFitSkillAssessmentSchema).max(12),
+  criticalGaps: z.array(z.string().trim().min(1).max(500)).max(5),
+  recommendedReverseQuestions: z.array(z.string().trim().min(1).max(500)).max(5),
+}).strict();
+
+export type JobFitAnalysis = z.infer<typeof jobFitAnalysisSchema>;
+
 export const reportSummarySchema = z.object({
   overallSummary: z.string().trim().min(1).max(2000),
   keyStrengths: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
@@ -134,6 +153,7 @@ export const reportSummarySchema = z.object({
   innerMonologues: z.array(innerMonologueItemSchema).max(5).optional(),
   redTeamChallenge: redTeamChallengeSchema.optional(),
   priorityActionPlan72h: priorityActionPlan72hSchema.optional(),
+  jobFitAnalysis: jobFitAnalysisSchema.optional(),
 }).strict();
 
 export type ReportSummary = z.infer<typeof reportSummarySchema>;

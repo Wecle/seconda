@@ -14,6 +14,7 @@ const resumeInterviewSettingsSchema = z.object({
   preference: z.string().trim().max(1_000).default(""),
   preferenceTags: z.array(z.string().trim().min(1).max(50)).max(3).default([]),
   targetRoundCount: z.number().int().min(1).max(20),
+  defaultJobDescriptionId: z.string().uuid().optional().nullable().transform((v) => v ?? undefined),
 });
 
 export async function PATCH(

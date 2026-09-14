@@ -6,6 +6,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Award,
+  Briefcase,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -14,6 +15,7 @@ import {
   History,
   Lightbulb,
   Loader2,
+  MessageSquare,
   MessageSquareQuote,
   RefreshCw,
   RotateCcw,
@@ -22,7 +24,9 @@ import {
   Target,
   TrendingUp,
   UserRound,
+  Copy,
 } from "lucide-react";
+import { toast } from "sonner";
 import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,6 +74,21 @@ export interface ReportPriorityActionPlan72h {
   targetedDrill72h: string;
 }
 
+export interface ReportJobFitSkillAssessment {
+  skillName: string;
+  category: "must_have" | "nice_to_have";
+  evaluation: "exceeded" | "satisfied" | "partially_met" | "untested";
+  evidence: string;
+}
+
+export interface ReportJobFitAnalysis {
+  overallFitRating: "strong_fit" | "workable" | "stretch" | "gap";
+  fitSummary: string;
+  skillsAssessment: ReportJobFitSkillAssessment[];
+  criticalGaps: string[];
+  recommendedReverseQuestions: string[];
+}
+
 export interface ReportSummaryData {
   overallSummary: string;
   keyStrengths: string[];
@@ -80,6 +99,7 @@ export interface ReportSummaryData {
   innerMonologues?: ReportInnerMonologueItem[];
   redTeamChallenge?: ReportRedTeamChallenge;
   priorityActionPlan72h?: ReportPriorityActionPlan72h;
+  jobFitAnalysis?: ReportJobFitAnalysis;
 }
 
 export interface QuestionRewriteExample {
@@ -238,6 +258,75 @@ function getHiringSignalBadge(
   return configs[signal] ?? configs.hire;
 }
 
+function getJobFitRatingBadge(
+  rating: ReportJobFitAnalysis["overallFitRating"],
+  t: ReturnType<typeof useTranslation>["t"],
+) {
+  const configs = {
+    strong_fit: {
+      label: t.interview.fitRatings.strong_fit,
+      bg: "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300",
+      dot: "bg-emerald-500",
+    },
+    workable: {
+      label: t.interview.fitRatings.workable,
+      bg: "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-300",
+      dot: "bg-blue-500",
+    },
+    stretch: {
+      label: t.interview.fitRatings.stretch,
+      bg: "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300",
+      dot: "bg-amber-500",
+    },
+    gap: {
+      label: t.interview.fitRatings.gap,
+      bg: "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300",
+      dot: "bg-rose-500",
+    },
+  };
+  return configs[rating] ?? configs.workable;
+}
+
+function getSkillEvaluationBadge(
+  evaluation: ReportJobFitSkillAssessment["evaluation"],
+  t: ReturnType<typeof useTranslation>["t"],
+) {
+  const configs = {
+    exceeded: {
+      label: t.interview.evaluations.exceeded,
+      bg: "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300",
+    },
+    satisfied: {
+      label: t.interview.evaluations.satisfied,
+      bg: "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-300",
+    },
+    partially_met: {
+      label: t.interview.evaluations.partially_met,
+      bg: "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300",
+    },
+    untested: {
+      label: t.interview.evaluations.untested,
+      bg: "bg-muted/60 border-border text-muted-foreground",
+    },
+  };
+  return configs[evaluation] ?? configs.untested;
+}
+
+function getSkillCategoryBadge(
+  category: ReportJobFitSkillAssessment["category"],
+  t: ReturnType<typeof useTranslation>["t"],
+) {
+  if (category === "must_have") {
+    return {
+      label: t.interview.mustHaveSkillsTitle,
+      bg: "bg-primary/10 border-primary/25 text-primary",
+    };
+  }
+  return {
+    label: t.interview.niceToHaveSkillsTitle,
+    bg: "bg-secondary text-secondary-foreground border-border/70",
+  };
+}
 
 export function InterviewReportView({
   interviewId,
@@ -615,6 +704,171 @@ export function InterviewReportView({
                     {summary.hiringDecision.keyTradeOffs}
                   </p>
                 </div>
+              </div>
+            </div>
+          </section>
+        ) : null}
+
+        {/* ============================================================ */}
+        {/* SECTION: 岗位契合度与差距诊断 (JD Fit & Gap Analysis) */}
+        {/* ============================================================ */}
+        {summary?.jobFitAnalysis ? (
+          <section className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <div className="rounded-2xl border border-border/80 bg-card p-6 shadow-xs space-y-6">
+              {/* Header */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex size-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Briefcase className="size-4.5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-semibold tracking-tight text-foreground">
+                      {t.interview.jdFitTitle}
+                    </h2>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {t.interview.jdFitSubtitle}
+                    </p>
+                  </div>
+                </div>
+
+                <Badge
+                  variant="outline"
+                  className={`rounded-full px-3 py-1 text-xs font-semibold gap-1.5 ${
+                    getJobFitRatingBadge(summary.jobFitAnalysis.overallFitRating, t).bg
+                  }`}
+                >
+                  <span
+                    className={`size-1.5 rounded-full ${
+                      getJobFitRatingBadge(summary.jobFitAnalysis.overallFitRating, t).dot
+                    }`}
+                  />
+                  <span>{getJobFitRatingBadge(summary.jobFitAnalysis.overallFitRating, t).label}</span>
+                </Badge>
+              </div>
+
+              {/* Fit Summary Paragraph */}
+              <div className="rounded-xl bg-muted/25 p-4 border-l-2 border-primary/60">
+                <div className="flex items-center gap-1.5 font-semibold text-foreground text-[13px] mb-1.5">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span>{t.interview.fitSummaryTitle}</span>
+                </div>
+                <p className="text-xs sm:text-[13px] text-muted-foreground leading-relaxed">
+                  {summary.jobFitAnalysis.fitSummary}
+                </p>
+              </div>
+
+              {/* Skills Assessment Grid */}
+              {summary.jobFitAnalysis.skillsAssessment &&
+              summary.jobFitAnalysis.skillsAssessment.length > 0 ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      {t.interview.skillsAssessmentTitle}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {t.interview.competenciesAssessed.replace(
+                        "{count}",
+                        String(summary.jobFitAnalysis.skillsAssessment.length),
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {summary.jobFitAnalysis.skillsAssessment.map((item, idx) => {
+                      const catBadge = getSkillCategoryBadge(item.category, t);
+                      const evalBadge = getSkillEvaluationBadge(item.evaluation, t);
+
+                      return (
+                        <div
+                          key={idx}
+                          className="flex flex-col justify-between rounded-xl border border-border/70 bg-card/60 p-3.5 shadow-2xs space-y-2 hover:border-primary/40 transition-colors"
+                        >
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-semibold text-xs text-foreground truncate">
+                                {item.skillName}
+                              </span>
+                              <Badge
+                                variant="outline"
+                                className={`rounded-md px-2 py-0.5 text-[10.5px] font-medium shrink-0 ${evalBadge.bg}`}
+                              >
+                                {evalBadge.label}
+                              </Badge>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <Badge
+                                variant="outline"
+                                className={`rounded-md px-1.5 py-0 text-[10px] font-normal ${catBadge.bg}`}
+                              >
+                                {catBadge.label}
+                              </Badge>
+                            </div>
+                          </div>
+
+                          <p className="text-[11.5px] text-muted-foreground leading-relaxed border-t border-border/40 pt-2">
+                            {item.evidence}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Dual Highlights: Critical Gaps & Recommended Reverse Questions */}
+              <div className="grid gap-4 md:grid-cols-2 pt-2 border-t border-border/40">
+                {/* Critical Gaps with Alert Icon */}
+                {summary.jobFitAnalysis.criticalGaps &&
+                summary.jobFitAnalysis.criticalGaps.length > 0 ? (
+                  <div className="rounded-xl border-l-2 border-rose-500 bg-rose-500/5 dark:bg-rose-950/20 p-4 space-y-2.5">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-rose-800 dark:text-rose-300">
+                      <AlertCircle className="size-4 text-rose-600 dark:text-rose-400 shrink-0" />
+                      <span>{t.interview.criticalGapsTitle}</span>
+                    </div>
+                    <ul className="space-y-1.5 text-xs text-rose-950/85 dark:text-rose-200/85 leading-relaxed">
+                      {summary.jobFitAnalysis.criticalGaps.map((gap, gIdx) => (
+                        <li key={gIdx} className="flex items-start gap-2">
+                          <span className="shrink-0 size-1 rounded-full bg-rose-500 mt-1.5" />
+                          <span>{gap}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {/* Recommended Reverse Questions with MessageSquare Icon */}
+                {summary.jobFitAnalysis.recommendedReverseQuestions &&
+                summary.jobFitAnalysis.recommendedReverseQuestions.length > 0 ? (
+                  <div className="rounded-xl border-l-2 border-primary bg-primary/5 dark:bg-primary/10 p-4 space-y-2.5">
+                    <div className="flex items-center gap-1.5 font-semibold text-xs text-primary">
+                      <MessageSquare className="size-4 text-primary shrink-0" />
+                      <span>{t.interview.reverseQuestionsTitle}</span>
+                    </div>
+                    <ul className="space-y-2 text-xs text-foreground/85 leading-relaxed">
+                      {summary.jobFitAnalysis.recommendedReverseQuestions.map((q, qIdx) => (
+                        <li key={qIdx} className="flex items-start justify-between gap-2 group">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <span className="shrink-0 size-1 rounded-full bg-primary mt-1.5" />
+                            <span>{q}</span>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-6 text-muted-foreground hover:text-foreground opacity-60 group-hover:opacity-100 transition-opacity shrink-0"
+                            title={t.interview.copyQuestion}
+                            onClick={() => {
+                              void navigator.clipboard.writeText(q);
+                              toast.success(t.interview.copiedToClipboard);
+                            }}
+                          >
+                            <Copy className="size-3" />
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
               </div>
             </div>
           </section>

@@ -4,6 +4,7 @@ import type { ParsedResume } from "@/lib/resume/types";
 
 export const createInterviewRequestSchema = z.object({
   resumeVersionId: z.string().uuid(),
+  jobDescriptionId: z.string().uuid().optional(),
   language: z.enum(["zh", "en", "es", "de"]),
   persona: z.enum(["friendly", "standard", "stressful"]),
   interviewType: z.enum(["behavioral", "technical", "mixed"]),

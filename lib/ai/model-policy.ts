@@ -2,7 +2,8 @@ export type AITask =
   | "resume.parse"
   | "resume.generate"
   | "interview.question_scoring"
-  | "interview.report_generation";
+  | "interview.report_generation"
+  | "jd.parse";
 
 export type AIModelTier = "fast" | "quality";
 
@@ -28,6 +29,7 @@ const taskTiers: Record<AITask, AIModelTier> = {
   "resume.generate": "quality",
   "interview.question_scoring": "quality",
   "interview.report_generation": "quality",
+  "jd.parse": "fast",
 };
 
 type ModelEnvironment = Record<string, string | undefined>;

@@ -52,7 +52,7 @@ export async function executeInterviewOpening(input: {
     userId: input.userId,
     openingRunId: input.openingRunId,
     leaseOwner,
-    buildModelMessage: ({ interview, snapshot }) => buildOpeningModelMessage({
+    buildModelMessage: ({ interview, snapshot, jobSnapshot }) => buildOpeningModelMessage({
       language: interview.language as "zh" | "en" | "es" | "de",
       persona: interview.persona as "friendly" | "standard" | "stressful",
       interviewType: interview.interviewType as "behavioral" | "technical" | "mixed",
@@ -63,6 +63,12 @@ export async function executeInterviewOpening(input: {
       targetRoundCount: interview.targetRoundCount,
       canonicalResume: snapshot.canonicalText,
       resumeEvidence: snapshot.evidenceJson as ResumeEvidenceMap,
+      jobDescription: jobSnapshot ? {
+        title: jobSnapshot.title,
+        company: jobSnapshot.company,
+        mustHaveSkills: jobSnapshot.parsedJson.mustHaveSkills,
+        canonicalText: jobSnapshot.canonicalText,
+      } : null,
     }),
   });
   if (claim.state === "completed") {

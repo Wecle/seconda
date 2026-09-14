@@ -9,12 +9,15 @@ import {
   interviewAgentRuns,
   interviewAnswers,
   interviewCompletionJobs,
+  interviewJobSnapshots,
   interviewQuestions,
   interviewResumeSnapshots,
   interviews,
   resumes,
   resumeVersions,
 } from "@/lib/db/schema";
+import { insertInterviewJobSnapshot } from "@/lib/jd/persistence/repository";
+import type { ParsedJobDescription } from "@/lib/jd/types";
 import type { CreateInterviewRequest, ResumeEvidenceMap } from "../domain/create-interview";
 
 export type InterviewTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -114,6 +117,14 @@ export async function insertInterviewCreation(
       evidenceJson: ResumeEvidenceMap;
       contentHash: string;
     };
+    jobDescription?: {
+      id: string;
+      title: string;
+      company?: string | null;
+      sourceType: string;
+      rawText: string;
+      parsedJson: ParsedJobDescription;
+    } | null;
   },
 ) {
   const [session] = await transaction.insert(agentSessions).values({
@@ -153,6 +164,23 @@ export async function insertInterviewCreation(
     evidenceJson: input.resume.evidenceJson,
     contentHash: input.resume.contentHash,
   });
+  let jobSnapshot: typeof interviewJobSnapshots.$inferSelect | null = null;
+  if (input.jobDescription) {
+    jobSnapshot = await insertInterviewJobSnapshot(transaction, {
+      interviewId: interview.id,
+      jobDescriptionId: input.jobDescription.id,
+      title: input.jobDescription.title,
+      company: input.jobDescription.company,
+      sourceType: input.jobDescription.sourceType,
+      rawText: input.jobDescription.rawText,
+      parsedJson: input.jobDescription.parsedJson,
+    });
+    await transaction
+      .update(interviews)
+      .set({ jobSnapshotId: jobSnapshot.id })
+      .where(eq(interviews.id, interview.id));
+    interview.jobSnapshotId = jobSnapshot.id;
+  }
   const [agentRun] = await transaction.insert(agentRuns).values({
     sessionId: session.id,
     status: "queued",
@@ -165,7 +193,7 @@ export async function insertInterviewCreation(
     triggerKey: "opening",
     status: "queued",
   }).returning();
-  return { interview, session, openingRun, agentRun };
+  return { interview, session, openingRun, agentRun, jobSnapshot };
 }
 
 export async function claimInterviewOpeningRun(input: {
@@ -177,6 +205,7 @@ export async function claimInterviewOpeningRun(input: {
   buildModelMessage(input: {
     interview: typeof interviews.$inferSelect;
     snapshot: typeof interviewResumeSnapshots.$inferSelect;
+    jobSnapshot: typeof interviewJobSnapshots.$inferSelect | null;
   }): ModelMessage;
 }) {
   return input.database.transaction(async (transaction) => {
@@ -217,6 +246,9 @@ export async function claimInterviewOpeningRun(input: {
       .for("update");
     const [snapshot] = await transaction.select().from(interviewResumeSnapshots)
       .where(eq(interviewResumeSnapshots.interviewId, interview.id))
+      .limit(1);
+    const [jobSnapshot] = await transaction.select().from(interviewJobSnapshots)
+      .where(eq(interviewJobSnapshots.interviewId, interview.id))
       .limit(1);
     if (!session || !snapshot) throw new Error("Interview opening context is incomplete");
     let agentRunId = logicalRun.currentAgentRunId;
@@ -293,7 +325,7 @@ export async function claimInterviewOpeningRun(input: {
         runId: agentRun.id,
         events: [{
           type: "model_message",
-          payload: { message: input.buildModelMessage({ interview, snapshot }) },
+          payload: { message: input.buildModelMessage({ interview, snapshot, jobSnapshot: jobSnapshot ?? null }) },
           dedupeKey: contextDedupeKey,
           visibility: "model",
         }],
@@ -306,6 +338,7 @@ export async function claimInterviewOpeningRun(input: {
       agentRun,
       session: { ...session, status: "running" },
       snapshot,
+      jobSnapshot: jobSnapshot ?? null,
       skillSnapshotRunId: contextEvent?.runId ?? agentRun.id,
       modelContextBoundarySequence: contextEvent?.sequence,
     };
@@ -472,6 +505,7 @@ export async function claimInterviewTurnRun(input: {
   buildModelMessage(input: {
     interview: typeof interviews.$inferSelect;
     snapshot: typeof interviewResumeSnapshots.$inferSelect;
+    jobSnapshot: typeof interviewJobSnapshots.$inferSelect | null;
     answer: typeof interviewAnswers.$inferSelect;
     question: typeof interviewQuestions.$inferSelect;
     history: Array<{
@@ -519,6 +553,9 @@ export async function claimInterviewTurnRun(input: {
       .for("update");
     const [snapshot] = await transaction.select().from(interviewResumeSnapshots)
       .where(eq(interviewResumeSnapshots.interviewId, interview.id))
+      .limit(1);
+    const [jobSnapshot] = await transaction.select().from(interviewJobSnapshots)
+      .where(eq(interviewJobSnapshots.interviewId, interview.id))
       .limit(1);
     const [trigger] = await transaction.select({
       answer: interviewAnswers,
@@ -623,6 +660,7 @@ export async function claimInterviewTurnRun(input: {
           payload: { message: input.buildModelMessage({
             interview,
             snapshot,
+            jobSnapshot: jobSnapshot ?? null,
             answer: trigger.answer,
             question: trigger.question,
             history,
@@ -639,6 +677,7 @@ export async function claimInterviewTurnRun(input: {
       agentRun,
       session: { ...session, status: "running" },
       snapshot,
+      jobSnapshot: jobSnapshot ?? null,
       answer: trigger.answer,
       question: trigger.question,
       history,

@@ -23,6 +23,7 @@ const expectedTiers: Record<AITask, AIModelTier> = {
   "resume.generate": "quality",
   "interview.question_scoring": "quality",
   "interview.report_generation": "quality",
+  "jd.parse": "fast",
 };
 
 test("maps every task to its fixed first-phase tier", () => {

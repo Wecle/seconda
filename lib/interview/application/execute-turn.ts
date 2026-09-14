@@ -129,7 +129,7 @@ export async function executeInterviewTurn(input: {
     userId: input.userId,
     interviewRunId: input.interviewRunId,
     leaseOwner,
-    buildModelMessage: ({ interview, snapshot, answer, question, history }) => {
+    buildModelMessage: ({ interview, snapshot, jobSnapshot, answer, question, history }) => {
       const projectedHistory = history.map((item) => ({
         sequence: item.sequence,
         kind: item.kind as "main" | "follow_up",
@@ -152,6 +152,12 @@ export async function executeInterviewTurn(input: {
         remainingRounds: Math.max(0, interview.targetRoundCount - interview.answeredRoundCount),
         canonicalResume: snapshot.canonicalText,
         resumeEvidence: snapshot.evidenceJson as ResumeEvidenceMap,
+        jobDescription: jobSnapshot ? {
+          title: jobSnapshot.title,
+          company: jobSnapshot.company,
+          mustHaveSkills: jobSnapshot.parsedJson.mustHaveSkills,
+          canonicalText: jobSnapshot.canonicalText,
+        } : null,
         currentQuestion: {
           sequence: question.sequence,
           kind: question.kind as "main" | "follow_up",

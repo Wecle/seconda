@@ -183,6 +183,35 @@ async function runMigration(sql: postgres.Sql) {
     ON resume_versions(resume_id, version_number)
   `;
   await sql`
+    CREATE TABLE IF NOT EXISTS resume_job_descriptions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      resume_id UUID NOT NULL REFERENCES resumes(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      company TEXT,
+      source_type TEXT NOT NULL,
+      original_filename TEXT,
+      stored_path TEXT,
+      file_size INTEGER,
+      raw_text TEXT NOT NULL,
+      parsed_json JSONB NOT NULL,
+      parse_status TEXT NOT NULL DEFAULT 'parsed',
+      parse_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CONSTRAINT resume_jds_source_type_check CHECK (source_type IN ('pasted', 'uploaded_pdf', 'uploaded_docx')),
+      CONSTRAINT resume_jds_parse_status_check CHECK (parse_status IN ('parsing', 'parsed', 'failed'))
+    )
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_resume_jds_resume
+    ON resume_job_descriptions(resume_id)
+  `;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_resume_jds_user
+    ON resume_job_descriptions(user_id)
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS ai_task_runs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       operation_key TEXT NOT NULL,
@@ -569,6 +598,55 @@ async function runMigration(sql: postgres.Sql) {
       BEFORE UPDATE ON interview_resume_snapshots
       FOR EACH ROW EXECUTE FUNCTION reject_interview_resume_snapshot_update();
     `);
+  }
+  await sql`
+    CREATE TABLE IF NOT EXISTS interview_job_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+      job_description_id UUID REFERENCES resume_job_descriptions(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      company TEXT,
+      source_type TEXT NOT NULL,
+      raw_text TEXT NOT NULL,
+      parsed_json JSONB NOT NULL,
+      canonical_text TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+  await sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_interview_job_snapshots_interview
+    ON interview_job_snapshots(interview_id)
+  `;
+  await sql.unsafe(`
+    CREATE OR REPLACE FUNCTION reject_interview_job_snapshot_update()
+    RETURNS trigger AS $$
+    BEGIN
+      IF (OLD.job_description_id IS NOT NULL AND NEW.job_description_id IS NULL)
+         AND OLD.interview_id = NEW.interview_id
+         AND OLD.title = NEW.title
+         AND OLD.company IS NOT DISTINCT FROM NEW.company
+         AND OLD.source_type = NEW.source_type
+         AND OLD.raw_text = NEW.raw_text
+         AND OLD.parsed_json::text = NEW.parsed_json::text
+         AND OLD.canonical_text = NEW.canonical_text
+         AND OLD.content_hash = NEW.content_hash THEN
+        RETURN NEW;
+      END IF;
+      RAISE EXCEPTION 'interview job snapshots are immutable';
+    END;
+    $$ LANGUAGE plpgsql;
+    DROP TRIGGER IF EXISTS interview_job_snapshots_immutable ON interview_job_snapshots;
+    CREATE TRIGGER interview_job_snapshots_immutable
+    BEFORE UPDATE ON interview_job_snapshots
+    FOR EACH ROW EXECUTE FUNCTION reject_interview_job_snapshot_update();
+  `);
+  const intColsAfterJobSnap = await getExistingColumns(sql, "interviews");
+  if (!intColsAfterJobSnap.has("job_snapshot_id")) {
+    await sql`
+      ALTER TABLE interviews
+        ADD COLUMN job_snapshot_id UUID REFERENCES interview_job_snapshots(id) ON DELETE SET NULL
+    `;
   }
   await sql`
     CREATE TABLE IF NOT EXISTS interview_agent_runs (

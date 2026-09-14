@@ -5,6 +5,8 @@ import {
   computeQuestionOverall,
   differentiationRatingSchema,
   hiringSignalSchema,
+  jobFitAnalysisSchema,
+  jobFitSkillAssessmentSchema,
   questionEvaluationSchema,
   questionScoresSchema,
   reportSummarySchema,
@@ -414,4 +416,109 @@ test("reportSummarySchema validates full new report structure and maintains back
   };
   assert.ok(differentiationRatingSchema.safeParse(extendedSummary.differentiationRating).success);
   assert.deepEqual(reportSummarySchema.parse(extendedSummary), extendedSummary);
+});
+
+test("reportSummarySchema parses summary with valid jobFitAnalysis", () => {
+  const summaryWithJd = {
+    overallSummary: "候选人表现优异，技术底座扎实。",
+    keyStrengths: ["架构设计思维清晰", "STAR表达严密"],
+    keyImprovements: ["需加深对冷门边界情况的思考"],
+    recommendations: "建议补充大规模复杂业务场景的实战积累。",
+    jobFitAnalysis: {
+      overallFitRating: "strong_fit" as const,
+      fitSummary: "整体能力高度符合该资深前端岗位诉求。",
+      skillsAssessment: [
+        {
+          skillName: "React 19",
+          category: "must_have" as const,
+          evaluation: "satisfied" as const,
+          evidence: "清晰阐述了新特性与使用考量。",
+        },
+      ],
+      criticalGaps: ["微前端经验偏少"],
+      recommendedReverseQuestions: ["当前核心系统架构演进的最大挑战是什么？"],
+    },
+  };
+
+  const parsed = reportSummarySchema.parse(summaryWithJd);
+  assert.ok(parsed.jobFitAnalysis);
+  assert.ok(jobFitAnalysisSchema.safeParse(parsed.jobFitAnalysis).success);
+  assert.ok(jobFitSkillAssessmentSchema.safeParse(parsed.jobFitAnalysis.skillsAssessment[0]).success);
+  assert.equal(parsed.jobFitAnalysis?.overallFitRating, "strong_fit");
+  assert.equal(parsed.jobFitAnalysis?.skillsAssessment[0].skillName, "React 19");
+});
+
+test("reportSummarySchema parses summary without jobFitAnalysis (backward compatibility)", () => {
+  const legacySummary = {
+    overallSummary: "候选人表现良好。",
+    keyStrengths: ["代码结构清晰"],
+    keyImprovements: ["缺少量化指标"],
+    recommendations: "建议提升回答精炼度。",
+  };
+
+  const parsed = reportSummarySchema.parse(legacySummary);
+  assert.equal(parsed.jobFitAnalysis, undefined);
+  assert.deepEqual(parsed, legacySummary);
+});
+
+test("buildReportGenerationPrompt includes JD section when present and omits it when null", async () => {
+  const { buildReportGenerationPrompt } = await import("./completion/prompt");
+  const baseInput = {
+    targetRole: "资深前端专家",
+    targetLevel: "Senior",
+    interviewType: "technical",
+    overallScore: 85,
+    scoreStatus: "scored" as const,
+    dimensionAverages: {
+      understanding: 8.5,
+      expression: 8.0,
+      logic: 9.0,
+      depth: 8.5,
+      authenticity: 8.5,
+      reflection: 8.0,
+    },
+    questions: [
+      {
+        sequence: 1,
+        topic: "React 架构",
+        question: "请谈明你对 React 19 Action 的理解",
+        answer: "我的回答...",
+        skipped: false,
+        scores: {
+          understanding: 9,
+          expression: 8,
+          logic: 9,
+          depth: 8,
+          authenticity: 9,
+          reflection: 8,
+        },
+      },
+    ],
+    resumeCanonicalText: "简历文本数据",
+  };
+
+  // With JD
+  const promptWithJd = buildReportGenerationPrompt({
+    ...baseInput,
+    jobDescription: {
+      title: "资深前端专家",
+      company: "Seconda AI",
+      canonicalText: "岗位要求：精通 React 19，精通 TypeScript。",
+    },
+  });
+
+  assert.match(promptWithJd, /【目标岗位 JD（不可信参考数据）】/);
+  assert.match(promptWithJd, /- 岗位：资深前端专家 \| 公司：Seconda AI/);
+  assert.match(promptWithJd, /<<<JOB_DESCRIPTION_DATA/);
+  assert.match(promptWithJd, /精通 React 19/);
+  assert.match(promptWithJd, /JOB_DESCRIPTION_DATA>>>/);
+
+  // Without JD
+  const promptWithoutJd = buildReportGenerationPrompt({
+    ...baseInput,
+    jobDescription: null,
+  });
+
+  assert.doesNotMatch(promptWithoutJd, /【目标岗位 JD（不可信参考数据）】/);
+  assert.doesNotMatch(promptWithoutJd, /JOB_DESCRIPTION_DATA/);
 });

@@ -4,11 +4,11 @@ import { users } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 
 export async function getCurrentUserId() {
-  const session = await auth();
-  const userId = session?.user?.id;
-  if (!userId) return null;
-
   try {
+    const session = await auth();
+    const userId = session?.user?.id;
+    if (!userId) return null;
+
     const [existingUser] = await db
       .select({ id: users.id })
       .from(users)
