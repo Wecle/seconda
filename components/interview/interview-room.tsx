@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -21,7 +21,8 @@ import {
   Square,
   UserRound,
 } from "lucide-react";
-import { UserAvatarMenu, type UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
+import { UserAvatarMenu, getUserInitials, type UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BrandIcon } from "@/components/brand/brand-icon";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -212,6 +213,8 @@ function PhaseStatus({ phase, label }: { phase: InterviewRoomPhase; label: strin
 export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const { t } = useTranslation();
   const router = useRouter();
+  const userInitials = useMemo(() => getUserInitials(user), [user]);
+  const hasUserIdentity = Boolean(user.name?.trim() || user.email?.trim());
   const initialPhaseRef = useRef(view.room.phase);
   const [currentView, setCurrentView] = useState(view);
   const [answer, setAnswer] = useState("");
@@ -222,11 +225,36 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const openingRequestRef = useRef(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [resumePaneOpen, setResumePaneOpen] = useState(false);
   const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(null);
   const [resumeSnapshot, setResumeSnapshot] = useState<InterviewResumeSnapshotResponse | null>(null);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+
+  const returnToCurrentAnswer = () => {
+    setFocusedQuestionId(null);
+    requestAnimationFrame(() => {
+      const currentId = room.currentQuestion?.id;
+      const targetEl = currentId
+        ? document.getElementById(`interview-turn-${currentId}`)
+        : null;
+
+      if (targetEl && typeof targetEl.scrollIntoView === "function") {
+        targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      } else {
+        const viewport = scrollAreaRef.current?.querySelector<HTMLElement>("[data-slot='scroll-area-viewport']");
+        if (viewport) {
+          if (typeof viewport.scrollTo === "function") {
+            viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+          } else {
+            viewport.scrollTop = viewport.scrollHeight;
+          }
+        }
+      }
+    });
+    textareaRef.current?.focus({ preventScroll: true });
+  };
 
   const { leftRatio, isDragging, handlePointerDown, resetRatio } = useResizableColumns({
     containerRef,
@@ -417,7 +445,13 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
       <MagneticHighlightRail
         turns={turns}
         scrollContainerRef={scrollAreaRef}
-        onSelectTurn={(qId) => setFocusedQuestionId(qId)}
+        onSelectTurn={(qId) => {
+          if (qId === room.currentQuestion?.id) {
+            setFocusedQuestionId(null);
+          } else {
+            setFocusedQuestionId(qId);
+          }
+        }}
       />
 
       {/* Header */}
@@ -593,9 +627,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                       </div>
                     </div>
 
-                    <div className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl border border-border/80 bg-card text-foreground shadow-2xs">
-                      <UserRound className="size-4 text-muted-foreground" />
-                    </div>
+                    <Avatar className="mt-0.5 size-8 shrink-0 rounded-xl border border-border/80 bg-card text-foreground shadow-2xs">
+                      {user.image ? (
+                        <AvatarImage
+                          src={user.image}
+                          alt={user.name || t.interview.candidateLabel}
+                          className="aspect-square size-full object-cover"
+                        />
+                      ) : null}
+                      <AvatarFallback className="rounded-xl bg-card text-xs font-medium text-foreground">
+                        {hasUserIdentity ? userInitials : <UserRound className="size-4 text-muted-foreground" />}
+                      </AvatarFallback>
+                    </Avatar>
                   </article>
                 );
               }
@@ -646,7 +689,13 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   key={`question-${item.questionId}`}
                   id={`interview-turn-${item.questionId}`}
                   data-turn-id={item.questionId}
-                  onClick={() => setFocusedQuestionId(item.questionId)}
+                  onClick={() => {
+                    if (item.questionId === room.currentQuestion?.id) {
+                      returnToCurrentAnswer();
+                    } else {
+                      setFocusedQuestionId(item.questionId);
+                    }
+                  }}
                   className="group scroll-mt-24 flex items-start gap-3.5 animate-in fade-in slide-in-from-bottom-2 duration-300 cursor-pointer"
                 >
                   {/* Modern Interviewer Persona Avatar */}
@@ -760,10 +809,11 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                   <span>正在查看历史问题事实关联</span>
                 </span>
                 <Button
+                  type="button"
                   variant="ghost"
                   size="sm"
-                  onClick={() => setFocusedQuestionId(null)}
-                  className="h-6 px-2 text-xs font-medium text-primary hover:bg-primary/10"
+                  onClick={returnToCurrentAnswer}
+                  className="h-6 px-2 text-xs font-medium text-primary hover:bg-primary/10 cursor-pointer"
                 >
                   返回当前作答
                 </Button>
@@ -774,11 +824,12 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
             ) : null}
             <div className="overflow-hidden rounded-2xl border border-border/80 bg-card/90 shadow-lg ring-1 ring-black/5 dark:ring-white/5 transition-all focus-within:border-primary/60 focus-within:ring-2 focus-within:ring-primary/20">
               <Textarea
+                ref={textareaRef}
                 value={answer}
                 disabled={!room.canSubmitAnswer || submitting}
                 onChange={(event) => {
                   setAnswer(event.target.value);
-                  if (focusedQuestionId) setFocusedQuestionId(null);
+                  if (focusedQuestionId) returnToCurrentAnswer();
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {

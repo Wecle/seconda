@@ -28,7 +28,7 @@ interface UserAvatarMenuProps {
   callbackUrl?: string;
 }
 
-function getUserInitials(user: UserAvatarMenuUser) {
+export function getUserInitials(user: UserAvatarMenuUser) {
   const source = user.name?.trim() || user.email?.trim() || "U";
   const plain = source.includes("@") ? source.split("@")[0] : source;
   const cleaned = plain.replace(/[^a-zA-Z0-9\u4e00-\u9fff ]/g, " ").trim();
