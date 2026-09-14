@@ -131,7 +131,7 @@ export async function submitInterviewAnswer(input: {
     const [agentRun] = await transaction.insert(agentRuns).values({
       sessionId: interview.agentSessionId,
       status: "queued",
-      maxSteps: 3,
+      maxSteps: 10,
     }).returning();
     const [logicalRun] = await transaction.insert(interviewAgentRuns).values({
       interviewId: interview.id,

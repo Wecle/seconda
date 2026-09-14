@@ -3,8 +3,12 @@ import test from "node:test";
 import {
   computeInterviewAggregates,
   computeQuestionOverall,
+  differentiationRatingSchema,
+  hiringSignalSchema,
   questionEvaluationSchema,
   questionScoresSchema,
+  reportSummarySchema,
+  rootCauseTypeSchema,
   roundHalfUp,
   type QuestionScores,
   type ScoredQuestionInput,
@@ -309,4 +313,105 @@ test("all-zero scores produce scored status, overallScore 0, and correct prompt 
 
   assert.ok(prompt.includes("面试综合总分：0 / 100"));
   assert.ok(!prompt.includes("未提供足够的可评分有效回答"));
+});
+
+test("hiringSignalSchema validates valid signals and rejects invalid strings", () => {
+  const validSignals = ["strong_hire", "hire", "leaning_hire", "leaning_no_hire", "no_hire"] as const;
+  for (const signal of validSignals) {
+    assert.equal(hiringSignalSchema.parse(signal), signal);
+  }
+  assert.throws(() => hiringSignalSchema.parse("must_hire"));
+  assert.throws(() => hiringSignalSchema.parse(""));
+});
+
+test("rootCauseTypeSchema validates root causes and rejects invalid strings", () => {
+  const validRoots = [
+    "narrative_hoarding",
+    "conflict_avoidance",
+    "status_anxiety",
+    "surface_framework",
+    "story_first_mismatch",
+    "none",
+  ] as const;
+  for (const root of validRoots) {
+    assert.equal(rootCauseTypeSchema.parse(root), root);
+  }
+  assert.throws(() => rootCauseTypeSchema.parse("unknown_cause"));
+});
+
+test("questionEvaluationSchema validates new optional fields and maintains backward compatibility", () => {
+  const legacy = {
+    scores: {
+      understanding: 8,
+      expression: 8,
+      logic: 8,
+      depth: 8,
+      authenticity: 8,
+      reflection: 8,
+    },
+    strengths: ["Clear communication"],
+    improvements: ["Need more depth"],
+    advice: "Practice system design.",
+  };
+  // Validates legacy object without optional fields
+  assert.deepEqual(questionEvaluationSchema.parse(legacy), legacy);
+
+  // Validates object with all new fields
+  const extended = {
+    ...legacy,
+    rootCause: "narrative_hoarding" as const,
+    interviewerReaction: "Candidate spent 2 minutes on background context.",
+    rewriteExample: {
+      improvedExcerpt: "Cut background and jumped straight into the architecture tradeoff.",
+      annotations: ["Removed redundant company intro", "Added concrete latency metric"],
+    },
+  };
+  assert.deepEqual(questionEvaluationSchema.parse(extended), extended);
+});
+
+test("reportSummarySchema validates full new report structure and maintains backward compatibility", () => {
+  const legacySummary = {
+    overallSummary: "Good interview overall.",
+    keyStrengths: ["Strong system design"],
+    keyImprovements: ["Improve conciseness"],
+    recommendations: "Focus on elevator pitch.",
+  };
+  // Validates legacy summary
+  assert.deepEqual(reportSummarySchema.parse(legacySummary), legacySummary);
+
+  // Validates extended summary with all new sections
+  const extendedSummary = {
+    ...legacySummary,
+    hiringDecision: {
+      signal: "strong_hire" as const,
+      confidence: "high" as const,
+      decisionRationale: "Demonstrated clear architectural ownership.",
+      keyTradeOffs: "Senior technical depth outweighs minor verbosity.",
+    },
+    differentiationRating: {
+      level: "differentiated_expert" as const,
+      summary: "Showcased earned secrets on distributed lock pitfalls.",
+      earnedSecrets: ["Redis Redlock failure edge case under NTP drift"],
+    },
+    innerMonologues: [
+      {
+        questionSequence: 1,
+        topic: "Architecture",
+        triggerQuote: "We rewrote the transaction layer",
+        monologue: "Candidate clearly understands the failure modes.",
+      },
+    ],
+    redTeamChallenge: {
+      hiddenAssumptions: ["Assumes network partition is rare"],
+      blindSpots: ["Did not mention operational monitoring"],
+      devilsAdvocateRejectionReason: "May struggle with cross-functional leadership.",
+    },
+    priorityActionPlan72h: {
+      immediate24h: "Condense introduction to 30s.",
+      storybankAdjust48h: "Add a story about resolving team conflict.",
+      targetedDrill72h: "Run pushback drills on scaling limits.",
+    },
+  };
+  assert.ok(differentiationRatingSchema.safeParse(extendedSummary.differentiationRating).success);
+  assert.deepEqual(reportSummarySchema.parse(extendedSummary), extendedSummary);
 });

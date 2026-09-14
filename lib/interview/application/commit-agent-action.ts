@@ -70,9 +70,12 @@ function assertCommittedQuestionReplay(input: {
     throw new Error("Completed interview action replay does not match the committed question");
   }
   const proposalTip = input.proposal.action.tip ? normalizeText(input.proposal.action.tip) : null;
+  const proposalTopic = input.proposal.action.kind === "follow_up"
+    ? input.question.topic
+    : normalizeText(input.proposal.action.topic);
   const matchesQuestion = input.proposal.action.kind === input.question.kind
     && normalizeText(input.proposal.action.question) === input.question.question
-    && normalizeText(input.proposal.action.topic) === input.question.topic
+    && proposalTopic === input.question.topic
     && proposalTip === input.question.tip
     && canonicalJson(input.proposal.action.resumeEvidenceIds) === canonicalJson(input.question.resumeEvidenceIds);
   const matchesAnalysis = canonicalJson(input.proposal.answerAnalysis) === canonicalJson(input.answerAnalysis);
@@ -109,9 +112,7 @@ function assertTurnProposal(input: {
     if (input.triggerType !== "answer" || !input.previousQuestion || input.previousQuestion.kind === "follow_up") {
       throw new Error("A follow-up is not authorized for this turn");
     }
-    if (caseFoldText(input.proposal.action.topic) !== caseFoldText(input.previousQuestion.topic)) {
-      throw new Error("A follow-up must stay on the current topic");
-    }
+    input.proposal.action.topic = input.previousQuestion.topic;
   }
   if (input.triggerType === "skip"
     && input.proposal.action.type === "ask_question"

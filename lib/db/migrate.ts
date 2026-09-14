@@ -212,6 +212,25 @@ async function runMigration(sql: postgres.Sql) {
     ON ai_task_runs(operation_key)
   `;
   await sql`
+    ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_task_check;
+    ALTER TABLE ai_task_runs ADD CONSTRAINT ai_task_runs_task_check CHECK (
+      task IN (
+        'resume.parse',
+        'resume.generate',
+        'interview.agent',
+        'interview.question_scoring',
+        'interview.report_generation',
+        'context.compact',
+        'question.generate',
+        'question.follow-up',
+        'answer.score',
+        'report.generate',
+        'coach.generate',
+        'coach.evaluate'
+      )
+    );
+  `;
+  await sql`
     CREATE TABLE IF NOT EXISTS ai_task_attempts (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       task_run_id UUID NOT NULL REFERENCES ai_task_runs(id) ON DELETE CASCADE,

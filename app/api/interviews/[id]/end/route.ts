@@ -38,7 +38,7 @@ export async function handleEndInterview(
       },
       { database: dependencies.database },
     ).catch((error) => {
-      console.error("Failed to execute interview completion", error instanceof Error ? error.name : "Unknown error");
+      console.error("Failed to execute interview completion", error instanceof Error ? error.stack ?? error.message : error);
     });
   });
 

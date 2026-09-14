@@ -2,6 +2,15 @@ import { z } from "zod";
 
 const levelSchema = z.enum(["low", "medium", "high"]);
 
+export const rootCausePatternSchema = z.enum([
+  "none",
+  "narrative_hoarding",
+  "status_anxiety",
+  "conflict_avoidance",
+  "surface_framework",
+  "story_first_mismatch",
+]);
+
 export const answerAnalysisSchema = z.object({
   completeness: levelSchema,
   specificity: levelSchema,
@@ -10,6 +19,8 @@ export const answerAnalysisSchema = z.object({
   followUpNeeded: z.boolean(),
   missingPoints: z.array(z.string().trim().min(1).max(500)).max(10),
   extractedEvidence: z.array(z.string().trim().min(1).max(500)).max(10),
+  rootCausePattern: rootCausePatternSchema.optional(),
+  interviewerInnerMonologue: z.string().trim().max(1000).optional(),
 }).strict();
 
 export const submitInterviewActionSchema = z.object({

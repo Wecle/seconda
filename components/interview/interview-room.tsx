@@ -27,6 +27,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useTranslation } from "@/lib/i18n/context";
 import { parseInterviewRoomEventData, parseInterviewRoomPayload } from "@/lib/interview/client/opening-stream";
 import type { InterviewRoomQueryView, InterviewRoomPhase } from "@/lib/interview/projections/types";
@@ -216,6 +226,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const [resumePaneOpen, setResumePaneOpen] = useState(false);
   const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(null);
   const [resumeSnapshot, setResumeSnapshot] = useState<InterviewResumeSnapshotResponse | null>(null);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
 
   const { leftRatio, isDragging, handlePointerDown, resetRatio } = useResizableColumns({
     containerRef,
@@ -383,7 +394,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   }
 
   async function endInterview() {
-    if (!room.canEnd || submitting || !window.confirm(t.interview.endInterviewConfirm)) return;
+    if (!room.canEnd || submitting) return;
     setSubmitting(true);
     setSubmissionError(null);
     try {
@@ -468,7 +479,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                 variant="ghost"
                 size="sm"
                 disabled={submitting}
-                onClick={endInterview}
+                onClick={() => setConfirmEndOpen(true)}
                 className="hidden h-8 gap-1.5 text-xs text-muted-foreground hover:bg-muted/80 hover:text-foreground sm:inline-flex"
               >
                 <Square className="size-3.5" />
@@ -829,7 +840,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
                 variant="link"
                 size="sm"
                 disabled={!room.canEnd || submitting}
-                onClick={endInterview}
+                onClick={() => setConfirmEndOpen(true)}
                 className="h-auto px-0 py-0 sm:hidden"
               >
                 {t.interview.endInterview}
@@ -906,6 +917,41 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           />
         </div>
       )}
+
+      {/* End Interview Confirmation Alert Dialog */}
+      <AlertDialog open={confirmEndOpen} onOpenChange={setConfirmEndOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t.interview.endInterview}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t.interview.endInterviewConfirm}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={submitting}>
+              {t.common.cancel}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={submitting}
+              className="bg-destructive text-white hover:bg-destructive/90 focus-visible:ring-destructive/20"
+              onClick={async (event) => {
+                event.preventDefault();
+                await endInterview();
+                setConfirmEndOpen(false);
+              }}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {t.common.processing}
+                </>
+              ) : (
+                t.common.ok
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

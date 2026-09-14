@@ -156,7 +156,7 @@ export async function insertInterviewCreation(
   const [agentRun] = await transaction.insert(agentRuns).values({
     sessionId: session.id,
     status: "queued",
-    maxSteps: 3,
+    maxSteps: 10,
   }).returning();
   const [openingRun] = await transaction.insert(interviewAgentRuns).values({
     interviewId: interview.id,
@@ -249,7 +249,7 @@ export async function claimInterviewOpeningRun(input: {
       const [replacement] = await transaction.insert(agentRuns).values({
         sessionId: session.id,
         status: "queued",
-        maxSteps: currentAttempt.maxSteps,
+        maxSteps: Math.max(currentAttempt.maxSteps, 10),
       }).returning({ id: agentRuns.id });
       agentRunId = replacement.id;
     }
@@ -576,7 +576,7 @@ export async function claimInterviewTurnRun(input: {
       const [replacement] = await transaction.insert(agentRuns).values({
         sessionId: session.id,
         status: "queued",
-        maxSteps: currentAttempt.maxSteps,
+        maxSteps: Math.max(currentAttempt.maxSteps, 10),
       }).returning({ id: agentRuns.id });
       agentRunId = replacement.id;
     }
@@ -776,7 +776,7 @@ export async function retryInterviewRun(input: {
     const [agentRun] = await transaction.insert(agentRuns).values({
       sessionId: interview.agentSessionId,
       status: "queued",
-      maxSteps: previousAgentRun.maxSteps,
+      maxSteps: Math.max(previousAgentRun.maxSteps, 10),
     }).returning();
     const [run] = await transaction.update(interviewAgentRuns).set({
       currentAgentRunId: agentRun.id,

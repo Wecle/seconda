@@ -22,10 +22,31 @@ export const questionScoresSchema = z.object({
 
 export type QuestionScores = z.infer<typeof questionScoresSchema>;
 
+export const rootCauseTypeSchema = z.enum([
+  "narrative_hoarding",
+  "conflict_avoidance",
+  "status_anxiety",
+  "surface_framework",
+  "story_first_mismatch",
+  "none",
+]);
+
+export type RootCauseType = z.infer<typeof rootCauseTypeSchema>;
+
+export const rewriteExampleSchema = z.object({
+  improvedExcerpt: z.string().trim().min(1).max(2000),
+  annotations: z.array(z.string().trim().min(1).max(500)).min(1).max(6),
+}).strict();
+
+export type RewriteExample = z.infer<typeof rewriteExampleSchema>;
+
 export const questionFeedbackSchema = z.object({
   strengths: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   improvements: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   advice: z.string().trim().min(1).max(2000),
+  rootCause: rootCauseTypeSchema.optional(),
+  interviewerReaction: z.string().trim().max(1000).optional(),
+  rewriteExample: rewriteExampleSchema.optional(),
 }).strict();
 
 export type QuestionFeedback = z.infer<typeof questionFeedbackSchema>;
@@ -35,6 +56,9 @@ export const questionEvaluationSchema = z.object({
   strengths: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   improvements: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   advice: z.string().trim().min(1).max(2000),
+  rootCause: rootCauseTypeSchema.optional(),
+  interviewerReaction: z.string().trim().max(1000).optional(),
+  rewriteExample: rewriteExampleSchema.optional(),
 }).strict();
 
 export type QuestionEvaluation = z.infer<typeof questionEvaluationSchema>;
@@ -48,11 +72,68 @@ export const dimensionAveragesSchema = z.object({
   reflection: z.number().min(0).max(10).refine((n) => Number(n.toFixed(1)) === n, { message: "Must have at most 1 decimal place" }),
 }).strict();
 
+export const hiringSignalSchema = z.enum([
+  "strong_hire",
+  "hire",
+  "leaning_hire",
+  "leaning_no_hire",
+  "no_hire",
+]);
+
+export type HiringSignal = z.infer<typeof hiringSignalSchema>;
+
+export const hiringDecisionSchema = z.object({
+  signal: hiringSignalSchema,
+  confidence: z.enum(["high", "medium", "low"]),
+  decisionRationale: z.string().trim().min(1).max(1000),
+  keyTradeOffs: z.string().trim().min(1).max(1000),
+}).strict();
+
+export type HiringDecision = z.infer<typeof hiringDecisionSchema>;
+
+export const differentiationRatingSchema = z.object({
+  level: z.enum(["template_worker", "competent_practitioner", "differentiated_expert"]),
+  summary: z.string().trim().min(1).max(600),
+  earnedSecrets: z.array(z.string().trim().min(1).max(500)).max(5),
+}).strict();
+
+export type DifferentiationRating = z.infer<typeof differentiationRatingSchema>;
+
+export const innerMonologueItemSchema = z.object({
+  questionSequence: z.number().int().positive(),
+  topic: z.string().trim().min(1).max(100),
+  triggerQuote: z.string().trim().min(1).max(500),
+  monologue: z.string().trim().min(1).max(1000),
+}).strict();
+
+export type InnerMonologueItem = z.infer<typeof innerMonologueItemSchema>;
+
+export const redTeamChallengeSchema = z.object({
+  hiddenAssumptions: z.array(z.string().trim().min(1).max(500)).max(5),
+  blindSpots: z.array(z.string().trim().min(1).max(500)).max(5),
+  devilsAdvocateRejectionReason: z.string().trim().min(1).max(1000),
+}).strict();
+
+export type RedTeamChallenge = z.infer<typeof redTeamChallengeSchema>;
+
+export const priorityActionPlan72hSchema = z.object({
+  immediate24h: z.string().trim().min(1).max(500),
+  storybankAdjust48h: z.string().trim().min(1).max(500),
+  targetedDrill72h: z.string().trim().min(1).max(500),
+}).strict();
+
+export type PriorityActionPlan72h = z.infer<typeof priorityActionPlan72hSchema>;
+
 export const reportSummarySchema = z.object({
   overallSummary: z.string().trim().min(1).max(2000),
   keyStrengths: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   keyImprovements: z.array(z.string().trim().min(1).max(500)).min(1).max(10),
   recommendations: z.string().trim().min(1).max(2000),
+  hiringDecision: hiringDecisionSchema.optional(),
+  differentiationRating: differentiationRatingSchema.optional(),
+  innerMonologues: z.array(innerMonologueItemSchema).max(5).optional(),
+  redTeamChallenge: redTeamChallengeSchema.optional(),
+  priorityActionPlan72h: priorityActionPlan72hSchema.optional(),
 }).strict();
 
 export type ReportSummary = z.infer<typeof reportSummarySchema>;

@@ -15,7 +15,7 @@ import { SKILL_ALLOWED_STEP, SKILL_LOAD_FAILED } from "@/lib/agent/skills/tool";
 export const interviewCapability: AgentCapability = {
   id: BUILT_IN_CAPABILITIES.interview,
   promptVersion: INTERVIEW_AGENT_PROMPT_VERSION,
-  maxSteps: 3,
+  maxSteps: 10,
   skillAllowlist: INTERVIEW_SKILL_NAMES,
   skillLoadStep: 1,
   createContextProviders(context) {
