@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import Link from "next/link";
 import dynamic from "next/dynamic";
 import {
   AlertCircle,
@@ -94,6 +95,20 @@ export function ResumePreviewPane({
   const { t } = useTranslation();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [interviews, setInterviews] = useState<InterviewSummaryItem[]>([]);
+  const currentDraftRef = useRef<ParsedResume | null>(null);
+
+  const handleStartEdit = useCallback(() => {
+    currentDraftRef.current = parsed ? structuredClone(parsed) : null;
+    onStartEdit();
+  }, [onStartEdit, parsed]);
+
+  const handleSaveEditFromDock = useCallback(() => {
+    if (currentDraftRef.current) {
+      void onSaveEdit(currentDraftRef.current);
+    } else if (parsed) {
+      void onSaveEdit(parsed);
+    }
+  }, [onSaveEdit, parsed]);
 
   const handleInterviewsUpdated = useCallback(
     (items: InterviewSummaryItem[]) => {
@@ -123,6 +138,24 @@ export function ResumePreviewPane({
       (item) => item.resumeVersionId === selectedVersion.id,
     );
   }, [interviews, selectedVersion.id]);
+
+  const activeInterview = useMemo(() => {
+    return (
+      versionInterviews.find(
+        (item) =>
+          item.status === "active" ||
+          item.status === "initializing" ||
+          item.status === "completing",
+      ) ??
+      interviews.find(
+        (item) =>
+          item.status === "active" ||
+          item.status === "initializing" ||
+          item.status === "completing",
+      ) ??
+      null
+    );
+  }, [versionInterviews, interviews]);
 
   const interviewCount = versionInterviews.length;
 
@@ -193,7 +226,7 @@ export function ResumePreviewPane({
               variant="outline"
               size="sm"
               className="h-8 gap-1.5 px-2.5 text-xs transition-all active:scale-95"
-              onClick={onStartEdit}
+              onClick={handleStartEdit}
             >
               <Pencil className="size-3.5" />
               {t.dashboard.editResume}
@@ -348,6 +381,9 @@ export function ResumePreviewPane({
           {editing && parsed ? (
             <ParsedResumeEditor
               parsed={parsed}
+              onDraftChange={(draft) => {
+                currentDraftRef.current = draft;
+              }}
               onSave={onSaveEdit}
               onCancel={onCancelEdit}
               saving={savingEdit}
@@ -421,58 +457,134 @@ export function ResumePreviewPane({
       {/* Floating Bottom Action Dock */}
       <div className="absolute inset-x-0 bottom-4 flex justify-center pointer-events-none px-4">
         <div className="pointer-events-auto flex items-center justify-between gap-4 rounded-2xl border border-border/80 bg-card/90 px-5 py-3 shadow-xl backdrop-blur-md w-full max-w-[850px] transition-all">
-          <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
-            <FileText className="size-4 text-primary shrink-0" />
-            <span className="truncate">
-              <span className="font-semibold text-foreground">
-                {selectedResumeTitle}
-              </span>
-              <span className="ml-1.5 font-mono text-[11px] opacity-80">
-                v{selectedVersion.versionNumber}
-              </span>
-            </span>
-            {hasSavedSettings && (
-              <Badge
-                variant="secondary"
-                className="hidden sm:inline-flex ml-2 h-5 text-[10px] font-normal"
-              >
-                {t.dashboard.settingsSaved}
-              </Badge>
-            )}
-          </div>
+          {editing ? (
+            <>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+                <Pencil className="size-4 text-primary shrink-0" />
+                <span className="truncate">
+                  <span className="font-semibold text-foreground">
+                    {t.dashboard.editResume}
+                  </span>
+                  <span className="ml-1.5 font-mono text-[11px] opacity-80">
+                    {selectedResumeTitle} v{selectedVersion.versionNumber}
+                  </span>
+                </span>
+              </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="size-9 rounded-xl transition-all active:scale-95"
-                    onClick={onOpenSettings}
-                    disabled={selectedVersion.parseStatus !== "parsed"}
-                    aria-label={t.interview.settingsTitle}
+              <div className="flex items-center gap-2 shrink-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="rounded-xl px-4 py-2 text-xs font-medium transition-all active:scale-[0.98]"
+                  onClick={onCancelEdit}
+                  disabled={savingEdit}
+                >
+                  {t.common.cancel}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="rounded-xl px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-[0.98]"
+                  onClick={handleSaveEditFromDock}
+                  disabled={savingEdit}
+                >
+                  {savingEdit ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin mr-1.5" />
+                      {t.resume.saving}
+                    </>
+                  ) : (
+                    t.resume.saveChanges
+                  )}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+                <FileText className="size-4 text-primary shrink-0" />
+                <span className="truncate">
+                  <span className="font-semibold text-foreground">
+                    {selectedResumeTitle}
+                  </span>
+                  <span className="ml-1.5 font-mono text-[11px] opacity-80">
+                    v{selectedVersion.versionNumber}
+                  </span>
+                </span>
+                {hasSavedSettings && (
+                  <Badge
+                    variant="secondary"
+                    className="hidden sm:inline-flex ml-2 h-5 text-[10px] font-normal"
                   >
-                    <Settings className="size-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  {t.interview.settingsTitle}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+                    {t.dashboard.settingsSaved}
+                  </Badge>
+                )}
+              </div>
 
-            <Button
-              size="sm"
-              className="gap-2 rounded-xl px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-[0.98]"
-              disabled={selectedVersion.parseStatus !== "parsed"}
-              onClick={onStartInterview}
-            >
-              <span>{t.dashboard.startInterview}</span>
-              <ArrowRight className="size-3.5" />
-            </Button>
-          </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="size-9 rounded-xl transition-all active:scale-95"
+                        onClick={onOpenSettings}
+                        disabled={selectedVersion.parseStatus !== "parsed"}
+                        aria-label={t.interview.settingsTitle}
+                      >
+                        <Settings className="size-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      {t.interview.settingsTitle}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+
+                {activeInterview ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-xl px-3 py-2 text-xs font-medium transition-all active:scale-[0.98]"
+                      disabled={selectedVersion.parseStatus !== "parsed"}
+                      onClick={onStartInterview}
+                    >
+                      <span>{t.dashboard.startNewInterview}</span>
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      className="gap-2 rounded-xl px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-[0.98]"
+                      asChild
+                    >
+                      <Link href={`/interviews/${activeInterview.id}`}>
+                        <span className="relative flex size-2 mr-0.5">
+                          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                          <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+                        </span>
+                        <span>{t.dashboard.continueInterview}</span>
+                        <ArrowRight className="size-3.5" />
+                      </Link>
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    size="sm"
+                    className="gap-2 rounded-xl px-4 py-2 text-xs font-semibold shadow-md transition-all active:scale-[0.98]"
+                    disabled={selectedVersion.parseStatus !== "parsed"}
+                    onClick={onStartInterview}
+                  >
+                    <span>{t.dashboard.startInterview}</span>
+                    <ArrowRight className="size-3.5" />
+                  </Button>
+                )}
+              </div>
+            </>
+          )}
         </div>
       </div>
 

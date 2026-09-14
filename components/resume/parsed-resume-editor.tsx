@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Plus, Trash2 } from "lucide-react";
 import type { ParsedResume } from "@/lib/resume/types";
 import { useTranslation } from "@/lib/i18n/context";
 import { Input } from "@/components/ui/input";
@@ -10,22 +10,25 @@ import { Button } from "@/components/ui/button";
 
 interface ParsedResumeEditorProps {
   parsed: ParsedResume;
-  onSave: (data: ParsedResume) => Promise<void>;
-  onCancel: () => void;
-  saving: boolean;
+  onDraftChange?: (data: ParsedResume) => void;
+  onSave?: (data: ParsedResume) => Promise<void>;
+  onCancel?: () => void;
+  saving?: boolean;
 }
 
 export function ParsedResumeEditor({
   parsed,
-  onSave,
-  onCancel,
-  saving,
+  onDraftChange,
 }: ParsedResumeEditorProps) {
   const { t } = useTranslation();
   const [data, setData] = useState<ParsedResume>(() => structuredClone(parsed));
   const [addingSkill, setAddingSkill] = useState(false);
   const [newSkill, setNewSkill] = useState("");
   const skillInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    onDraftChange?.(data);
+  }, [data, onDraftChange]);
 
   const updateField = <K extends keyof ParsedResume>(
     key: K,
@@ -668,36 +671,6 @@ export function ParsedResumeEditor({
           <Plus />
           {t.resume.addProject}
         </Button>
-      </div>
-
-      <div className="fixed inset-x-0 bottom-0 z-50 border-t bg-card/90 backdrop-blur-md">
-        <div className="mx-auto flex max-w-[850px] items-center justify-end gap-3 px-8 py-3">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={onCancel}
-            disabled={saving}
-          >
-            {t.common.cancel}
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => onSave(data)}
-            disabled={saving}
-            className="font-medium shadow-xs"
-          >
-            {saving ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin mr-1.5" />
-                {t.resume.saving}
-              </>
-            ) : (
-              t.resume.saveChanges
-            )}
-          </Button>
-        </div>
       </div>
     </div>
   );

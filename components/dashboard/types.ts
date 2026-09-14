@@ -50,3 +50,15 @@ export interface InterviewSummaryItem {
   durationSeconds: number;
 }
 
+export interface ActiveInterviewSummary {
+  id: string;
+  resumeId?: string | null;
+  resumeVersionId: string;
+  resumeTitle?: string | null;
+  targetRole: string;
+  targetLevel: string;
+  status: "initializing" | "active" | "completing";
+  startedAt: string | null;
+  updatedAt: string;
+}
+
