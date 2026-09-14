@@ -200,6 +200,7 @@ authProviders.push(
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   secret: process.env.AUTH_SECRET,
+  useSecureCookies: process.env.NODE_ENV === "production",
   session: {
     strategy: "jwt",
   },
