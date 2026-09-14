@@ -5,8 +5,10 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
+  Award,
   CheckCircle2,
   ChevronDown,
+  ChevronUp,
   Clock,
   Compass,
   History,
@@ -184,21 +186,21 @@ function getScoreGrade(score: number, t: ReturnType<typeof useTranslation>["t"])
   if (score >= 85) {
     return {
       label: t.report.strongPerformer,
-      color: "text-emerald-600 dark:text-emerald-400",
-      bg: "bg-emerald-500/10 border-emerald-500/20",
+      color: "text-emerald-700 dark:text-emerald-300",
+      bg: "bg-emerald-500/10 border-emerald-500/30",
     };
   }
   if (score >= 70) {
     return {
       label: t.report.goodProgress,
       color: "text-primary",
-      bg: "bg-primary/10 border-primary/20",
+      bg: "bg-primary/10 border-primary/25",
     };
   }
   return {
     label: t.report.needsImprovement,
-    color: "text-amber-600 dark:text-amber-400",
-    bg: "bg-amber-500/10 border-amber-500/20",
+    color: "text-amber-700 dark:text-amber-300",
+    bg: "bg-amber-500/10 border-amber-500/30",
   };
 }
 
@@ -210,25 +212,40 @@ function getHiringSignalBadge(
     strong_hire: {
       label: t.report.hiringDecision.signals.strong_hire,
       bg: "bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300",
+      dot: "bg-emerald-500",
     },
     hire: {
       label: t.report.hiringDecision.signals.hire,
       bg: "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-300",
+      dot: "bg-blue-500",
     },
     leaning_hire: {
       label: t.report.hiringDecision.signals.leaning_hire,
       bg: "bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300",
+      dot: "bg-cyan-500",
     },
     leaning_no_hire: {
       label: t.report.hiringDecision.signals.leaning_no_hire,
       bg: "bg-amber-500/10 border-amber-500/30 text-amber-700 dark:text-amber-300",
+      dot: "bg-amber-500",
     },
     no_hire: {
       label: t.report.hiringDecision.signals.no_hire,
       bg: "bg-rose-500/10 border-rose-500/30 text-rose-700 dark:text-rose-300",
+      dot: "bg-rose-500",
     },
   };
   return configs[signal] ?? configs.hire;
+}
+
+function SectionKicker({ number, label }: { number: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px] font-mono font-semibold uppercase tracking-wider text-muted-foreground/80">
+      <span className="text-primary">{number}</span>
+      <span className="text-border">/</span>
+      <span>{label}</span>
+    </div>
+  );
 }
 
 export function InterviewReportView({
@@ -347,20 +364,31 @@ export function InterviewReportView({
   const summary = report?.summaryJson;
   const scorableAnswersCount = questions.filter((q) => q.scores !== null).length;
 
-  const overallScoreVal = report?.scoreStatus === "scored" && report.overallScore !== null ? report.overallScore : null;
+  const overallScoreVal =
+    report?.scoreStatus === "scored" && report.overallScore !== null ? report.overallScore : null;
   const grade = overallScoreVal !== null ? getScoreGrade(overallScoreVal, t) : null;
 
+  const isAllExpanded = questions.length > 0 && questions.every((q) => (expandedQuestions[q.id] ?? true) === true);
+  const handleToggleAll = () => {
+    const nextVal = !isAllExpanded;
+    const nextMap: Record<string, boolean> = {};
+    questions.forEach((q) => {
+      nextMap[q.id] = nextVal;
+    });
+    setExpandedQuestions(nextMap);
+  };
+
   return (
-    <div className="relative min-h-screen bg-background text-foreground selection:bg-primary/20 pb-16">
-      {/* Executive Header */}
-      <header className="sticky top-0 z-20 shrink-0 border-b border-border/80 bg-background/80 backdrop-blur-md">
+    <div className="relative min-h-screen bg-background text-foreground selection:bg-primary/20 pb-20">
+      {/* Sticky Header */}
+      <header className="sticky top-0 z-30 shrink-0 border-b border-border/80 bg-background/85 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-5xl items-center justify-between gap-4 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <Link
               href="/dashboard"
               className="flex shrink-0 items-center gap-2.5 font-semibold tracking-tight transition-opacity hover:opacity-90"
             >
-              <BrandIcon size={28} priority />
+              <BrandIcon size={26} priority />
               <span className="hidden font-bold tracking-tight sm:inline">Seconda</span>
             </Link>
 
@@ -385,13 +413,18 @@ export function InterviewReportView({
           </div>
 
           <div className="flex shrink-0 items-center gap-2">
-            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs shadow-xs" asChild>
+            <Button variant="outline" size="sm" className="h-8 gap-1.5 text-xs shadow-2xs" asChild>
               <Link href={`/interviews/${interviewId}`}>
                 <History className="size-3.5" />
                 <span>{t.report.reviewInterview}</span>
               </Link>
             </Button>
-            <Button variant="ghost" size="icon" className="size-8 text-muted-foreground hover:text-foreground" asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 text-muted-foreground hover:text-foreground"
+              asChild
+            >
               <Link href="/dashboard" aria-label={t.interview.returnDashboard}>
                 <ArrowLeft className="size-4" />
               </Link>
@@ -401,173 +434,520 @@ export function InterviewReportView({
       </header>
 
       {/* Main Report Body */}
-      <main className="mx-auto max-w-5xl space-y-8 px-4 py-8 sm:px-6">
-        {/* Section 1: Hero Scoreboard & Executive Summary */}
-        <section className="grid gap-6 lg:grid-cols-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
-          {/* Left: Overall Score Card */}
-          <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 shadow-xs lg:col-span-4">
-            <div>
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span className="font-medium uppercase tracking-wider">{t.report.overallPerformance}</span>
-                {grade ? (
-                  <Badge variant="outline" className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${grade.bg} ${grade.color}`}>
-                    {grade.label}
-                  </Badge>
+      <main className="mx-auto max-w-5xl space-y-12 px-4 py-8 sm:px-6">
+        {/* ============================================================ */}
+        {/* SECTION 01: 综合表现与分析总结 (Hero Score & Executive Summary) */}
+        {/* ============================================================ */}
+        <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <SectionKicker number="01" label={locale === "en" ? "Executive Verdict" : "决策总览与综合评定"} />
+
+          <div className="grid gap-6 lg:grid-cols-12 items-stretch">
+            {/* Left: Overall Score Card */}
+            <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 shadow-xs lg:col-span-4">
+              <div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="font-semibold tracking-wider text-muted-foreground uppercase text-[11px]">
+                    {t.report.overallPerformance}
+                  </span>
+                  {grade ? (
+                    <Badge
+                      variant="outline"
+                      className={`rounded-full px-2.5 py-0.5 text-[11px] font-medium ${grade.bg} ${grade.color}`}
+                    >
+                      {grade.label}
+                    </Badge>
+                  ) : null}
+                </div>
+
+                <div className="mt-5 flex items-baseline gap-2">
+                  {overallScoreVal !== null ? (
+                    <>
+                      <span className="text-6xl font-black tracking-tight font-mono tabular-nums text-foreground">
+                        {overallScoreVal}
+                      </span>
+                      <span className="text-xl font-medium text-muted-foreground">/ 100</span>
+                    </>
+                  ) : (
+                    <span className="text-lg font-medium text-muted-foreground">
+                      {t.report.noScorableAnswersText}
+                    </span>
+                  )}
+                </div>
+
+                <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+                  {overallScoreVal !== null
+                    ? locale === "en"
+                      ? `Determined by rigorous weighted 6-dimension evaluation across ${scorableAnswersCount} answers.`
+                      : `基于 ${scorableAnswersCount} 道有效回答六维确定性平均加权评定。`
+                    : locale === "en"
+                      ? "No scorable answers detected (questions were skipped or ended early)."
+                      : "本场面试未检测到足够的可评分有效回答（题目被跳过或提前结束）。"}
+                </p>
+              </div>
+
+              <div className="mt-6 border-t border-border/60 pt-4 grid grid-cols-2 gap-3 text-xs">
+                <div>
+                  <span className="text-muted-foreground text-[11px]">
+                    {locale === "en" ? "Questions" : "作答考题"}
+                  </span>
+                  <p className="font-semibold text-foreground mt-0.5 font-mono">
+                    {locale === "en"
+                      ? `${questions.length} rounds / ${scorableAnswersCount} valid`
+                      : `${questions.length} 轮 / ${scorableAnswersCount} 题有效`}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-muted-foreground text-[11px]">{t.report.meta.status}</span>
+                  <p className="font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5 flex items-center gap-1">
+                    <span className="size-1.5 rounded-full bg-emerald-500 inline-block" />
+                    <span>{t.report.statuses.completed}</span>
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Executive Summary & Dual Highlights */}
+            <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 shadow-xs lg:col-span-8 space-y-5">
+              <div>
+                <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                  <Sparkles className="size-4 text-primary" />
+                  <span className="tracking-wide uppercase text-[12px]">{t.report.analysisSummary}</span>
+                </div>
+                <div className="mt-3 text-[14.5px] leading-relaxed text-foreground/90 font-normal">
+                  <Markdown content={summary?.overallSummary || t.report.noAnalysisData} />
+                </div>
+              </div>
+
+              {/* Dual Column: Strengths & Improvements */}
+              <div className="grid gap-3.5 sm:grid-cols-2 pt-2 border-t border-border/40">
+                {summary?.keyStrengths && summary.keyStrengths.length > 0 ? (
+                  <div className="rounded-xl border-l-2 border-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/20 p-3.5 text-xs">
+                    <div className="flex items-center gap-1.5 font-semibold text-emerald-800 dark:text-emerald-300">
+                      <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                      <span>{t.report.topStrength}</span>
+                    </div>
+                    <ul className="mt-2 space-y-1.5 text-emerald-950/85 dark:text-emerald-200/85 leading-relaxed">
+                      {summary.keyStrengths.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-1.5">
+                          <span className="shrink-0 size-1 rounded-full bg-emerald-500 mt-1.5" />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {summary?.keyImprovements && summary.keyImprovements.length > 0 ? (
+                  <div className="rounded-xl border-l-2 border-amber-500 bg-amber-500/5 dark:bg-amber-950/20 p-3.5 text-xs">
+                    <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
+                      <TrendingUp className="size-3.5 text-amber-600 dark:text-amber-400" />
+                      <span>{t.report.criticalFocus}</span>
+                    </div>
+                    <ul className="mt-2 space-y-1.5 text-amber-950/85 dark:text-amber-200/85 leading-relaxed">
+                      {summary.keyImprovements.map((item, idx) => (
+                        <li key={idx} className="flex items-start gap-1.5">
+                          <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
+                          <span>{item}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ) : null}
               </div>
-
-              <div className="mt-4 flex items-baseline gap-2">
-                {overallScoreVal !== null ? (
-                  <>
-                    <span className="text-6xl font-extrabold tracking-tight text-primary font-mono">
-                      {overallScoreVal}
-                    </span>
-                    <span className="text-xl font-medium text-muted-foreground">/ 100</span>
-                  </>
-                ) : (
-                  <span className="text-xl font-medium text-muted-foreground">{t.report.noScorableAnswersText}</span>
-                )}
-              </div>
-
-              <p className="mt-2 text-xs text-muted-foreground leading-relaxed">
-                {overallScoreVal !== null
-                  ? (locale === "en" ? `Based on ${scorableAnswersCount} valid answers` : `基于 ${scorableAnswersCount} 道有效回答综合加权评定`)
-                  : (locale === "en" ? "No scorable answers detected for this interview (questions were skipped or ended early)." : "本场面试未检测到足够的可评分有效回答（题目被跳过或提前结束）。")}
-              </p>
-            </div>
-
-            <div className="mt-6 border-t border-border/60 pt-4 grid grid-cols-2 gap-3 text-xs">
-              <div>
-                <span className="text-muted-foreground">{locale === "en" ? "Questions" : "作答考题"}</span>
-                <p className="font-semibold text-foreground mt-0.5">
-                  {locale === "en" ? `${questions.length} rounds / ${scorableAnswersCount} scorable` : `${questions.length} 轮 / ${scorableAnswersCount} 题有效`}
-                </p>
-              </div>
-              <div>
-                <span className="text-muted-foreground">{t.report.meta.status}</span>
-                <p className="font-semibold text-emerald-600 dark:text-emerald-400 mt-0.5">
-                  {t.report.statuses.completed}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          {/* Right: Executive Summary & Highlights */}
-          <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-6 shadow-xs lg:col-span-8 space-y-5">
-            <div>
-              <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                <Sparkles className="size-4 text-primary" />
-                <span>{t.report.analysisSummary}</span>
-              </div>
-              <div className="mt-3 text-[14px] leading-relaxed text-foreground/90 font-normal">
-                <Markdown content={summary?.overallSummary || t.report.noAnalysisData} />
-              </div>
-            </div>
-
-            {/* Dual Column: Strengths & Improvements */}
-            <div className="grid gap-3.5 sm:grid-cols-2 pt-2">
-              {summary?.keyStrengths && summary.keyStrengths.length > 0 ? (
-                <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-emerald-800 dark:text-emerald-300">
-                    <CheckCircle2 className="size-3.5" />
-                    <span>{t.report.topStrength}</span>
-                  </div>
-                  <ul className="mt-2 space-y-1.5 text-emerald-950/80 dark:text-emerald-200/80 leading-relaxed">
-                    {summary.keyStrengths.map((item, idx) => (
-                      <li key={idx} className="flex items-start gap-1.5">
-                        <span className="shrink-0 size-1 rounded-full bg-emerald-500 mt-1.5" />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
-
-              {summary?.keyImprovements && summary.keyImprovements.length > 0 ? (
-                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-xs">
-                  <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-300">
-                    <TrendingUp className="size-3.5" />
-                    <span>{t.report.criticalFocus}</span>
-                  </div>
-                  <ul className="mt-2 space-y-1.5 text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
-                    {summary.keyImprovements.map((item, idx) => (
-                      <li key={idx} className="flex items-start gap-1.5">
-                        <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
             </div>
           </div>
         </section>
 
-        {/* Hiring Committee Decision Banner */}
+        {/* ============================================================ */}
+        {/* SECTION 02: 招聘委员会决策研判 (Hiring Committee Decision & Trade-offs) */}
+        {/* Placed directly beneath Section 01 as requested */}
+        {/* ============================================================ */}
         {summary?.hiringDecision ? (
-          <section className="rounded-2xl border border-border/80 bg-gradient-to-r from-card via-card to-primary/5 p-6 shadow-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
-              <div className="flex items-center gap-2">
-                <Target className="size-4 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                  {t.report.hiringDecision.title}
-                </span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Badge
-                  variant="outline"
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${getHiringSignalBadge(summary.hiringDecision.signal, t).bg}`}
-                >
-                  {getHiringSignalBadge(summary.hiringDecision.signal, t).label}
-                </Badge>
-                <Badge variant="outline" className="rounded-full text-[11px] text-muted-foreground">
-                  {t.report.hiringDecision.confidenceLevels[summary.hiringDecision.confidence]}
-                </Badge>
-              </div>
-            </div>
+          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            <SectionKicker number="02" label={locale === "en" ? "Hiring Committee" : "招聘委员会决策研判"} />
 
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 text-xs">
-              <div className="space-y-1.5 rounded-xl border border-border/60 bg-background/60 p-4">
-                <span className="font-semibold text-foreground">{t.report.hiringDecision.rationale}</span>
-                <p className="text-muted-foreground leading-relaxed">
-                  {summary.hiringDecision.decisionRationale}
-                </p>
+            <div className="rounded-2xl border border-border/80 bg-card p-6 shadow-xs space-y-5">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/60 pb-4">
+                <div className="flex items-center gap-2">
+                  <div className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <Target className="size-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold tracking-tight text-foreground">
+                      {t.report.hiringDecision.title}
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      {locale === "en"
+                        ? "Synthesized hiring bar evaluation and strategic trade-off analysis"
+                        : "综合评估面试表现与团队用人标准后的终审结论"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5">
+                  <Badge
+                    variant="outline"
+                    className={`rounded-full px-3 py-1 text-xs font-semibold gap-1.5 ${
+                      getHiringSignalBadge(summary.hiringDecision.signal, t).bg
+                    }`}
+                  >
+                    <span
+                      className={`size-1.5 rounded-full ${
+                        getHiringSignalBadge(summary.hiringDecision.signal, t).dot
+                      }`}
+                    />
+                    <span>{getHiringSignalBadge(summary.hiringDecision.signal, t).label}</span>
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="rounded-full text-[11px] text-muted-foreground border-border/70 font-medium px-2.5 py-0.5"
+                  >
+                    {t.report.hiringDecision.confidenceLevels[summary.hiringDecision.confidence]}
+                  </Badge>
+                </div>
               </div>
-              <div className="space-y-1.5 rounded-xl border border-border/60 bg-background/60 p-4">
-                <span className="font-semibold text-foreground">{t.report.hiringDecision.keyTradeOffs}</span>
-                <p className="text-muted-foreground leading-relaxed">
-                  {summary.hiringDecision.keyTradeOffs}
-                </p>
+
+              {/* Rationale & Trade-offs 2-Column */}
+              <div className="grid gap-5 sm:grid-cols-2 text-xs">
+                <div className="space-y-2 rounded-xl bg-muted/20 border border-border/60 p-4">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                    <Award className="size-3.5 text-primary" />
+                    <span>{t.report.hiringDecision.rationale}</span>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed text-[13px]">
+                    {summary.hiringDecision.decisionRationale}
+                  </p>
+                </div>
+
+                <div className="space-y-2 rounded-xl bg-muted/20 border border-border/60 p-4">
+                  <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                    <Compass className="size-3.5 text-primary" />
+                    <span>{t.report.hiringDecision.keyTradeOffs}</span>
+                  </div>
+                  <p className="text-muted-foreground leading-relaxed text-[13px]">
+                    {summary.hiringDecision.keyTradeOffs}
+                  </p>
+                </div>
               </div>
             </div>
           </section>
         ) : null}
 
-        {/* Interviewer's Inner Monologue Stream */}
-        {summary?.innerMonologues && summary.innerMonologues.length > 0 ? (
+        {/* ============================================================ */}
+        {/* SECTION 03: 六维胜任力体检矩阵 (6-Dimension Competency Spectrum) */}
+        {/* ============================================================ */}
+        {averages ? (
           <section className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-400">
             <div className="flex items-center justify-between">
-              <div>
-                <div className="flex items-center gap-2">
-                  <MessageSquareQuote className="size-4 text-primary" />
-                  <h2 className="text-base font-semibold tracking-tight">{t.report.innerMonologue.title}</h2>
+              <SectionKicker number="03" label={locale === "en" ? "Competency Spectrum" : "六维胜任力分析"} />
+              <Badge
+                variant="outline"
+                className="hidden sm:inline-flex text-[11px] text-muted-foreground font-normal border-border/60"
+              >
+                {t.report.equalWeightLabel}
+              </Badge>
+            </div>
+
+            <div className="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                {t.report.competencyBreakdown}
+              </h2>
+              <p className="text-xs text-muted-foreground">{t.report.competencyDesc}</p>
+            </div>
+
+            <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+              {(Object.keys(DIMENSION_CONFIG) as Array<keyof ReportDimensionAverages>).map((key) => {
+                const score = averages[key] ?? 0;
+                const cfg = DIMENSION_CONFIG[key];
+                const label = locale === "en" ? cfg.labelEn : cfg.labelZh;
+                const percent = Math.min(100, Math.max(0, Math.round(score * 10)));
+                const dimGrade = getScoreGrade(score * 10, t);
+
+                return (
+                  <div
+                    key={key}
+                    className="flex flex-col justify-between rounded-xl border border-border/80 bg-card p-4.5 shadow-2xs transition-all hover:border-primary/40 hover:shadow-xs"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-sm text-foreground">{label}</span>
+                        <div className="flex items-baseline gap-1 font-mono">
+                          <span className="font-bold text-lg text-primary tabular-nums">
+                            {score.toFixed(1)}
+                          </span>
+                          <span className="text-xs text-muted-foreground">/ 10</span>
+                        </div>
+                      </div>
+                      <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                        {cfg.description}
+                      </p>
+                    </div>
+
+                    <div className="mt-4 pt-2">
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5 font-medium">
+                        <span>{t.report.competencyRating}</span>
+                        <span className={dimGrade.color}>{dimGrade.label}</span>
+                      </div>
+                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted/60">
+                        <div
+                          className="h-full bg-primary/80 transition-all duration-500 ease-out"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {/* ============================================================ */}
+        {/* SECTION 04: 独到认知 vs 红队审查 (Strategic Differentiation & Red-Team Audit) */}
+        {/* ============================================================ */}
+        {summary?.differentiationRating || summary?.redTeamChallenge ? (
+          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-400">
+            <SectionKicker
+              number="04"
+              label={locale === "en" ? "Differentiation & Red Team" : "认知壁垒与红队审查"}
+            />
+
+            <div className="grid gap-6 md:grid-cols-2 items-stretch">
+              {/* Left: Differentiation & Earned Secrets */}
+              {summary?.differentiationRating ? (
+                <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-5 shadow-xs space-y-4">
+                  <div>
+                    <div className="flex items-center justify-between gap-2 border-b border-border/60 pb-3">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="size-4 text-amber-500" />
+                        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+                          {t.report.differentiation.title}
+                        </h3>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className="rounded-full text-[11px] font-medium border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      >
+                        {t.report.differentiation.levels[summary.differentiationRating.level]}
+                      </Badge>
+                    </div>
+
+                    <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+                      {summary.differentiationRating.summary}
+                    </p>
+                  </div>
+
+                  {summary.differentiationRating.earnedSecrets &&
+                  summary.differentiationRating.earnedSecrets.length > 0 ? (
+                    <div className="border-t border-border/60 pt-3 space-y-2">
+                      <span className="text-[11px] font-semibold text-foreground uppercase tracking-wider">
+                        {t.report.differentiation.earnedSecrets}
+                      </span>
+                      <ul className="space-y-1.5 text-xs text-muted-foreground">
+                        {summary.differentiationRating.earnedSecrets.map((secret, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
+                            <span className="text-foreground/90">{secret}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
                 </div>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {t.report.innerMonologue.description}
-                </p>
-              </div>
+              ) : null}
+
+              {/* Right: Red-Team Challenge & Blind Spots */}
+              {summary?.redTeamChallenge ? (
+                <div className="flex flex-col justify-between rounded-2xl border border-amber-500/20 bg-amber-500/5 dark:bg-amber-950/15 p-5 shadow-xs space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2 border-b border-amber-500/20 pb-3">
+                      <ShieldAlert className="size-4 text-amber-600 dark:text-amber-400" />
+                      <h3 className="text-sm font-semibold tracking-tight text-amber-950 dark:text-amber-200">
+                        {t.report.redTeam.title}
+                      </h3>
+                    </div>
+
+                    {summary.redTeamChallenge.hiddenAssumptions &&
+                    summary.redTeamChallenge.hiddenAssumptions.length > 0 ? (
+                      <div className="mt-3 space-y-1.5">
+                        <span className="text-[11px] font-semibold text-amber-900 dark:text-amber-300">
+                          {t.report.redTeam.hiddenAssumptions}
+                        </span>
+                        <ul className="space-y-1 text-xs text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
+                          {summary.redTeamChallenge.hiddenAssumptions.map((item, idx) => (
+                            <li key={idx} className="flex items-start gap-1.5">
+                              <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {summary.redTeamChallenge.blindSpots &&
+                    summary.redTeamChallenge.blindSpots.length > 0 ? (
+                      <div className="mt-3 space-y-1.5">
+                        <span className="text-[11px] font-semibold text-amber-900 dark:text-amber-300">
+                          {t.report.redTeam.blindSpots}
+                        </span>
+                        <ul className="space-y-1 text-xs text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
+                          {summary.redTeamChallenge.blindSpots.map((item, idx) => (
+                            <li key={idx} className="flex items-start gap-1.5">
+                              <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
+                              <span>{item}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {summary.redTeamChallenge.devilsAdvocateRejectionReason ? (
+                    <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs">
+                      <span className="font-semibold text-rose-800 dark:text-rose-300">
+                        {t.report.redTeam.devilsAdvocate}
+                      </span>
+                      <p className="mt-1 text-rose-950/85 dark:text-rose-200/85 leading-relaxed">
+                        {summary.redTeamChallenge.devilsAdvocateRejectionReason}
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {/* ============================================================ */}
+        {/* SECTION 05: 72小时黄金突破指南与战略建议 (72h Action Plan & Strategic Roadmap) */}
+        {/* Placed here right after diagnosis to provide immediate agency */}
+        {/* ============================================================ */}
+        {summary?.priorityActionPlan72h || summary?.recommendations ? (
+          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-5 duration-500">
+            <SectionKicker
+              number="05"
+              label={locale === "en" ? "72-Hour Sprint & Roadmap" : "72小时黄金突破与破局指南"}
+            />
+
+            <div className="rounded-2xl border border-primary/20 bg-card p-6 shadow-xs space-y-6">
+              {/* 3 Progressive Action Steps */}
+              {summary?.priorityActionPlan72h ? (
+                <div>
+                  <div className="flex items-center gap-2 text-xs font-semibold text-primary uppercase tracking-wider mb-4">
+                    <Clock className="size-4" />
+                    <span>{t.report.actionPlan72h.title}</span>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-3 text-xs">
+                    <div className="rounded-xl border border-border/70 bg-muted/20 p-4 space-y-2 transition-colors hover:border-primary/40">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                          <Clock className="size-3.5 text-primary" />
+                          <span>{t.report.actionPlan72h.immediate24h}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-primary/70 font-semibold px-1.5 py-0.5 rounded bg-primary/10">
+                          STEP 01
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground leading-relaxed text-[12.5px]">
+                        {summary.priorityActionPlan72h.immediate24h}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border/70 bg-muted/20 p-4 space-y-2 transition-colors hover:border-primary/40">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                          <Compass className="size-3.5 text-primary" />
+                          <span>{t.report.actionPlan72h.storybankAdjust48h}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-primary/70 font-semibold px-1.5 py-0.5 rounded bg-primary/10">
+                          STEP 02
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground leading-relaxed text-[12.5px]">
+                        {summary.priorityActionPlan72h.storybankAdjust48h}
+                      </p>
+                    </div>
+
+                    <div className="rounded-xl border border-border/70 bg-muted/20 p-4 space-y-2 transition-colors hover:border-primary/40">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 font-semibold text-foreground">
+                          <Target className="size-3.5 text-primary" />
+                          <span>{t.report.actionPlan72h.targetedDrill72h}</span>
+                        </div>
+                        <span className="font-mono text-[10px] text-primary/70 font-semibold px-1.5 py-0.5 rounded bg-primary/10">
+                          STEP 03
+                        </span>
+                      </div>
+                      <p className="text-muted-foreground leading-relaxed text-[12.5px]">
+                        {summary.priorityActionPlan72h.targetedDrill72h}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {/* Strategic Recommendations */}
+              {summary?.recommendations ? (
+                <div className="border-t border-border/60 pt-5 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-foreground">
+                    <Compass className="size-4 text-primary" />
+                    <span>{t.report.recommendationsTitle}</span>
+                  </div>
+                  <div className="text-xs leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+                    <Markdown content={summary.recommendations} />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
+                    <span className="text-[11px] text-muted-foreground">{t.report.recommendationTip}</span>
+                    <Button size="sm" className="gap-1.5 font-medium shadow-xs" asChild>
+                      <Link href="/dashboard">
+                        <RotateCcw className="size-3.5" />
+                        <span>{t.report.startNewSession}</span>
+                      </Link>
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
+        {/* ============================================================ */}
+        {/* SECTION 06: 面试官内心真实透视流 (Interviewer Psychological Journey) */}
+        {/* Chronological psychological bridge into the question dossier */}
+        {/* ============================================================ */}
+        {summary?.innerMonologues && summary.innerMonologues.length > 0 ? (
+          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <SectionKicker
+              number="06"
+              label={locale === "en" ? "Interviewer Mindset" : "考官心智透视流"}
+            />
+
+            <div>
+              <h2 className="text-lg font-semibold tracking-tight text-foreground">
+                {t.report.innerMonologue.title}
+              </h2>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {t.report.innerMonologue.description}
+              </p>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {summary.innerMonologues.map((item, idx) => (
                 <div
                   key={idx}
-                  className="flex flex-col justify-between rounded-xl border border-primary/20 bg-primary/5 p-4 shadow-2xs transition-all hover:border-primary/40 hover:shadow-xs"
+                  className="flex flex-col justify-between rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 p-4 shadow-2xs transition-all hover:border-primary/40 hover:shadow-xs space-y-3"
                 >
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <Badge variant="outline" className="rounded-md px-2 py-0.5 text-[11px] font-mono border-primary/30 text-primary">
-                        {locale === "en" ? `Q${item.questionSequence} · ${item.topic}` : `第 ${item.questionSequence} 题 · ${item.topic}`}
+                      <Badge
+                        variant="outline"
+                        className="rounded-md px-2 py-0.5 text-[11px] font-mono border-primary/30 text-primary"
+                      >
+                        {locale === "en"
+                          ? `Q${item.questionSequence} · ${item.topic}`
+                          : `第 ${item.questionSequence} 题 · ${item.topic}`}
                       </Badge>
                     </div>
                     <div className="text-xs italic text-muted-foreground/90 border-l-2 border-primary/40 pl-2.5 py-0.5">
@@ -583,179 +963,51 @@ export function InterviewReportView({
           </section>
         ) : null}
 
-        {/* Section 2: 6-Dimension Competency Matrix */}
-        {averages ? (
-          <section className="space-y-4 animate-in fade-in slide-in-from-bottom-3 duration-400">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-base font-semibold tracking-tight">{t.report.competencyBreakdown}</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {t.report.competencyDesc}
-                </p>
-              </div>
-              <Badge variant="outline" className="hidden sm:inline-flex text-[11px] text-muted-foreground font-normal">
-                {t.report.equalWeightLabel}
-              </Badge>
-            </div>
-
-            <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-              {(Object.keys(DIMENSION_CONFIG) as Array<keyof ReportDimensionAverages>).map((key) => {
-                const score = averages[key] ?? 0;
-                const cfg = DIMENSION_CONFIG[key];
-                const label = locale === "en" ? cfg.labelEn : cfg.labelZh;
-                const percent = Math.min(100, Math.max(0, Math.round(score * 10)));
-                const dimGrade = getScoreGrade(score * 10, t);
-
-                return (
-                  <div
-                    key={key}
-                    className="flex flex-col justify-between rounded-xl border border-border/80 bg-card p-4 shadow-2xs transition-all hover:border-primary/40 hover:shadow-xs"
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="font-semibold text-sm text-foreground">{label}</span>
-                        <div className="flex items-baseline gap-1">
-                          <span className="font-bold text-lg font-mono text-primary">{score.toFixed(1)}</span>
-                          <span className="text-xs text-muted-foreground">/ 10</span>
-                        </div>
-                      </div>
-                      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                        {cfg.description}
-                      </p>
-                    </div>
-
-                    <div className="mt-4 pt-2">
-                      <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5">
-                        <span>{t.report.competencyRating}</span>
-                        <span className={`font-medium ${dimGrade.color}`}>{dimGrade.label}</span>
-                      </div>
-                      <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full bg-gradient-to-r from-primary/80 to-primary transition-all duration-500 ease-out"
-                          style={{ width: `${percent}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        {/* Differentiation & Red-Team Challenge */}
-        {(summary?.differentiationRating || summary?.redTeamChallenge) ? (
-          <section className="grid gap-6 md:grid-cols-2 animate-in fade-in slide-in-from-bottom-4 duration-400">
-            {/* Left: Differentiation & Earned Secrets */}
-            {summary?.differentiationRating ? (
-              <div className="flex flex-col justify-between rounded-2xl border border-border/80 bg-card p-5 shadow-xs space-y-4">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="size-4 text-amber-500" />
-                      <h3 className="text-sm font-semibold tracking-tight">{t.report.differentiation.title}</h3>
-                    </div>
-                    <Badge variant="outline" className="rounded-full text-[11px] font-medium border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-                      {t.report.differentiation.levels[summary.differentiationRating.level]}
-                    </Badge>
-                  </div>
-                  <p className="mt-2.5 text-xs text-muted-foreground leading-relaxed">
-                    {summary.differentiationRating.summary}
-                  </p>
-                </div>
-
-                {summary.differentiationRating.earnedSecrets && summary.differentiationRating.earnedSecrets.length > 0 ? (
-                  <div className="border-t border-border/60 pt-3 space-y-2">
-                    <span className="text-[11px] font-semibold text-foreground uppercase tracking-wider">
-                      {t.report.differentiation.earnedSecrets}
-                    </span>
-                    <ul className="space-y-1.5 text-xs text-muted-foreground">
-                      {summary.differentiationRating.earnedSecrets.map((secret, idx) => (
-                        <li key={idx} className="flex items-start gap-1.5">
-                          <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
-                          <span>{secret}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-
-            {/* Right: Red-Team Challenge & Blind Spots */}
-            {summary?.redTeamChallenge ? (
-              <div className="flex flex-col justify-between rounded-2xl border border-amber-500/20 bg-amber-500/5 p-5 shadow-xs space-y-4">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <ShieldAlert className="size-4 text-amber-600 dark:text-amber-400" />
-                    <h3 className="text-sm font-semibold tracking-tight text-amber-900 dark:text-amber-200">
-                      {t.report.redTeam.title}
-                    </h3>
-                  </div>
-
-                  {summary.redTeamChallenge.hiddenAssumptions && summary.redTeamChallenge.hiddenAssumptions.length > 0 ? (
-                    <div className="mt-3 space-y-1.5">
-                      <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                        {t.report.redTeam.hiddenAssumptions}
-                      </span>
-                      <ul className="space-y-1 text-xs text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
-                        {summary.redTeamChallenge.hiddenAssumptions.map((item, idx) => (
-                          <li key={idx} className="flex items-start gap-1.5">
-                            <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-
-                  {summary.redTeamChallenge.blindSpots && summary.redTeamChallenge.blindSpots.length > 0 ? (
-                    <div className="mt-3 space-y-1.5">
-                      <span className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                        {t.report.redTeam.blindSpots}
-                      </span>
-                      <ul className="space-y-1 text-xs text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
-                        {summary.redTeamChallenge.blindSpots.map((item, idx) => (
-                          <li key={idx} className="flex items-start gap-1.5">
-                            <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
-                            <span>{item}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ) : null}
-                </div>
-
-                {summary.redTeamChallenge.devilsAdvocateRejectionReason ? (
-                  <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3 text-xs">
-                    <span className="font-semibold text-rose-800 dark:text-rose-300">
-                      {t.report.redTeam.devilsAdvocate}
-                    </span>
-                    <p className="mt-1 text-rose-950/80 dark:text-rose-200/80 leading-relaxed">
-                      {summary.redTeamChallenge.devilsAdvocateRejectionReason}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
-          </section>
-        ) : null}
-
-        {/* Section 3: Question-by-Question Deep Dive */}
-        <section className="space-y-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        {/* ============================================================ */}
+        {/* SECTION 07: 逐题深度复盘证据卷宗 (Question-by-Question Detailed Dossier) */}
+        {/* Completely flattened, containeritis-free, elegant editorial layout */}
+        {/* ============================================================ */}
+        <section className="space-y-4 animate-in fade-in slide-in-from-bottom-5 duration-500">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold tracking-tight">{t.report.detailedAnalysis}</h2>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {t.report.detailedAnalysisSubtitle}
-              </p>
+            <SectionKicker
+              number="07"
+              label={locale === "en" ? "Evidence Dossier" : "逐题深度复盘卷宗"}
+            />
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-muted-foreground">
+                {locale === "en" ? `${questions.length} questions` : `共 ${questions.length} 道考题`}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggleAll}
+                className="h-7 text-xs text-muted-foreground hover:text-foreground px-2 gap-1"
+              >
+                {isAllExpanded ? (
+                  <>
+                    <ChevronUp className="size-3.5" />
+                    <span>{locale === "en" ? "Collapse All" : "收起全部"}</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="size-3.5" />
+                    <span>{locale === "en" ? "Expand All" : "展开全部"}</span>
+                  </>
+                )}
+              </Button>
             </div>
-            <span className="text-xs text-muted-foreground">
-              {locale === "en" ? `${questions.length} questions` : `共 ${questions.length} 道考题`}
-            </span>
           </div>
 
-          <div className="space-y-4">
+          <div>
+            <h2 className="text-lg font-semibold tracking-tight text-foreground">
+              {t.report.detailedAnalysis}
+            </h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {t.report.detailedAnalysisSubtitle}
+            </p>
+          </div>
+
+          <div className="space-y-4 pt-1">
             {questions.map((q) => {
               const isExpanded = expandedQuestions[q.id] ?? true;
               const isSkipped = q.status === "skipped" || q.answerStatus === "skipped";
@@ -763,7 +1015,7 @@ export function InterviewReportView({
               return (
                 <div
                   key={q.id}
-                  className="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-2xs transition-all hover:border-border"
+                  className="rounded-2xl border border-border/80 bg-card shadow-2xs transition-all hover:border-border overflow-hidden"
                 >
                   {/* Card Trigger Header */}
                   <button
@@ -771,9 +1023,12 @@ export function InterviewReportView({
                     onClick={() => toggleQuestion(q.id)}
                     className="flex w-full cursor-pointer items-start justify-between gap-4 p-4 text-left transition-colors hover:bg-muted/30 sm:p-5"
                   >
-                    <div className="space-y-1.5 min-w-0 flex-1">
+                    <div className="space-y-2 min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="outline" className="rounded-md px-2 py-0.5 text-[11px] font-medium font-mono">
+                        <Badge
+                          variant="outline"
+                          className="rounded-md px-2 py-0.5 text-[11px] font-medium font-mono"
+                        >
                           {locale === "en" ? `Q${q.sequence}` : `第 ${q.sequence} 题`}
                         </Badge>
                         {q.topic ? (
@@ -784,7 +1039,9 @@ export function InterviewReportView({
                             {q.topic}
                           </Badge>
                         ) : null}
-                        {q.feedback?.rootCause && q.feedback.rootCause !== "none" && t.report.rootCauses[q.feedback.rootCause] ? (
+                        {q.feedback?.rootCause &&
+                        q.feedback.rootCause !== "none" &&
+                        t.report.rootCauses[q.feedback.rootCause] ? (
                           <Badge
                             variant="outline"
                             className="rounded-md border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-300"
@@ -825,46 +1082,56 @@ export function InterviewReportView({
                     }`}
                   >
                     <div className="overflow-hidden">
-                      <div className="border-t border-border/60 bg-muted/15 p-4 sm:p-5 space-y-5 text-sm">
-                        {/* 1. Candidate Answer */}
-                        <div className="space-y-1.5">
-                          <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground">
+                      <div className="border-t border-border/60 bg-muted/10 p-5 sm:p-6 space-y-6 text-sm">
+                        {/* 1. Candidate Answer (Editorial transcript look, no box-in-box) */}
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                             <UserRound className="size-3.5" />
                             <span>{t.report.yourAnswer}</span>
                           </div>
-                          <div className="rounded-xl border border-border/60 bg-background/80 p-3.5 text-xs leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
+                          <div className="border-l-2 border-primary/40 pl-4 py-1 text-xs sm:text-[13px] leading-relaxed text-foreground/90 [overflow-wrap:anywhere]">
                             {isSkipped ? (
-                              <span className="text-xs text-muted-foreground italic">{t.interview.skippedAnswer}</span>
+                              <span className="text-xs text-muted-foreground italic">
+                                {t.interview.skippedAnswer}
+                              </span>
                             ) : q.answer ? (
                               <Markdown content={q.answer} />
                             ) : (
-                              <span className="text-xs text-muted-foreground">{t.report.noAnswerRecordText}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {t.report.noAnswerRecordText}
+                              </span>
                             )}
                           </div>
                         </div>
 
-                        {/* 1.5 Interviewer Reaction */}
+                        {/* 2. Interviewer Reaction Quote (if present) */}
                         {q.feedback?.interviewerReaction ? (
-                          <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5 space-y-1">
-                            <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
-                              <MessageSquareQuote className="size-3.5" />
+                          <div className="border-l-2 border-amber-500/60 bg-amber-500/5 dark:bg-amber-950/20 rounded-r-xl p-3.5 space-y-1">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                              <MessageSquareQuote className="size-3.5 text-amber-600 dark:text-amber-400" />
                               <span>{t.report.interviewerReactionTitle}</span>
                             </div>
-                            <p className="text-xs text-foreground/90 leading-relaxed italic">
+                            <p className="text-xs sm:text-[12.5px] text-foreground/90 leading-relaxed italic">
                               &ldquo;{q.feedback.interviewerReaction}&rdquo;
                             </p>
                           </div>
                         ) : null}
 
-                        {/* 2. 6-Dimension Score Row */}
+                        {/* 3. 6-Dimension Score Ribbon (Compact inline metrics) */}
                         {q.scores ? (
-                          <div className="space-y-1.5">
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between text-xs font-semibold text-muted-foreground">
-                              <span>{t.report.scoreBreakdownTitle}</span>
-                              <span className="font-normal text-[11px]">{t.report.maxScoreLabel}</span>
+                              <span className="uppercase tracking-wider text-[11px]">
+                                {t.report.scoreBreakdownTitle}
+                              </span>
+                              <span className="font-normal text-[11px] text-muted-foreground">
+                                {t.report.maxScoreLabel}
+                              </span>
                             </div>
                             <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-                              {(Object.keys(DIMENSION_CONFIG) as Array<keyof ReportDimensionAverages>).map((dimKey) => {
+                              {(
+                                Object.keys(DIMENSION_CONFIG) as Array<keyof ReportDimensionAverages>
+                              ).map((dimKey) => {
                                 const dimScore = q.scores?.[dimKey] ?? 0;
                                 const cfg = DIMENSION_CONFIG[dimKey];
                                 const label = locale === "en" ? cfg.labelEn : cfg.labelZh;
@@ -872,10 +1139,12 @@ export function InterviewReportView({
                                 return (
                                   <div
                                     key={dimKey}
-                                    className="rounded-lg border border-border/70 bg-card px-2.5 py-2 text-center"
+                                    className="rounded-lg border border-border/70 bg-card/80 px-2.5 py-2 text-center"
                                   >
-                                    <div className="text-[11px] text-muted-foreground">{label}</div>
-                                    <div className="font-bold text-sm font-mono text-primary mt-0.5">
+                                    <div className="text-[11px] text-muted-foreground truncate">
+                                      {label}
+                                    </div>
+                                    <div className="font-bold text-sm font-mono text-primary mt-0.5 tabular-nums">
                                       {dimScore}
                                     </div>
                                   </div>
@@ -885,19 +1154,19 @@ export function InterviewReportView({
                           </div>
                         ) : null}
 
-                        {/* 3. Feedback Tri-Column */}
+                        {/* 4. Feedback Tri-Column (Strengths, Improvements, Advice) */}
                         {q.feedback ? (
-                          <div className="grid gap-3 pt-1 md:grid-cols-3">
+                          <div className="grid gap-3.5 pt-1 md:grid-cols-3">
                             {/* Strengths */}
                             {q.feedback.strengths && q.feedback.strengths.length > 0 ? (
-                              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5">
+                              <div className="rounded-xl border-l-2 border-emerald-500 bg-emerald-500/5 dark:bg-emerald-950/20 p-3.5">
                                 <div className="flex items-center gap-1.5 font-semibold text-xs text-emerald-800 dark:text-emerald-300">
-                                  <CheckCircle2 className="size-3.5" />
+                                  <CheckCircle2 className="size-3.5 text-emerald-600 dark:text-emerald-400" />
                                   <span>{t.report.strengths}</span>
                                 </div>
-                                <ul className="mt-2 space-y-1 text-xs text-emerald-950/80 dark:text-emerald-200/80 leading-relaxed">
+                                <ul className="mt-2 space-y-1.5 text-xs text-emerald-950/85 dark:text-emerald-200/85 leading-relaxed">
                                   {q.feedback.strengths.map((s, idx) => (
-                                    <li key={idx} className="flex items-start gap-1">
+                                    <li key={idx} className="flex items-start gap-1.5">
                                       <span className="shrink-0 size-1 rounded-full bg-emerald-500 mt-1.5" />
                                       <span>{s}</span>
                                     </li>
@@ -908,14 +1177,14 @@ export function InterviewReportView({
 
                             {/* Improvements */}
                             {q.feedback.improvements && q.feedback.improvements.length > 0 ? (
-                              <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3.5">
+                              <div className="rounded-xl border-l-2 border-amber-500 bg-amber-500/5 dark:bg-amber-950/20 p-3.5">
                                 <div className="flex items-center gap-1.5 font-semibold text-xs text-amber-800 dark:text-amber-300">
-                                  <TrendingUp className="size-3.5" />
+                                  <TrendingUp className="size-3.5 text-amber-600 dark:text-amber-400" />
                                   <span>{t.report.improvements}</span>
                                 </div>
-                                <ul className="mt-2 space-y-1 text-xs text-amber-950/80 dark:text-amber-200/80 leading-relaxed">
+                                <ul className="mt-2 space-y-1.5 text-xs text-amber-950/85 dark:text-amber-200/85 leading-relaxed">
                                   {q.feedback.improvements.map((imp, idx) => (
-                                    <li key={idx} className="flex items-start gap-1">
+                                    <li key={idx} className="flex items-start gap-1.5">
                                       <span className="shrink-0 size-1 rounded-full bg-amber-500 mt-1.5" />
                                       <span>{imp}</span>
                                     </li>
@@ -926,12 +1195,12 @@ export function InterviewReportView({
 
                             {/* Advice */}
                             {q.feedback.advice ? (
-                              <div className="rounded-xl border border-primary/20 bg-primary/5 p-3.5">
+                              <div className="rounded-xl border-l-2 border-primary/60 bg-primary/5 dark:bg-primary/10 p-3.5">
                                 <div className="flex items-center gap-1.5 font-semibold text-xs text-primary">
                                   <Lightbulb className="size-3.5" />
                                   <span>{t.report.advice}</span>
                                 </div>
-                                <div className="mt-2 text-xs text-foreground/80 leading-relaxed">
+                                <div className="mt-2 text-xs text-foreground/85 leading-relaxed [overflow-wrap:anywhere]">
                                   <Markdown content={q.feedback.advice} />
                                 </div>
                               </div>
@@ -939,24 +1208,29 @@ export function InterviewReportView({
                           </div>
                         ) : null}
 
-                        {/* 4. High-Scoring Rewrite Example */}
+                        {/* 5. High-Scoring Rewrite Model & Annotations */}
                         {q.feedback?.rewriteExample ? (
-                          <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+                          <div className="rounded-xl border border-primary/20 bg-primary/[0.03] dark:bg-primary/5 p-4.5 space-y-3">
                             <div className="flex items-center gap-1.5 text-xs font-semibold text-primary">
                               <Sparkles className="size-3.5 text-primary" />
                               <span>{t.report.rewrite.title}</span>
                             </div>
-                            <div className="rounded-lg border border-border/60 bg-background/80 p-3 text-xs leading-relaxed text-foreground/90 font-normal">
+
+                            <div className="rounded-lg border border-border/60 bg-background p-3.5 text-xs sm:text-[13px] leading-relaxed text-foreground/90 font-normal [overflow-wrap:anywhere]">
                               <Markdown content={q.feedback.rewriteExample.improvedExcerpt} />
                             </div>
-                            {q.feedback.rewriteExample.annotations && q.feedback.rewriteExample.annotations.length > 0 ? (
+
+                            {q.feedback.rewriteExample.annotations &&
+                            q.feedback.rewriteExample.annotations.length > 0 ? (
                               <div className="space-y-1.5 text-xs pt-1">
-                                <span className="font-semibold text-foreground/80">{t.report.rewrite.annotations}</span>
-                                <ul className="space-y-1 text-muted-foreground">
+                                <span className="font-semibold text-foreground/80 text-[11px] uppercase tracking-wider">
+                                  {t.report.rewrite.annotations}
+                                </span>
+                                <ul className="space-y-1.5 text-muted-foreground">
                                   {q.feedback.rewriteExample.annotations.map((ann, aIdx) => (
-                                    <li key={aIdx} className="flex items-start gap-1.5">
+                                    <li key={aIdx} className="flex items-start gap-2">
                                       <span className="shrink-0 size-1 rounded-full bg-primary mt-1.5" />
-                                      <span>{ann}</span>
+                                      <span className="text-foreground/85">{ann}</span>
                                     </li>
                                   ))}
                                 </ul>
@@ -972,75 +1246,6 @@ export function InterviewReportView({
             })}
           </div>
         </section>
-
-        {/* Section 4: 72-Hour Priority Action Plan */}
-        {summary?.priorityActionPlan72h ? (
-          <section className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 via-card to-card p-6 shadow-xs animate-in fade-in slide-in-from-bottom-5 duration-600 space-y-5">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
-              <Clock className="size-4" />
-              <span>{t.report.actionPlan72h.title}</span>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-3 text-xs">
-              <div className="rounded-xl border border-border/60 bg-background/80 p-4 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-semibold text-foreground">
-                  <Clock className="size-3.5 text-primary" />
-                  <span>{t.report.actionPlan72h.immediate24h}</span>
-                </div>
-                <p className="text-muted-foreground leading-relaxed">
-                  {summary.priorityActionPlan72h.immediate24h}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-background/80 p-4 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-semibold text-foreground">
-                  <Compass className="size-3.5 text-primary" />
-                  <span>{t.report.actionPlan72h.storybankAdjust48h}</span>
-                </div>
-                <p className="text-muted-foreground leading-relaxed">
-                  {summary.priorityActionPlan72h.storybankAdjust48h}
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-background/80 p-4 space-y-1.5">
-                <div className="flex items-center gap-1.5 font-semibold text-foreground">
-                  <Target className="size-3.5 text-primary" />
-                  <span>{t.report.actionPlan72h.targetedDrill72h}</span>
-                </div>
-                <p className="text-muted-foreground leading-relaxed">
-                  {summary.priorityActionPlan72h.targetedDrill72h}
-                </p>
-              </div>
-            </div>
-          </section>
-        ) : null}
-
-        {/* Section 5: Strategic Recommendations */}
-        {summary?.recommendations ? (
-          <section className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/5 via-card to-card p-6 shadow-xs animate-in fade-in slide-in-from-bottom-5 duration-600">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-primary">
-              <Compass className="size-4" />
-              <span>{t.report.recommendationsTitle}</span>
-            </div>
-            <div className="mt-3 text-sm leading-relaxed text-muted-foreground">
-              <Markdown content={summary.recommendations} />
-            </div>
-
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-              <div className="text-xs text-muted-foreground">
-                {t.report.recommendationTip}
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" className="gap-1.5 font-medium shadow-xs" asChild>
-                  <Link href="/dashboard">
-                    <RotateCcw className="size-3.5" />
-                    <span>{t.report.startNewSession}</span>
-                  </Link>
-                </Button>
-              </div>
-            </div>
-          </section>
-        ) : null}
       </main>
     </div>
   );
