@@ -118,9 +118,6 @@ export function ResumeSidebar({
                   AI
                 </span>
               </div>
-              <p className="truncate text-[11px] text-muted-foreground">
-                Mock Interview System
-              </p>
             </div>
           )}
         </Link>
