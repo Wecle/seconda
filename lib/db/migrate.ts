@@ -211,8 +211,8 @@ async function runMigration(sql: postgres.Sql) {
     CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_task_runs_operation_key
     ON ai_task_runs(operation_key)
   `;
+  await sql`ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_task_check`;
   await sql`
-    ALTER TABLE ai_task_runs DROP CONSTRAINT IF EXISTS ai_task_runs_task_check;
     ALTER TABLE ai_task_runs ADD CONSTRAINT ai_task_runs_task_check CHECK (
       task IN (
         'resume.parse',
@@ -228,7 +228,7 @@ async function runMigration(sql: postgres.Sql) {
         'coach.generate',
         'coach.evaluate'
       )
-    );
+    )
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS ai_task_attempts (
