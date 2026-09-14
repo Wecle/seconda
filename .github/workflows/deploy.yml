@@ -186,9 +186,9 @@ jobs:
             INTERVIEW_AGENT_CONTEXT_WINDOW=${{ vars.INTERVIEW_AGENT_CONTEXT_WINDOW || '128000' }}
             INTERVIEW_AGENT_OUTPUT_RESERVE=${{ vars.INTERVIEW_AGENT_OUTPUT_RESERVE || '8000' }}
 
-            AUTH_GITHUB_ID=${{ vars.AUTH_GITHUB_ID }}
+            AUTH_GITHUB_ID=${{ secrets.AUTH_GITHUB_ID || vars.AUTH_GITHUB_ID }}
             AUTH_GITHUB_SECRET=${{ secrets.AUTH_GITHUB_SECRET }}
-            AUTH_GOOGLE_ID=${{ vars.AUTH_GOOGLE_ID }}
+            AUTH_GOOGLE_ID=${{ secrets.AUTH_GOOGLE_ID || vars.AUTH_GOOGLE_ID }}
             AUTH_GOOGLE_SECRET=${{ secrets.AUTH_GOOGLE_SECRET }}
             BLOB_READ_WRITE_TOKEN=${{ secrets.BLOB_READ_WRITE_TOKEN }}
             CRON_SECRET=${{ secrets.CRON_SECRET }}
