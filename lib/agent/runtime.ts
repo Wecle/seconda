@@ -25,10 +25,23 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function usagePayload(usage: LanguageModelUsage) {
+  const ext = usage as unknown as Record<string, unknown>;
+  const reasoningTokens = typeof ext.reasoningTokens === "number"
+    ? ext.reasoningTokens
+    : typeof (ext.outputTokenDetails as Record<string, unknown> | undefined)?.reasoningTokens === "number"
+      ? (ext.outputTokenDetails as Record<string, unknown>).reasoningTokens as number
+      : undefined;
+  const cachedInputTokens = typeof ext.cachedInputTokens === "number"
+    ? ext.cachedInputTokens
+    : typeof (ext.inputTokenDetails as Record<string, unknown> | undefined)?.cachedTokens === "number"
+      ? (ext.inputTokenDetails as Record<string, unknown>).cachedTokens as number
+      : undefined;
   return {
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     totalTokens: usage.totalTokens,
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(cachedInputTokens !== undefined ? { cachedInputTokens } : {}),
   };
 }
 
@@ -209,7 +222,14 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     pendingDelta.text += text;
     if (pendingDelta.text.length >= 256) await flushDelta();
   };
-  const totalUsage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const totalUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+  } = { inputTokens: 0, outputTokens: 0, totalTokens: 0 };
+  const toolStartTimes = new Map<string, number>();
   let nextContext = prepared;
   for (let stepIndex = 0; stepIndex < maxSteps; stepIndex += 1) {
     capabilityContext.state.set(CURRENT_AGENT_STEP, stepIndex + 1);
@@ -219,6 +239,8 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
     let stepContent: readonly { type: string }[] = [];
     let overflowRetries = 0;
     while (true) {
+      const stepStartTime = performance.now();
+      let firstTokenMs: number | undefined;
       let responseMessages: ModelMessage[] = [];
       let completedStep: { finishReason: string; usage: ReturnType<typeof usagePayload> } | undefined;
       let emittedModelOutput = false;
@@ -259,6 +281,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
               });
               break;
             case "text-delta":
+              if (firstTokenMs === undefined) firstTokenMs = Math.round(performance.now() - stepStartTime);
               await appendDelta("text-delta", part.id, part.text);
               break;
             case "text-end":
@@ -272,6 +295,7 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
               });
               break;
             case "reasoning-delta":
+              if (firstTokenMs === undefined) firstTokenMs = Math.round(performance.now() - stepStartTime);
               await appendDelta("reasoning-delta", part.id, part.text);
               break;
             case "reasoning-end":
@@ -280,20 +304,26 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
               });
               break;
             case "tool-call":
+              toolStartTimes.set(part.toolCallId, performance.now());
               await input.events.append("tool_called", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
                 input: part.input,
               });
               break;
-            case "tool-result":
+            case "tool-result": {
+              const toolStart = toolStartTimes.get(part.toolCallId);
+              toolStartTimes.delete(part.toolCallId);
+              const toolDurationMs = toolStart !== undefined ? Math.round(performance.now() - toolStart) : undefined;
               await input.events.append("tool_completed", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
                 output: toolTraceOutput(part.toolName, part.output),
+                ...(toolDurationMs !== undefined ? { durationMs: toolDurationMs } : {}),
               });
               break;
-            case "tool-error":
+            }
+            case "tool-error": {
               if (part.toolName === "skill"
                 && !(part.error instanceof SkillRegistryError
                   && part.error.code === SKILL_TERMINAL_ACTION_ACTIVE)
@@ -304,12 +334,17 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
                   code: SKILL_TOOL_ERROR,
                 });
               }
+              const toolStart = toolStartTimes.get(part.toolCallId);
+              toolStartTimes.delete(part.toolCallId);
+              const toolDurationMs = toolStart !== undefined ? Math.round(performance.now() - toolStart) : undefined;
               await input.events.append("tool_completed", {
                 toolCallId: part.toolCallId,
                 toolName: part.toolName,
                 error: part.error instanceof Error ? part.error.message : "Tool execution failed",
+                ...(toolDurationMs !== undefined ? { durationMs: toolDurationMs } : {}),
               });
               break;
+            }
             case "finish-step":
               completedStep = { finishReason: part.finishReason, usage: usagePayload(part.usage) };
               break;
@@ -325,10 +360,21 @@ export async function runAgent(input: AgentRunInput, dependencies: AgentRuntimeD
         await flushDelta();
         await appendModelMessages(input.events, responseMessages);
         const usage = usagePayload(await result.totalUsage);
+        const stepDurationMs = Math.round(performance.now() - stepStartTime);
         totalUsage.inputTokens += usage.inputTokens ?? 0;
         totalUsage.outputTokens += usage.outputTokens ?? 0;
         totalUsage.totalTokens += usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
-        await input.events.append("step_completed", completedStep ?? { finishReason: "unknown", usage });
+        if (usage.reasoningTokens) {
+          totalUsage.reasoningTokens = (totalUsage.reasoningTokens ?? 0) + usage.reasoningTokens;
+        }
+        if (usage.cachedInputTokens) {
+          totalUsage.cachedInputTokens = (totalUsage.cachedInputTokens ?? 0) + usage.cachedInputTokens;
+        }
+        await input.events.append("step_completed", {
+          ...(completedStep ?? { finishReason: "unknown", usage }),
+          durationMs: stepDurationMs,
+          ...(firstTokenMs !== undefined ? { firstTokenMs } : {}),
+        });
         break;
       } catch (error) {
         await flushDelta();

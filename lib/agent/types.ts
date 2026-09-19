@@ -112,3 +112,102 @@ export type ContextProvider = {
   order: number;
   provide(input: ContextProviderInput): ContextSection | ContextSection[] | Promise<ContextSection | ContextSection[]>;
 };
+
+export type TrajectoryToolCall = {
+  callId: string;
+  toolName: string;
+  input: unknown;
+  output?: unknown;
+  error?: string;
+  durationMs?: number;
+  sequence: number;
+};
+
+export type TrajectoryStep = {
+  stepIndex: number;
+  runId: string;
+  attempt: number;
+  status: "running" | "completed" | "failed" | "retried";
+  startSequence: number;
+  endSequence?: number;
+  startedAt: Date;
+  completedAt?: Date;
+  reasoning?: {
+    content: string;
+    complete: boolean;
+  };
+  textDelta?: string;
+  toolCalls: TrajectoryToolCall[];
+  metrics?: {
+    finishReason: string;
+    durationMs?: number;
+    firstTokenMs?: number;
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+    totalTokens: number;
+  };
+};
+
+export type TrajectoryItemRole = "system" | "context" | "user" | "assistant" | "tool" | "outcome";
+
+export type TrajectoryItem = {
+  id: string;
+  sequence: number;
+  role: TrajectoryItemRole;
+  title: string;
+  preview: string;
+  content: string;
+  source?: string;
+  status?: "completed" | "running" | "failed" | "retried";
+  durationMs?: number;
+  timestamp: Date;
+  raw?: unknown;
+  metrics?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    reasoningTokens?: number;
+    cachedInputTokens?: number;
+    totalTokens?: number;
+    firstTokenMs?: number;
+    finishReason?: string;
+  };
+  toolCall?: TrajectoryToolCall;
+  reasoning?: {
+    content: string;
+    complete: boolean;
+  };
+};
+
+export type TrajectoryTurn = {
+  turnIndex: number;
+  runId: string | null;
+  status: "in_progress" | "completed" | "failed";
+  startSequence: number;
+  endSequence?: number;
+  startedAt: Date;
+  completedAt?: Date;
+  trigger: {
+    type: "user_message" | "candidate_answer" | "candidate_skip" | "opening_trigger" | "system";
+    content?: string;
+    sequence: number;
+  };
+  items: TrajectoryItem[];
+  steps: TrajectoryStep[];
+  domainOutcome?: {
+    type: "question_committed" | "completion_requested" | "answer_analyzed" | "assistant_message";
+    summary: string;
+    payload: unknown;
+  };
+  totalMetrics: {
+    durationMs: number;
+    inputTokens: number;
+    outputTokens: number;
+    reasoningTokens: number;
+    cachedInputTokens: number;
+    totalTokens: number;
+    toolCallCount: number;
+  };
+};
+

@@ -240,6 +240,8 @@ export async function executeInterviewTurn(input: {
       sessionId: claim.session.id,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens,
+      cachedInputTokens: usage.cachedInputTokens,
     }).catch(() => false);
     if (outcome.interviewStatus === "completing") {
       await executeInterviewCompletion({

@@ -13,6 +13,7 @@ import {
   FileText,
   Lightbulb,
   Loader2,
+  MessageSquare,
   Puzzle,
   RotateCcw,
   Send,
@@ -21,6 +22,9 @@ import {
   Square,
   UserRound,
 } from "lucide-react";
+import { TrajectoryLedger } from "@/components/agent/trajectory-ledger";
+import { TrajectoryInspectorDrawer } from "@/components/agent/trajectory-inspector-drawer";
+import type { TrajectoryItem, TrajectoryTurn } from "@/lib/agent/types";
 import { UserAvatarMenu, getUserInitials, type UserAvatarMenuUser } from "@/components/auth/user-avatar-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BrandIcon } from "@/components/brand/brand-icon";
@@ -231,6 +235,13 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
   const [focusedQuestionId, setFocusedQuestionId] = useState<string | null>(null);
   const [resumeSnapshot, setResumeSnapshot] = useState<InterviewResumeSnapshotResponse | null>(null);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+  const isDev = process.env.NODE_ENV === "development";
+  const [viewMode, setViewMode] = useState<"chat" | "trajectory">("chat");
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [selectedTrajectoryItem, setSelectedTrajectoryItem] = useState<{
+    item: TrajectoryItem;
+    turn: TrajectoryTurn;
+  } | null>(null);
 
   const returnToCurrentAnswer = () => {
     setFocusedQuestionId(null);
@@ -484,6 +495,45 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           </div>
 
           <div className="flex shrink-0 items-center gap-2 sm:gap-2.5">
+            {/* View Mode Toggle (Development only) */}
+            {isDev ? (
+              <div className="flex items-center rounded-lg border bg-muted/50 p-0.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("chat")}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all cursor-pointer",
+                    viewMode === "chat"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  aria-label="对谈模式"
+                >
+                  <MessageSquare className="size-3.5 text-primary" />
+                  <span className="hidden sm:inline">对谈模式</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("trajectory")}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all cursor-pointer",
+                    viewMode === "trajectory"
+                      ? "bg-background text-foreground shadow-2xs font-semibold"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                  aria-label="轨迹透视"
+                >
+                  <BrainCircuit className="size-3.5 text-primary" />
+                  <span className="hidden sm:inline">轨迹透视</span>
+                  {currentView.trajectory && currentView.trajectory.length > 0 && (
+                    <span className="rounded-full bg-primary/15 px-1 font-mono text-[10px] text-primary font-semibold">
+                      {currentView.trajectory.length}
+                    </span>
+                  )}
+                </button>
+              </div>
+            ) : null}
+
             <Badge
               variant={room.phase === "run_failed" || room.phase === "invalid_state" ? "destructive" : "secondary"}
               className="max-w-28 truncate font-medium"
@@ -585,7 +635,18 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           {/* Main Conversation Stream Area */}
           <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
         <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-6 sm:px-6 md:py-8">
-          <div className="flex flex-col gap-6">
+          {isDev && viewMode === "trajectory" ? (
+            <TrajectoryLedger
+              turns={currentView.trajectory ?? []}
+              activeRunId={currentView.room.retryableRunId}
+              selectedItemId={selectedTrajectoryItem?.item.id}
+              onSelectItem={(item, turn) => {
+                setSelectedTrajectoryItem({ item, turn });
+                setInspectorOpen(true);
+              }}
+            />
+          ) : (
+            <div className="flex flex-col gap-6">
             {transcript.map((item) => {
               if (item.type === "reasoning") {
                 const running =
@@ -775,6 +836,7 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
               </div>
             ) : null}
           </div>
+          )}
         </main>
       </ScrollArea>
 
@@ -1003,6 +1065,15 @@ export function InterviewRoom({ view, user }: InterviewRoomProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {isDev ? (
+        <TrajectoryInspectorDrawer
+          open={inspectorOpen}
+          onOpenChange={setInspectorOpen}
+          item={selectedTrajectoryItem?.item}
+          turn={selectedTrajectoryItem?.turn}
+        />
+      ) : null}
     </div>
   );
 }

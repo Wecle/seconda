@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, lt, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, lt, lte, ne, notInArray, sql } from "drizzle-orm";
 import type { ModelMessage } from "ai";
 import { db } from "@/lib/db";
 import { agentEvents, agentRuns, agentSessions } from "@/lib/db/schema";
@@ -70,7 +70,12 @@ export async function createAgentSession(input: {
   return row;
 }
 
-export async function forkAgentSession(userId: string, sourceSessionId: string, capability?: string) {
+export async function forkAgentSession(
+  userId: string,
+  sourceSessionId: string,
+  capability?: string,
+  options?: { upToSequence?: number },
+) {
   return db.transaction(async (transaction) => {
     const [source] = await transaction.select().from(agentSessions).where(and(
       eq(agentSessions.id, sourceSessionId),
@@ -79,15 +84,24 @@ export async function forkAgentSession(userId: string, sourceSessionId: string, 
       ne(agentSessions.status, "running"),
     )).limit(1).for("update");
     if (!source) return null;
+    const upToSequence = typeof options?.upToSequence === "number" && Number.isSafeInteger(options.upToSequence) && options.upToSequence > 0
+      ? options.upToSequence
+      : undefined;
     const [size] = await transaction.select({
       eventCount: sql<number>`count(*)::int`,
       payloadBytes: sql<number>`coalesce(sum(pg_column_size(${agentEvents.payload})), 0)::int`,
-    }).from(agentEvents).where(eq(agentEvents.sessionId, sourceSessionId));
+    }).from(agentEvents).where(and(
+      eq(agentEvents.sessionId, sourceSessionId),
+      typeof upToSequence === "number" ? lte(agentEvents.sequence, upToSequence) : undefined,
+    ));
     if ((size?.eventCount ?? 0) > MAX_FORK_EVENTS || (size?.payloadBytes ?? 0) > MAX_FORK_PAYLOAD_BYTES) {
       throw new AgentForkLimitError();
     }
     const sourceEvents = await transaction.select().from(agentEvents)
-      .where(eq(agentEvents.sessionId, sourceSessionId))
+      .where(and(
+        eq(agentEvents.sessionId, sourceSessionId),
+        typeof upToSequence === "number" ? lte(agentEvents.sequence, upToSequence) : undefined,
+      ))
       .orderBy(asc(agentEvents.sequence));
     const boundarySequence = sourceEvents.at(-1)?.sequence ?? 0;
     const [child] = await transaction.insert(agentSessions).values({
@@ -98,6 +112,8 @@ export async function forkAgentSession(userId: string, sourceSessionId: string, 
       promptVersion: source.promptVersion,
       systemPrompt: source.systemPrompt,
       workspaceRoot: source.workspaceRoot,
+      parentSessionId: sourceSessionId,
+      forkedFromSequence: boundarySequence,
       status: "idle",
       nextEventSequence: boundarySequence + 2,
     }).returning();
@@ -365,6 +381,10 @@ export async function settleAgentRun(input: {
   status: "completed" | "failed" | "cancelled";
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+  durationMs?: number;
+  firstTokenMs?: number;
   errorMessage?: string;
   terminalEvent: {
     type: "run_completed" | "run_failed" | "run_cancelled";
@@ -378,6 +398,10 @@ export async function settleAgentRun(input: {
         status: input.status,
         inputTokens: input.inputTokens,
         outputTokens: input.outputTokens,
+        reasoningTokens: input.reasoningTokens,
+        cachedInputTokens: input.cachedInputTokens,
+        durationMs: input.durationMs,
+        firstTokenMs: input.firstTokenMs,
         errorMessage: input.errorMessage,
         completedAt: new Date(),
       })
@@ -417,10 +441,18 @@ export async function recordCompletedAgentRunUsage(input: {
   sessionId: string;
   inputTokens?: number;
   outputTokens?: number;
+  reasoningTokens?: number;
+  cachedInputTokens?: number;
+  durationMs?: number;
+  firstTokenMs?: number;
 }) {
   const [run] = await db.update(agentRuns).set({
     inputTokens: input.inputTokens,
     outputTokens: input.outputTokens,
+    reasoningTokens: input.reasoningTokens,
+    cachedInputTokens: input.cachedInputTokens,
+    durationMs: input.durationMs,
+    firstTokenMs: input.firstTokenMs,
   }).where(and(
     eq(agentRuns.id, input.runId),
     eq(agentRuns.sessionId, input.sessionId),

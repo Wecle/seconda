@@ -80,6 +80,8 @@ export interface InterviewCompletionJobSnapshot {
   status: "pending" | "scoring" | "reporting" | "completed" | "failed";
 }
 
+import type { TrajectoryTurn } from "@/lib/agent/types";
+
 export interface InterviewEventSnapshot {
   runId: string | null;
   sequence: number;
@@ -87,6 +89,7 @@ export interface InterviewEventSnapshot {
   payload: unknown;
   schemaVersion: number;
   visibility: "model" | "user" | "model_and_user" | "internal";
+  createdAt?: Date;
 }
 
 export interface InterviewSnapshot {
@@ -118,4 +121,5 @@ export interface InterviewRunSnapshot {
 export interface InterviewRoomQueryView {
   room: InterviewRoomView;
   transcript: InterviewTranscriptItem[];
+  trajectory?: TrajectoryTurn[];
 }

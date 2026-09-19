@@ -84,6 +84,7 @@ const streamEventSchema = z.discriminatedUnion("type", [
     view: z.object({
       room: roomSchema,
       transcript: z.array(transcriptItemSchema),
+      trajectory: z.array(z.any()).optional(),
     }).strict(),
   }).strict(),
   z.object({
@@ -100,8 +101,9 @@ export function parseInterviewRoomPayload(value: unknown): InterviewRoomQueryVie
   const parsed = z.object({
     room: roomSchema,
     transcript: z.array(transcriptItemSchema),
+    trajectory: z.array(z.any()).optional(),
   }).strict().safeParse(value);
-  return parsed.success ? parsed.data : null;
+  return parsed.success ? (parsed.data as unknown as InterviewRoomQueryView) : null;
 }
 
 export function parseInterviewRoomEventData(data: string): InterviewRoomQueryView | null {

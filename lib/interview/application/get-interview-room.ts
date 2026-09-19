@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { loadOwnedInterviewRoomData, type InterviewDatabase } from "../persistence/repository";
 import { projectInterviewRoom } from "../projections/room";
 import { projectInterviewTranscript } from "../projections/transcript";
+import { projectTrajectory } from "@/lib/agent/trajectory-projection";
+import type { AgentEventType, AgentEventVisibility } from "@/lib/agent/types";
 import type { InterviewRoomQueryView } from "../projections/types";
 
 const interviewSchema = z.object({
@@ -12,6 +14,7 @@ const interviewSchema = z.object({
   answeredRoundCount: z.number().int().nonnegative(),
   targetRoundCount: z.number().int().positive(),
   resumeTitle: z.string().nullable().optional(),
+  systemPrompt: z.string().nullable().optional(),
 });
 
 const questionSchema = z.object({
@@ -44,6 +47,7 @@ const eventSchema = z.object({
   payload: z.unknown(),
   schemaVersion: z.number().int().positive(),
   visibility: z.enum(["model", "user", "model_and_user", "internal"]),
+  createdAt: z.coerce.date().optional(),
 });
 
 export async function getInterviewRoom(input: {
@@ -113,6 +117,20 @@ export async function getInterviewRoomEventSnapshot(input: {
     view: {
       room,
       transcript: projectInterviewTranscript({ events }),
+      trajectory: projectTrajectory(events.map((event) => ({
+        id: event.sequence,
+        sessionId: interview.agentSessionId,
+        runId: event.runId,
+        sequence: event.sequence,
+        type: event.type as AgentEventType,
+        payload: (event.payload && typeof event.payload === "object" ? event.payload : {}) as Record<string, unknown>,
+        dedupeKey: null,
+        schemaVersion: event.schemaVersion,
+        visibility: event.visibility as AgentEventVisibility,
+        createdAt: event.createdAt ?? new Date(0),
+      })), {
+        systemPrompt: interview.systemPrompt ?? undefined,
+      }),
     },
   };
 }

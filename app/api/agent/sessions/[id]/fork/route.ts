@@ -4,15 +4,20 @@ import { AgentForkLimitError, forkAgentSession, toAgentSessionSummary } from "@/
 import { BUILT_IN_CAPABILITIES } from "@/lib/agent/capabilities/types";
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const userId = await getCurrentUserId();
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { id } = await params;
+  const body = await request.json().catch(() => ({})) as { upToSequence?: unknown };
+  const upToSequence = typeof body.upToSequence === "number" && Number.isSafeInteger(body.upToSequence) && body.upToSequence > 0
+    ? body.upToSequence
+    : undefined;
+
   let session;
   try {
-    session = await forkAgentSession(userId, id, BUILT_IN_CAPABILITIES.workspace);
+    session = await forkAgentSession(userId, id, BUILT_IN_CAPABILITIES.workspace, { upToSequence });
   } catch (error) {
     if (error instanceof AgentForkLimitError) {
       return NextResponse.json({ error: error.message }, { status: 413 });

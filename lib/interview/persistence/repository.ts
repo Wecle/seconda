@@ -856,6 +856,7 @@ export async function loadOwnedInterviewRoomData(input: {
       answeredRoundCount: interviews.answeredRoundCount,
       targetRoundCount: interviews.targetRoundCount,
       resumeTitle: interviewResumeSnapshots.resumeTitle,
+      systemPrompt: agentSessions.systemPrompt,
     }).from(interviews)
       .innerJoin(agentSessions, and(
         eq(agentSessions.id, interviews.agentSessionId),
@@ -899,17 +900,10 @@ export async function loadOwnedInterviewRoomData(input: {
       payload: agentEvents.payload,
       schemaVersion: agentEvents.schemaVersion,
       visibility: agentEvents.visibility,
-    }).from(agentEvents).where(and(
+      createdAt: agentEvents.createdAt,
+    }).from(agentEvents).where(
       eq(agentEvents.sessionId, interview.agentSessionId),
-      or(
-        inArray(agentEvents.visibility, ["user", "model_and_user"]),
-        and(
-          inArray(agentEvents.type, ["step_started", "assistant_chunk", "skill_loaded", "skill_load_failed"]),
-          eq(agentEvents.visibility, "model"),
-          eq(agentEvents.schemaVersion, 1),
-        ),
-      ),
-    )).orderBy(asc(agentEvents.sequence));
+    ).orderBy(asc(agentEvents.sequence));
     const completionJobs = await transaction.select({
       id: interviewCompletionJobs.id,
       status: interviewCompletionJobs.status,

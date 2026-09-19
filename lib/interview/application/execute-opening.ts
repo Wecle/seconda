@@ -138,6 +138,8 @@ export async function executeInterviewOpening(input: {
       sessionId: claim.session.id,
       inputTokens: usage.inputTokens,
       outputTokens: usage.outputTokens,
+      reasoningTokens: usage.reasoningTokens,
+      cachedInputTokens: usage.cachedInputTokens,
     }).catch(() => false);
     return { status: "active", question };
   } catch (error) {
